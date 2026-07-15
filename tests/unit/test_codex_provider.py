@@ -7,13 +7,20 @@ from typing import Any
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from techshort.providers.codex_cli import CodexCliProvider
+from techshort.providers.codex_cli import CodexCliProvider, _strict_output_schema
 
 
 class TinyResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     value: str
+
+
+class DefaultedResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    value: str
+    review_status: str = "pending"
 
 
 HELP = " ".join(
@@ -41,6 +48,17 @@ def test_missing_codex_fails_clearly() -> None:
     assert "not found" in provider.diagnostics()
     with pytest.raises(ValueError, match="unavailable"):
         provider.generate("test", [], TinyResult)
+
+
+def test_codex_schema_requires_defaulted_fields_and_removes_defaults() -> None:
+    schema = _strict_output_schema(DefaultedResult.model_json_schema())
+    assert isinstance(schema, dict)
+    assert schema["required"] == ["value", "review_status"]
+    properties = schema["properties"]
+    assert isinstance(properties, dict)
+    review = properties["review_status"]
+    assert isinstance(review, dict)
+    assert "default" not in review
 
 
 def test_codex_invocation_uses_verified_hardening_flags(

@@ -31,6 +31,29 @@ OPTIONAL_HARDENING_FLAGS = (
 )
 
 
+def _strict_output_schema(value: object) -> object:
+    """Convert Pydantic schema defaults to the strict structured-output subset.
+
+    Codex structured output requires every declared property to be listed in
+    ``required``. Optional values remain nullable through Pydantic's ``anyOf``;
+    fields with application defaults are emitted explicitly by the model and are
+    normalized back through Pydantic afterward.
+    """
+
+    if isinstance(value, list):
+        return [_strict_output_schema(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    normalized = {
+        key: _strict_output_schema(item) for key, item in value.items() if key != "default"
+    }
+    properties = normalized.get("properties")
+    if isinstance(properties, dict):
+        normalized["required"] = list(properties)
+        normalized["additionalProperties"] = False
+    return normalized
+
+
 @dataclass(frozen=True)
 class CodexRunMetadata:
     prompt_version: str
@@ -165,7 +188,10 @@ class CodexCliProvider:
                 + ", ".join(missing)
             )
 
-        schema = model.model_json_schema()
+        schema_value = _strict_output_schema(model.model_json_schema())
+        if not isinstance(schema_value, dict):
+            raise ValueError("Codex output model did not produce an object schema")
+        schema = schema_value
         prompt_hash = self.template_hash(instruction, schema)
         context = json.dumps(
             {
@@ -244,14 +270,17 @@ class CodexCliProvider:
                 except OSError as exc:
                     raise RuntimeError(f"Codex generation could not start: {exc}") from exc
                 if result.returncode:
-                    detail = (
-                        result.stderr.strip().splitlines()[-1]
-                        if result.stderr.strip()
-                        else "no detail"
-                    )
+                    diagnostic_lines = [
+                        line.strip()
+                        for line in (result.stderr or result.stdout).splitlines()
+                        if line.strip()
+                    ]
+                    # Codex errors can be multi-line structured diagnostics whose
+                    # final line is only `}`. Keep a bounded tail without ever
+                    # including the source context, which was sent on stdin.
+                    detail = " | ".join(diagnostic_lines[-12:])[-1600:] or "no detail"
                     raise RuntimeError(
-                        f"Codex generation failed with exit code {result.returncode}: "
-                        f"{detail[:500]}"
+                        f"Codex generation failed with exit code {result.returncode}: {detail}"
                     )
                 if not output_path.is_file():
                     raise RuntimeError(
