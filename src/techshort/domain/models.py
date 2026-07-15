@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import PurePosixPath
@@ -9,13 +10,37 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 SCHEMA_VERSION: Literal["1.0.0"] = "1.0.0"
 
+_ACTIVE_CONTENT_PATTERNS = (
+    re.compile(r"<\s*/?\s*[a-z!][^>]*>", re.IGNORECASE),
+    re.compile(r"\b(?:java|vb)script\s*:", re.IGNORECASE),
+    re.compile(r"\bdata\s*:\s*(?:text/html|image/svg\+xml)", re.IGNORECASE),
+    re.compile(r"\bon[a-z]{3,}\s*=", re.IGNORECASE),
+    re.compile(r"\b(?:eval|exec|__import__)\s*\(", re.IGNORECASE),
+    re.compile(r"\bnew\s+function\s*\(", re.IGNORECASE),
+    re.compile(r"\b(?:document|window)\s*\.\s*(?:write|location|cookie)\b", re.IGNORECASE),
+    re.compile(
+        r"(?:^|[\r\n;])\s*(?:#!|powershell(?:\.exe)?\b|cmd(?:\.exe)?\s+/c\b|"
+        r"(?:ba|z|k)?sh\s+-c\b)",
+        re.IGNORECASE,
+    ),
+)
+
+
+def validate_inert_text(value: str) -> str:
+    """Reject active markup and obvious executable payloads in rendered scene data."""
+    if "\x00" in value:
+        raise ValueError("NUL bytes are forbidden in scene text")
+    if any(pattern.search(value) for pattern in _ACTIVE_CONTENT_PATTERNS):
+        raise ValueError("active content or executable markup is forbidden")
+    return value
+
 
 def now_utc() -> datetime:
     return datetime.now(UTC)
 
 
 class StrictModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+    model_config = ConfigDict(extra="forbid", validate_assignment=True, allow_inf_nan=False)
     schema_version: Literal["1.0.0"] = SCHEMA_VERSION
 
 
@@ -47,6 +72,7 @@ class ProjectManifest(StrictModel):
     fps: int = 30
     theme: str = "midnight"
     source_ids: list[str] = Field(default_factory=list)
+    active_source_id: str | None = None
     active_versions: dict[str, str] = Field(default_factory=dict)
     approvals: ApprovalState = Field(default_factory=ApprovalState)
     content_risk: Literal["low", "review", "prohibited"] = "low"
@@ -60,6 +86,7 @@ class SourceDocument(StrictModel):
     source_type: Literal["pdf", "markdown", "text"]
     original_filename: str
     content_hash: str
+    extracted_text_hash: str | None = None
     local_path: str
     ingested_at: datetime = Field(default_factory=now_utc)
     page_or_section_count: int
@@ -81,6 +108,16 @@ class SourceDocument(StrictModel):
 
 class SourceIndex(StrictModel):
     sources: list[SourceDocument]
+    active_source_id: str | None = None
+
+    @model_validator(mode="after")
+    def active_source_exists(self) -> SourceIndex:
+        source_ids = [source.source_id for source in self.sources]
+        if len(source_ids) != len(set(source_ids)):
+            raise ValueError("source IDs must be unique")
+        if self.active_source_id is not None and self.active_source_id not in source_ids:
+            raise ValueError("active source ID is not present in the source index")
+        return self
 
 
 class EvidenceSpan(StrictModel):
@@ -174,23 +211,33 @@ class ScriptManifest(StrictModel):
 
 
 class NodeSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     id: str
     label: str
     x: float = Field(ge=0, le=1)
     y: float = Field(ge=0, le=1)
     state: Literal["normal", "active", "muted"] = "normal"
 
+    @field_validator("id", "label")
+    @classmethod
+    def inert_node_text(cls, value: str) -> str:
+        return validate_inert_text(value)
+
 
 class EdgeSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     source: str
     target: str
     label: str | None = None
 
+    @field_validator("source", "target", "label")
+    @classmethod
+    def inert_edge_text(cls, value: str | None) -> str | None:
+        return validate_inert_text(value) if value is not None else None
+
 
 class VisualSpec(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     title: str
     body: str | None = None
     nodes: list[NodeSpec] = Field(default_factory=list)
@@ -205,12 +252,22 @@ class VisualSpec(BaseModel):
     @field_validator("title", "body", "left", "right", "citation")
     @classmethod
     def no_executable_markup(cls, value: str | None) -> str | None:
-        if value and any(
-            token in value.lower()
-            for token in ("<script", "javascript:", "data:text/html", "<?xml")
-        ):
-            raise ValueError("executable markup is forbidden")
-        return value
+        return validate_inert_text(value) if value is not None else None
+
+    @field_validator("labels")
+    @classmethod
+    def inert_labels(cls, value: list[str]) -> list[str]:
+        return [validate_inert_text(item) for item in value]
+
+    @model_validator(mode="after")
+    def diagram_edges_reference_nodes(self) -> VisualSpec:
+        node_ids = {node.id for node in self.nodes}
+        if len(node_ids) != len(self.nodes):
+            raise ValueError("visual node IDs must be unique")
+        for edge in self.edges:
+            if edge.source not in node_ids or edge.target not in node_ids:
+                raise ValueError("visual edges must reference declared nodes")
+        return self
 
 
 ScenePrimitive = Literal[
@@ -241,6 +298,43 @@ class Scene(StrictModel):
     theme_overrides: dict[str, str] = Field(default_factory=dict)
     review_status: ReviewStatus = ReviewStatus.PENDING
     dependency_hash: str
+
+    @field_validator(
+        "scene_id",
+        "on_screen_text",
+        "accessibility_description",
+        "evidence_label",
+    )
+    @classmethod
+    def inert_scene_text(cls, value: str | None) -> str | None:
+        return validate_inert_text(value) if value is not None else None
+
+    @field_validator("script_segment_ids", "claim_ids", "asset_ids")
+    @classmethod
+    def inert_scene_ids(cls, value: list[str]) -> list[str]:
+        return [validate_inert_text(item) for item in value]
+
+    @field_validator("theme_overrides")
+    @classmethod
+    def inert_theme_overrides(cls, value: dict[str, str]) -> dict[str, str]:
+        allowed = {
+            "background",
+            "panel",
+            "text",
+            "muted",
+            "accent",
+            "warning",
+            "danger",
+            "citation",
+        }
+        for key, item in value.items():
+            validate_inert_text(key)
+            validate_inert_text(item)
+            if key not in allowed:
+                raise ValueError(f"theme override {key!r} is not allowlisted")
+            if not re.fullmatch(r"#[0-9A-Fa-f]{6}", item):
+                raise ValueError("theme overrides must be six-digit hexadecimal colors")
+        return value
 
 
 class StoryboardManifest(StrictModel):
@@ -310,11 +404,13 @@ class RenderManifest(StrictModel):
     prompt_versions: dict[str, str]
     source_hashes: dict[str, str]
     output_paths: list[str]
+    output_hashes: dict[str, str] = Field(default_factory=dict)
+    watermarked: bool = False
     rendered_at: datetime = Field(default_factory=now_utc)
 
 
 class QACheck(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     check_id: str
     status: Literal["pass", "warning", "failure"]
     message: str
@@ -326,6 +422,9 @@ class QAReport(StrictModel):
     generated_at: datetime = Field(default_factory=now_utc)
     checks: list[QACheck]
     export_blockers: list[str]
+    artifact_hashes: dict[str, str] = Field(default_factory=dict)
+    media_path: str | None = None
+    media_hash: str | None = None
 
     @property
     def passed(self) -> bool:

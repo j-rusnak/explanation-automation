@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from techshort.domain.hashing import stable_hash
-from techshort.domain.models import Asset, ScriptManifest, ScriptSegment, VisualSpec
+from techshort.domain.models import Asset, Scene, ScriptManifest, ScriptSegment, VisualSpec
 from techshort.domain.storage import sanitize_filename, validate_slug
 
 
@@ -68,3 +68,28 @@ def test_unknown_rights_can_be_represented_but_not_assumed_safe() -> None:
         embedding_allowed=False,
     )
     assert not asset.embedding_allowed
+
+
+def test_scene_numbers_must_be_finite() -> None:
+    with pytest.raises(ValidationError, match="finite number"):
+        VisualSpec(title="safe", series=[1.0, float("nan")])
+
+
+def test_scene_theme_overrides_are_color_token_allowlisted() -> None:
+    base = {
+        "scene_id": "scene-1",
+        "order": 0,
+        "start_time": 0,
+        "duration": 1,
+        "primitive": "KineticText",
+        "script_segment_ids": ["segment-1"],
+        "on_screen_text": "Safe",
+        "visual": {"title": "Safe"},
+        "accessibility_description": "Safe title card",
+        "dependency_hash": "a" * 64,
+    }
+    Scene.model_validate({**base, "theme_overrides": {"accent": "#123ABC"}})
+    with pytest.raises(ValidationError, match="not allowlisted"):
+        Scene.model_validate({**base, "theme_overrides": {"font": "#123ABC"}})
+    with pytest.raises(ValidationError, match="hexadecimal"):
+        Scene.model_validate({**base, "theme_overrides": {"accent": "red"}})
