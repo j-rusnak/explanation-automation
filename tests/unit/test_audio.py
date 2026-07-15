@@ -5,7 +5,14 @@ from pathlib import Path
 
 import pytest
 
-from techshort.audio import active_audio, import_audio, probe_duration
+from techshort.audio import (
+    active_audio,
+    active_transcript,
+    import_audio,
+    import_transcript,
+    probe_duration,
+)
+from techshort.domain.hashing import sha256_file
 from techshort.domain.models import AssetManifest
 from techshort.domain.storage import ProjectStore, atomic_write_model, load_model
 from techshort.rendering.tools import media_tool
@@ -181,3 +188,34 @@ def test_permissive_audio_persists_concrete_rights_metadata(
     assert asset.source_url == "https://example.test/audio"
     assert asset.required_attribution == "Example Audio Lab, CC BY 4.0"
     assert asset.embedding_allowed
+
+
+def test_transcript_sidecar_is_bound_to_active_audio_hash(
+    tmp_path: Path, generated_audio: Path
+) -> None:
+    store = _store(tmp_path, "audio-transcript")
+    imported_audio = import_audio(store, generated_audio, rights_status="user-owned")
+    source = tmp_path / "narration.txt"
+    source.write_text("This is the reviewed narration transcript.", encoding="utf-8")
+
+    sidecar = import_transcript(store, source)
+
+    loaded = active_transcript(store)
+    assert loaded is not None
+    text, path = loaded
+    assert text == "This is the reviewed narration transcript."
+    assert path == sidecar
+    assert sidecar.name == f"{sha256_file(imported_audio)[:12]}-transcript.txt"
+    assert store.project().approvals.final == "stale"
+
+
+def test_transcript_sidecar_rejects_changed_bytes(tmp_path: Path, generated_audio: Path) -> None:
+    store = _store(tmp_path, "audio-transcript-tamper")
+    import_audio(store, generated_audio, rights_status="user-owned")
+    source = tmp_path / "narration.txt"
+    source.write_text("Original transcript.", encoding="utf-8")
+    sidecar = import_transcript(store, source)
+    sidecar.write_text("Changed after registration.", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="changed after import"):
+        active_transcript(store)
