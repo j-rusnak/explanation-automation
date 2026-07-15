@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import json
 import math
-import shutil
 import subprocess
 from pathlib import Path
 
 from techshort.domain.hashing import sha256_file, stable_hash
 from techshort.domain.models import Asset, AssetManifest, ReviewStatus
-from techshort.domain.storage import ProjectStore, atomic_write_model, load_model, sanitize_filename
+from techshort.domain.storage import (
+    ProjectStore,
+    atomic_copy_file,
+    atomic_write_model,
+    load_model,
+    sanitize_filename,
+)
 
 ALLOWED_AUDIO = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus"}
 AUDIO_RIGHTS = {
@@ -21,7 +27,78 @@ AUDIO_RIGHTS = {
 EMBEDDABLE_AUDIO_RIGHTS = {"original", "user-owned", "permissively-licensed"}
 
 
-def import_audio(store: ProjectStore, source: Path, rights_status: str = "unknown") -> Path:
+def _probe_audio_duration(path: Path, *, require_tool: bool) -> float | None:
+    # Import lazily to avoid coupling audio registration to renderer startup.
+    from techshort.rendering.tools import media_tool
+
+    ffprobe = media_tool("ffprobe")
+    if not ffprobe:
+        if require_tool:
+            raise ValueError(
+                "FFprobe is required to validate audio imports; install FFmpeg and retry"
+            )
+        return None
+    try:
+        result = subprocess.run(
+            [
+                ffprobe,
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=codec_type,duration:format=duration",
+                "-of",
+                "json",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        if require_tool:
+            raise ValueError(f"FFprobe could not validate the audio file: {exc}") from exc
+        return None
+    if result.returncode != 0:
+        if require_tool:
+            raise ValueError(
+                "FFprobe rejected the audio file; verify that it is a valid supported media file"
+            )
+        return None
+    try:
+        payload = json.loads(result.stdout)
+        streams = payload.get("streams", [])
+        audio_streams = [stream for stream in streams if stream.get("codec_type") == "audio"]
+        duration_values = [payload.get("format", {}).get("duration")]
+        duration_values.extend(stream.get("duration") for stream in audio_streams)
+        durations = [float(value) for value in duration_values if value not in {None, "", "N/A"}]
+    except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+        if require_tool:
+            raise ValueError("FFprobe returned invalid metadata for the audio file") from None
+        return None
+    duration = next(
+        (value for value in durations if math.isfinite(value) and value > 0),
+        None,
+    )
+    if not audio_streams or duration is None:
+        if require_tool:
+            raise ValueError("audio import requires a valid audio stream with a positive duration")
+        return None
+    return duration
+
+
+def import_audio(
+    store: ProjectStore,
+    source: Path,
+    rights_status: str = "unknown",
+    *,
+    creator: str | None = None,
+    license_name: str | None = None,
+    source_url: str | None = None,
+    required_attribution: str | None = None,
+) -> Path:
     if not source.is_file() or source.suffix.lower() not in ALLOWED_AUDIO:
         raise ValueError("audio must be a regular FFmpeg-compatible audio file")
     if source.stat().st_size > 200 * 1024 * 1024:
@@ -31,13 +108,10 @@ def import_audio(store: ProjectStore, source: Path, rights_status: str = "unknow
             "audio rights status must be original, user-owned, permissively-licensed, "
             "citation-only, unknown, or restricted"
         )
+    _probe_audio_duration(source, require_tool=True)
     digest = sha256_file(source)
     filename = sanitize_filename(source.name)
     destination = store.path(f"audio/{digest[:12]}-{filename}")
-    if not destination.exists():
-        shutil.copyfile(source, destination)
-    elif sha256_file(destination) != digest:
-        raise ValueError("existing audio destination does not match the imported file")
 
     asset_path = store.path("assets/asset-manifest.json")
     manifest = (
@@ -51,10 +125,25 @@ def import_audio(store: ProjectStore, source: Path, rights_status: str = "unknow
     # does not discard an already reviewed rights record.
     if previous is not None and rights_status == "unknown":
         rights_status = previous.rights_status
+        creator = creator or previous.creator
+        license_name = license_name or previous.license
+        source_url = source_url or previous.source_url
+        required_attribution = required_attribution or previous.required_attribution
+    if rights_status == "permissively-licensed" and not (
+        creator and creator.strip() and license_name and license_name.strip()
+    ):
+        raise ValueError(
+            "permissively-licensed audio requires explicit creator and license_name metadata"
+        )
+    if not destination.exists():
+        atomic_copy_file(source, destination)
+    elif sha256_file(destination) != digest:
+        raise ValueError("existing audio destination does not match the imported file")
+
     licenses = {
         "original": "original work (review required)",
         "user-owned": "user-owned (review required)",
-        "permissively-licensed": "permissive license details pending review",
+        "permissively-licensed": license_name or "",
         "citation-only": "citation only; embedding forbidden",
         "unknown": "unrecorded",
         "restricted": "restricted; embedding forbidden",
@@ -65,8 +154,10 @@ def import_audio(store: ProjectStore, source: Path, rights_status: str = "unknow
         local_path=destination.relative_to(store.root).as_posix(),
         sha256=digest,
         origin="local audio import",
-        creator="not recorded",
+        creator=creator or "not recorded",
+        source_url=source_url,
         license=licenses[rights_status],
+        required_attribution=required_attribution,
         rights_status=rights_status,
         embedding_allowed=rights_status in EMBEDDABLE_AUDIO_RIGHTS,
         review_status=(
@@ -131,30 +222,4 @@ def active_audio(store: ProjectStore) -> Path | None:
 
 
 def probe_duration(path: Path) -> float | None:
-    # Import lazily to avoid coupling audio registration to renderer startup.
-    from techshort.rendering.tools import media_tool
-
-    ffprobe = media_tool("ffprobe")
-    if not ffprobe:
-        return None
-    try:
-        result = subprocess.run(
-            [
-                ffprobe,
-                "-v",
-                "error",
-                "-show_entries",
-                "format=duration",
-                "-of",
-                "default=nw=1:nk=1",
-                str(path),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
-        duration = float(result.stdout.strip()) if result.returncode == 0 else None
-    except (OSError, subprocess.SubprocessError, ValueError):
-        return None
-    return duration if duration is not None and math.isfinite(duration) and duration > 0 else None
+    return _probe_audio_duration(path, require_tool=False)
