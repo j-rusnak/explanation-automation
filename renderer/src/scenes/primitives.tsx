@@ -48,6 +48,7 @@ const Frame: React.FC<{ scene: SceneData; children: React.ReactNode }> = ({
       justifyContent: "center",
       gap: 62,
       background: sceneBackground(scene),
+      color: sceneColor(scene, "text"),
     }}
   >
     <Citation scene={scene} />

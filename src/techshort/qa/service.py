@@ -10,11 +10,19 @@ from typing import Any
 
 from PIL import Image, ImageStat
 
-from techshort.alignment import as_srt, as_vtt, caption_warnings, cues_from_script
+from techshort.alignment import (
+    as_srt,
+    as_vtt,
+    caption_warnings,
+    compare_narration,
+    cues_from_script,
+)
 from techshort.assets import BUILTIN_FONT_ASSET_IDS
-from techshort.audio import active_audio, probe_duration
+from techshort.audio import active_audio, probe_duration, resolve_narration_transcript
 from techshort.domain.hashing import sha256_file, stable_hash
 from techshort.domain.models import (
+    AngleSelection,
+    AnglesManifest,
     AssetManifest,
     ClaimsManifest,
     EvidenceManifest,
@@ -25,6 +33,9 @@ from techshort.domain.models import (
     ScriptManifest,
     SourceIndex,
     StoryboardManifest,
+    derive_angle_selection_id,
+    derive_angles_version_id,
+    derive_script_version_id,
 )
 from techshort.domain.storage import ProjectStore, atomic_write_model, load_model
 from techshort.evidence import unsupported_assertion_tokens
@@ -41,6 +52,18 @@ PREVIEW_HEIGHT = 640
 CAPTION_BOTTOM_INSET = 145
 CAPTION_MIN_HEIGHT = 170
 FULL_HEIGHT = 1920
+MIN_TEXT_CONTRAST = 4.5
+DEFAULT_THEME_COLORS = {
+    "background": "#071124",
+    "panel": "#13213d",
+    "text": "#f7f9ff",
+    "muted": "#b7c4e2",
+    "accent": "#5eead4",
+    "warning": "#ffd166",
+    "danger": "#ff6b6b",
+    "citation": "#a8b7ff",
+}
+DEFAULT_GRADIENT_HIGHLIGHT = "#183866"
 
 
 def _check(
@@ -205,6 +228,8 @@ def run_qa(
         sources = load_model(store.path("sources/source-index.json"), SourceIndex)
         evidence = load_model(store.path("evidence/evidence.json"), EvidenceManifest)
         claims = load_model(store.path("claims/claims.json"), ClaimsManifest)
+        angles = load_model(store.path("script/angles.json"), AnglesManifest)
+        selection = load_model(store.path("script/angle-selection.json"), AngleSelection)
         script = load_model(store.path("script/script.json"), ScriptManifest)
         storyboard = load_model(store.path("storyboard/storyboard.json"), StoryboardManifest)
         assets = load_model(store.path("assets/asset-manifest.json"), AssetManifest)
@@ -313,12 +338,63 @@ def run_qa(
     )
 
     project = store.project()
+    approved_claim_ids = {
+        claim.claim_id
+        for claim in claims.claims
+        if claim.review_status == ReviewStatus.APPROVED
+        and _approval_is_current(store, "claim", claim.claim_id)
+    }
+    selected_candidate = next(
+        (
+            candidate
+            for candidate in angles.candidates
+            if candidate.angle == selection.selected_angle
+        ),
+        None,
+    )
+    angle_claims_valid = all(
+        set(candidate.central_claim_ids).issubset(approved_claim_ids)
+        for candidate in angles.candidates
+    )
+    script_claim_ids = {claim_id for segment in script.segments for claim_id in segment.claim_ids}
+    selected_central_claims_present = selected_candidate is not None and set(
+        selected_candidate.central_claim_ids
+    ).issubset(script_claim_ids)
     version_chain_valid = (
         claims.evidence_version_id == evidence.version_id
+        and angles.claims_version_id == claims.version_id
+        and angles.version_id == derive_angles_version_id(claims.version_id, angles.candidates)
+        and selection.angles_version_id == angles.version_id
+        and selection.selection_id
+        == derive_angle_selection_id(
+            angles.version_id,
+            selection.selected_angle,
+            selection.selected_candidate_hash,
+        )
+        and script.angles_version_id == angles.version_id
+        and script.angle_selection_id == selection.selection_id
+        and script.angle == selection.selected_angle
+        and script.version_id
+        == derive_script_version_id(
+            script.claims_version_id,
+            script.angles_version_id,
+            script.angle_selection_id,
+            script.angle,
+            script.segments,
+        )
+        and any(
+            candidate.angle == selection.selected_angle
+            and stable_hash(candidate) == selection.selected_candidate_hash
+            for candidate in angles.candidates
+        )
+        and angle_claims_valid
+        and selected_central_claims_present
         and script.claims_version_id == claims.version_id
         and storyboard.script_version_id == script.version_id
         and project.active_versions.get("evidence") == evidence.version_id
         and project.active_versions.get("claims") == claims.version_id
+        and project.active_versions.get("angles") == angles.version_id
+        and project.active_versions.get("angle_selection") == selection.selection_id
         and project.active_versions.get("script") == script.version_id
         and project.active_versions.get("storyboard") == storyboard.version_id
         and project.active_versions.get("assets") == assets.version_id
@@ -339,12 +415,6 @@ def run_qa(
         )
     )
 
-    approved_claim_ids = {
-        claim.claim_id
-        for claim in claims.claims
-        if claim.review_status == ReviewStatus.APPROVED
-        and _approval_is_current(store, "claim", claim.claim_id)
-    }
     segments_current = all(
         segment.review_status == ReviewStatus.APPROVED
         and _approval_is_current(store, "script-segment", segment.segment_id)
@@ -425,7 +495,17 @@ def run_qa(
     )
 
     stale = bool(
-        set(project.stale_artifacts).intersection({"claims", "script", "storyboard", "rights"})
+        set(project.stale_artifacts).intersection(
+            {
+                "claims",
+                "claims_critique",
+                "angles",
+                "angle_selection",
+                "script",
+                "storyboard",
+                "rights",
+            }
+        )
     ) or any(
         getattr(project.approvals, gate) == ReviewStatus.STALE
         for gate in ("claims", "script", "storyboard", "rights")
@@ -504,12 +584,45 @@ def run_qa(
                 "Imported narration duration could not be verified",
             )
         )
-        checks.append(
-            _warning(
-                "narration-script-comparison",
-                "No verified local transcription tool was used; compare narration with the approved script during final review",
+        try:
+            transcript = resolve_narration_transcript(store, narration)
+            if transcript.text is None:
+                checks.append(
+                    _warning(
+                        "narration-script-comparison",
+                        "Narration was not transcribed locally "
+                        f"({transcript.unavailable_reason}); compare it with the approved "
+                        "script during final review",
+                    )
+                )
+            else:
+                script_text = " ".join(segment.text for segment in script.segments)
+                comparison = compare_narration(script_text, transcript.text)
+                transcript_hash = stable_hash(transcript.text)[:12]
+                message = (
+                    f"Narration from {transcript.source or 'local transcript'} has "
+                    f"{comparison.word_error_rate:.1%} word error versus the approved script "
+                    f"({comparison.transcript_word_count} transcript / "
+                    f"{comparison.script_word_count} script words; transcript "
+                    f"{transcript_hash})"
+                )
+                checks.append(
+                    QACheck(
+                        check_id="narration-script-comparison",
+                        status=comparison.status,
+                        message=message,
+                        hard_blocker=comparison.status == "failure",
+                    )
+                )
+        except (OSError, ValueError) as exc:
+            checks.append(
+                _check(
+                    "narration-script-comparison",
+                    False,
+                    "Narration matches the approved script",
+                    f"Narration transcript could not be validated: {exc}",
+                )
             )
-        )
 
     expected_duration = narration_duration or storyboard_duration
     duration_valid = 45 <= expected_duration <= 75
@@ -572,13 +685,29 @@ def run_qa(
         )
     )
 
-    contrast_ratio = _contrast_ratio("#f7f9ff", "#020817")
+    contrast_pairs = _storyboard_text_contrast_pairs(storyboard)
+    contrast_results = [
+        (label, _contrast_ratio(foreground, background))
+        for label, foreground, background in contrast_pairs
+    ]
+    contrast_failures = [
+        f"{label} is {ratio:.1f}:1"
+        for label, ratio in contrast_results
+        if ratio < MIN_TEXT_CONTRAST
+    ]
+    minimum_contrast = min((ratio for _, ratio in contrast_results), default=0.0)
     checks.append(
         _check(
             "low-text-contrast",
-            contrast_ratio >= 7,
-            f"Caption contrast ratio is {contrast_ratio:.1f}:1",
-            f"Caption contrast ratio {contrast_ratio:.1f}:1 is below the AAA target",
+            not contrast_failures,
+            (
+                f"All {len(contrast_results)} rendered text/background pairs meet the "
+                f"{MIN_TEXT_CONTRAST:.1f}:1 threshold (lowest {minimum_contrast:.1f}:1)"
+            ),
+            (
+                f"Rendered text contrast is below {MIN_TEXT_CONTRAST:.1f}:1: "
+                + "; ".join(contrast_failures[:8])
+            ),
         )
     )
 
@@ -864,3 +993,75 @@ def _contrast_ratio(foreground: str, background: str) -> float:
     first, second = luminance(foreground), luminance(background)
     lighter, darker = max(first, second), min(first, second)
     return (lighter + 0.05) / (darker + 0.05)
+
+
+def _storyboard_text_contrast_pairs(
+    storyboard: StoryboardManifest,
+) -> list[tuple[str, str, str]]:
+    """Return the actual deterministic text surfaces used by the renderer.
+
+    The renderer accepts per-scene color-token overrides. Checking only one
+    caption color pair would allow an unreadable override into an otherwise
+    valid final export, so this mirrors each primitive's rendered surfaces.
+    """
+
+    pairs: list[tuple[str, str, str]] = [
+        ("captions text/background", DEFAULT_THEME_COLORS["text"], "#020817"),
+        ("source receipt text/background", "#172033", "#f5f1e8"),
+    ]
+    for scene in storyboard.scenes:
+        colors = {**DEFAULT_THEME_COLORS, **scene.theme_overrides}
+        background = colors["background"]
+        scope = scene.scene_id
+        pairs.extend(
+            (
+                (f"{scope} title text/background", colors["text"], background),
+                (f"{scope} citation/background", colors["citation"], background),
+            )
+        )
+        if "background" not in scene.theme_overrides:
+            pairs.extend(
+                (
+                    (
+                        f"{scope} title text/gradient highlight",
+                        colors["text"],
+                        DEFAULT_GRADIENT_HIGHLIGHT,
+                    ),
+                    (
+                        f"{scope} citation/gradient highlight",
+                        colors["citation"],
+                        DEFAULT_GRADIENT_HIGHLIGHT,
+                    ),
+                )
+            )
+
+        if scene.primitive == "KineticText":
+            pairs.append((f"{scope} body muted/background", colors["muted"], background))
+            if "background" not in scene.theme_overrides:
+                pairs.append(
+                    (
+                        f"{scope} body muted/gradient highlight",
+                        colors["muted"],
+                        DEFAULT_GRADIENT_HIGHLIGHT,
+                    )
+                )
+        elif scene.primitive == "MechanismDiagram":
+            if any(node.state == "active" for node in scene.visual.nodes):
+                pairs.append((f"{scope} active-node text/accent", background, colors["accent"]))
+            if any(node.state != "active" for node in scene.visual.nodes):
+                pairs.append((f"{scope} inactive-node text/background", colors["text"], "#26395f"))
+            if any(edge.label for edge in scene.visual.edges):
+                pairs.append(
+                    (f"{scope} edge-label warning/background", colors["warning"], background)
+                )
+        elif scene.primitive in {"ParameterSimulation", "Comparison"}:
+            pairs.append((f"{scope} panel text/background", colors["text"], colors["panel"]))
+        elif scene.primitive == "LimitationCard":
+            pairs.extend(
+                (
+                    (f"{scope} card title/background", colors["text"], "#2b2431"),
+                    (f"{scope} card body/background", colors["muted"], "#2b2431"),
+                    (f"{scope} card label/background", colors["warning"], "#2b2431"),
+                )
+            )
+    return pairs
