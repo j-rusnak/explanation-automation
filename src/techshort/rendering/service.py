@@ -24,6 +24,7 @@ from techshort.domain.models import (
     ScriptManifest,
     SourceIndex,
     StoryboardManifest,
+    now_utc,
 )
 from techshort.domain.storage import (
     ProjectStore,
@@ -302,6 +303,7 @@ def _build_render_manifest(
     fallback_width = PREVIEW_WIDTH if preview else project.width
     fallback_height = PREVIEW_HEIGHT if preview else project.height
     output_hashes = {relative: sha256_file(path) for relative, path in staged_outputs.items()}
+    rendered_at = now_utc()
     identity = {
         "script": stable_hash(script),
         "storyboard": stable_hash(storyboard),
@@ -311,6 +313,7 @@ def _build_render_manifest(
         "fps": metadata.fps if metadata else project.fps,
         "renderer": _renderer_version(),
         "outputs": output_hashes,
+        "rendered_at": rendered_at.isoformat(),
     }
     watermarked = payload.get("watermarked")
     if not isinstance(watermarked, bool):
@@ -333,6 +336,7 @@ def _build_render_manifest(
         output_paths=list(staged_outputs),
         output_hashes=output_hashes,
         watermarked=watermarked,
+        rendered_at=rendered_at,
     )
     return manifest
 
@@ -371,7 +375,13 @@ def _archive_active_render(store: ProjectStore, *, preview: bool) -> None:
     ):
         raise ValueError("existing render has an untracked output and cannot be replaced safely")
 
-    archive = render_directory / "versions" / manifest.render_id
+    versions = render_directory / "versions"
+    archive = versions / manifest.render_id
+    archived_manifest = archive / manifest_path.name
+    if archived_manifest.is_file() and sha256_file(archived_manifest) != sha256_file(manifest_path):
+        # Older render IDs did not include rendered_at. Preserve each exact
+        # manifest/output bundle without replacing the canonical archive.
+        archive = versions / f"{manifest.render_id}-state-{sha256_file(manifest_path)[:12]}"
     for relative, expected_hash in manifest.output_hashes.items():
         source = store.path(relative)
         if source.parent.resolve() != render_directory:

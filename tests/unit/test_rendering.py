@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -184,6 +185,26 @@ def test_active_render_is_archived_before_replacement(tmp_path: Path) -> None:
     assert (archive / "preview.mp4").read_bytes() == b"reviewed preview"
     archived_manifest = (archive / "render-manifest.json").read_bytes()
     assert archived_manifest == _render_manifest_path(store, True).read_bytes()
+
+
+def test_legacy_render_id_preserves_distinct_manifest_timestamp(tmp_path: Path) -> None:
+    store = ProjectStore(tmp_path / "projects", "render-history")
+    store.initialize("Render history")
+    manifest = active_render(store, preview=True, content=b"reviewed preview")
+    _activate_render(store, preview=True, manifest=manifest)
+    _archive_active_render(store, preview=True)
+    manifest.rendered_at += timedelta(microseconds=1)
+    manifest_path = _render_manifest_path(store, True)
+    atomic_write_model(manifest_path, manifest)
+    manifest_hash = sha256_file(manifest_path)
+
+    _archive_active_render(store, preview=True)
+
+    variant = store.path(
+        f"renders/previews/versions/{manifest.render_id}-state-{manifest_hash[:12]}"
+    )
+    assert (variant / "preview.mp4").read_bytes() == b"reviewed preview"
+    assert (variant / "render-manifest.json").read_bytes() == manifest_path.read_bytes()
 
 
 def test_render_archive_rejects_tampered_active_output(tmp_path: Path) -> None:
