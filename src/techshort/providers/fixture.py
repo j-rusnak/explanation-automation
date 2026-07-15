@@ -18,11 +18,36 @@ class FixtureProvider:
     """Deterministic provider for the original rolling-shutter fixture."""
 
     phrases = [
-        "A rolling-shutter sensor does not expose every image row at the same instant.",
-        "If an object or camera moves during that interval, each row records a slightly different moment.",
+        (
+            "A rolling-shutter sensor does not expose every image row at the same instant. "
+            "Instead, it starts or reads rows in sequence over a frame-readout interval."
+        ),
+        (
+            "If an object or camera moves during that interval, each row records a slightly "
+            "different moment. When the rows are assembled, a straight moving edge can appear "
+            "slanted and a rotating blade can appear curved."
+        ),
         "Faster motion or a longer frame readout increases the visible skew.",
         "A global shutter exposes all rows together and therefore avoids this row-timing skew.",
-        "A faster readout reduces distortion, but it does not guarantee a perfectly undistorted image.",
+        (
+            "A faster readout reduces distortion, but it does not guarantee a perfectly "
+            "undistorted image. Motion blur, lens distortion, stabilization, resampling, and "
+            "image processing can still change recorded geometry."
+        ),
+        (
+            "A simple demonstration assigns row 0 to time 0 ms and row 1000 to time 20 ms. "
+            "If an edge moves horizontally at 1 image-width per second during that readout, "
+            "the top-row offset is 0% and the bottom row records the edge about 2% of an "
+            "image-width later."
+        ),
+    ]
+    section_headings = [
+        "Rolling shutter and motion",
+        "Rolling shutter and motion",
+        "Rolling shutter and motion",
+        "Engineering comparison",
+        "Engineering comparison",
+        "Rolling shutter and motion",
     ]
 
     def evidence(self, source_text: str, source_id: str, source_hash: str) -> EvidenceManifest:
@@ -36,7 +61,7 @@ class FixtureProvider:
                 EvidenceSpan(
                     evidence_id=f"evidence-{index:02d}",
                     source_id=source_id,
-                    section_heading="Rolling shutter and motion",
+                    section_heading=self.section_headings[index - 1],
                     char_start=start,
                     char_end=end,
                     excerpt=phrase,
@@ -91,8 +116,51 @@ class FixtureProvider:
                 evidence_span_ids=["evidence-05"],
                 relationship="direct",
                 evidence_label="documented",
-                limitation="Other motion blur, lens effects, and processing can still alter the image.",
+                limitation=(
+                    "Motion blur, lens distortion, stabilization, resampling, and image "
+                    "processing can still change recorded geometry."
+                ),
                 confidence=1.0,
+            ),
+            Claim(
+                claim_id="claim-numeric-demo",
+                text=self.phrases[5],
+                evidence_span_ids=["evidence-06"],
+                relationship="direct",
+                evidence_label="documented",
+                scope="A simplified 20 ms readout example with steady horizontal motion.",
+                confidence=1.0,
+            ),
+            Claim(
+                claim_id="claim-scan-analogy",
+                text=(
+                    "Sequential row capture during motion can be compared to scanning while "
+                    "the subject moves."
+                ),
+                evidence_span_ids=["evidence-01", "evidence-02"],
+                relationship="synthesis",
+                evidence_label="inferred",
+                reasoning=(
+                    "The analogy combines documented sequential row timing with documented "
+                    "motion during the readout interval."
+                ),
+                confidence=0.9,
+            ),
+            Claim(
+                claim_id="claim-timing-interpretation",
+                text=(
+                    "Apparent blade curvature can reflect row timing plus motion rather than "
+                    "proving that the blade itself bent."
+                ),
+                evidence_span_ids=["evidence-01", "evidence-02"],
+                relationship="synthesis",
+                evidence_label="inferred",
+                reasoning=(
+                    "The source documents a rotating blade appearing curved when rows capture "
+                    "different moments; the interpretation preserves that appearance-versus-"
+                    "shape distinction."
+                ),
+                confidence=0.95,
             ),
         ]
         return ClaimsManifest(
@@ -108,58 +176,84 @@ class FixtureProvider:
         segments = [
             ScriptSegment(
                 segment_id="segment-01",
-                text="Why can a straight propeller look bent in a phone video? The shape did not suddenly change.",
+                text=(
+                    "Why can a straight rotating blade appear curved in one camera frame? "
+                    "The source explains a timing effect."
+                ),
                 segment_type="hook",
                 claim_ids=["claim-motion-skew"],
                 approximate_duration=7,
             ),
             ScriptSegment(
                 segment_id="segment-02",
-                text="Many camera sensors use a rolling shutter: they record the image row by row, so the top and bottom are captured at slightly different moments.",
+                text=(
+                    "A rolling-shutter sensor records image rows in sequence across a frame-"
+                    "readout interval. That means not every row represents the same instant."
+                ),
                 segment_type="factual",
                 claim_ids=["claim-row-timing"],
                 approximate_duration=10,
             ),
             ScriptSegment(
                 segment_id="segment-03",
-                text="When the camera or subject moves during that readout, each row sees a different position. Stack those rows, and a vertical edge can lean or wobble.",
+                text=(
+                    "If the camera or subject moves during that interval, each row records a "
+                    "different moment. Once assembled, a straight moving edge can look slanted, "
+                    "and a rotating blade can look curved."
+                ),
                 segment_type="factual",
                 claim_ids=["claim-motion-skew"],
                 approximate_duration=11,
             ),
             ScriptSegment(
                 segment_id="segment-04",
-                text="Think of scanning a page while the paper slides sideways: the scan is faithful at each instant, but the combined page is skewed.",
+                text=(
+                    "Think of scanning a page line by line while the paper slides sideways. "
+                    "Each line can be locally faithful, while the assembled page appears skewed."
+                ),
                 segment_type="analogy",
-                claim_ids=["claim-motion-skew"],
+                claim_ids=["claim-scan-analogy"],
                 approximate_duration=10,
             ),
             ScriptSegment(
                 segment_id="segment-05",
-                text="The effect grows with faster motion or a longer frame readout. A shorter readout reduces the offset between rows.",
+                text=(
+                    "Faster motion or a longer frame readout increases the visible skew. "
+                    "In the source's simple 20 ms example, the bottom-row offset is about 2%."
+                ),
                 segment_type="factual",
-                claim_ids=["claim-parameters"],
+                claim_ids=["claim-parameters", "claim-numeric-demo"],
                 approximate_duration=9,
             ),
             ScriptSegment(
                 segment_id="segment-06",
-                text="A global shutter captures all rows together, avoiding this particular row-timing distortion.",
+                text=(
+                    "A global shutter exposes all rows together, so it avoids this specific "
+                    "row-timing skew."
+                ),
                 segment_type="factual",
                 claim_ids=["claim-global"],
                 approximate_duration=7,
             ),
             ScriptSegment(
                 segment_id="segment-07",
-                text="But faster readout is not a promise of a perfect image: motion blur, lens effects, and image processing can still change what you see.",
+                text=(
+                    "But that does not promise a perfect image. Motion blur, lens distortion, "
+                    "stabilization, resampling, and image processing can still change the "
+                    "recorded geometry."
+                ),
                 segment_type="limitation",
                 claim_ids=["claim-limitation"],
                 approximate_duration=9,
             ),
             ScriptSegment(
                 segment_id="segment-08",
-                text="So the bent propeller is best read as a timing map, not a bent object.",
+                text=(
+                    "So a curved-looking blade can reveal row timing plus motion; it is not, by "
+                    "itself, proof that the blade physically bent."
+                ),
                 segment_type="cta",
-                claim_ids=[],
+                claim_ids=["claim-timing-interpretation"],
                 approximate_duration=6,
             ),
         ]
@@ -195,11 +289,11 @@ class FixtureProvider:
             ["claim-motion-skew"],
             ["claim-row-timing"],
             ["claim-motion-skew"],
-            ["claim-motion-skew"],
-            ["claim-parameters"],
+            ["claim-scan-analogy"],
+            ["claim-parameters", "claim-numeric-demo"],
             ["claim-global"],
             ["claim-limitation"],
-            [],
+            ["claim-timing-interpretation"],
         ]
         scenes: list[Scene] = []
         time = 0.0
@@ -227,12 +321,20 @@ class FixtureProvider:
                     edges=[{"source": "sensor", "target": "object", "label": "time"}],
                     citation="claim-motion-skew",
                 )
+            elif primitives[index] == "SourceReceipt":
+                visual = VisualSpec(
+                    title=titles[index],
+                    body=self.phrases[0],
+                    citation="claim-row-timing",
+                    evidence_id="evidence-01",
+                )
             elif primitives[index] == "ChartReveal":
                 visual = VisualSpec(
                     title=titles[index],
-                    series=[0, 10, 20, 30, 40],
-                    labels=["0", "5", "10", "15", "20 ms"],
-                    citation="claim-parameters",
+                    body="Top-row and bottom-row offsets in the source's simplified example",
+                    series=[0, 2],
+                    labels=["top: 0%", "bottom: about 2%"],
+                    citation="claim-numeric-demo",
                 )
             elif primitives[index] == "ParameterSimulation":
                 visual = VisualSpec(
@@ -247,7 +349,7 @@ class FixtureProvider:
                     title=titles[index],
                     left="Stationary scan",
                     right="Sliding scan",
-                    citation="claim-motion-skew",
+                    citation="claim-scan-analogy",
                 )
             scene = Scene(
                 scene_id=f"scene-{index + 1:02d}",
@@ -260,7 +362,7 @@ class FixtureProvider:
                 on_screen_text=titles[index],
                 visual=visual,
                 accessibility_description=segment.text,
-                evidence_label="DOCUMENTED" if claim_map[index] else None,
+                evidence_label=("INFERRED" if index in {3, 7} else "DOCUMENTED"),
                 dependency_hash=stable_hash(segment),
             )
             scenes.append(scene)

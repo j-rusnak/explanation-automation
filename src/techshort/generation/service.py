@@ -24,6 +24,7 @@ from techshort.domain.models import (
     StoryboardManifest,
 )
 from techshort.domain.storage import ProjectStore, atomic_write_model, load_model
+from techshort.evidence import unsupported_assertion_tokens
 from techshort.ingestion import get_active_source, get_source, verify_source_integrity
 from techshort.providers.codex_cli import CodexCliProvider
 from techshort.providers.fixture import FixtureProvider
@@ -34,8 +35,6 @@ ArtifactT = TypeVar("ArtifactT", bound=BaseModel)
 
 MAX_EVIDENCE_SPANS = 32
 SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
-NUMBER_TOKEN = re.compile(r"(?<![\w.])[+-]?(?:\d+(?:[.,]\d+)?|\.\d+)(?:\s?(?:%|ms|s|Hz))?")
-DOI_TOKEN = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+\b", re.IGNORECASE)
 SECTION_MARKER = re.compile(r"(?m)^--- (?P<heading>[^\r\n]+) ---\n")
 SENTENCE = re.compile(r"\S.*?(?:[.!?](?=\s|$)|(?=\n{2,})|$)", re.DOTALL)
 
@@ -323,10 +322,13 @@ def _prepare_manual(
 
 
 def _numbers_are_supported(claim: Claim, evidence_by_id: dict[str, EvidenceSpan]) -> bool:
-    cited = " ".join(evidence_by_id[item].excerpt for item in claim.evidence_span_ids)
-    cited_compact = re.sub(r"\s+", "", cited).casefold()
-    tokens = NUMBER_TOKEN.findall(claim.text) + DOI_TOKEN.findall(claim.text)
-    return all(re.sub(r"\s+", "", token).casefold() in cited_compact for token in tokens)
+    support = [evidence_by_id[item].excerpt for item in claim.evidence_span_ids]
+    claim_text = " ".join(
+        item
+        for item in (claim.text, claim.reasoning, claim.scope, claim.limitation)
+        if item is not None
+    )
+    return not unsupported_assertion_tokens(claim_text, support)
 
 
 def _normalize_claims(candidate: ClaimsManifest, evidence: EvidenceManifest) -> ClaimsManifest:
@@ -645,6 +647,10 @@ def _save_project_state(
     project = store.project()
     setattr(project.approvals, stage, ReviewStatus.PENDING)
     project.active_versions.update(versions)
+    if "claims_critique" in versions:
+        project.stale_artifacts = [
+            item for item in project.stale_artifacts if item != "claims_critique"
+        ]
     project.dependency_hashes[f"{stage}_prompt"] = receipt.prompt_hash
     project.dependency_hashes[f"{stage}_input"] = receipt.input_hash
     project.dependency_hashes.update(dependency_hashes or {})

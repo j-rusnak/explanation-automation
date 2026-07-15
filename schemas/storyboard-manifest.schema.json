@@ -117,6 +117,12 @@
         "evidence_label": {
           "anyOf": [
             {
+              "enum": [
+                "DOCUMENTED",
+                "MEASURED",
+                "SIMULATED",
+                "INFERRED"
+              ],
               "type": "string"
             },
             {
@@ -244,6 +250,18 @@
           },
           "title": "Edges",
           "type": "array"
+        },
+        "evidence_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Id"
         },
         "labels": {
           "items": {

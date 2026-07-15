@@ -11,6 +11,7 @@ from techshort.domain.models import (
     Claim,
     ClaimCritiqueReport,
     ClaimsManifest,
+    EvidenceManifest,
     SourceIndex,
 )
 from techshort.domain.storage import ProjectStore, load_model
@@ -195,6 +196,12 @@ def test_fixture_claims_persist_independent_critique(tmp_path: Path) -> None:
     assert critique.version_id == store.project().active_versions["claims_critique"]
     assert "human review" in critique.summary
     assert store.project().dependency_hashes["claims_critique_prompt"]
+    evidence = load_model(store.path("evidence/evidence.json"), EvidenceManifest)
+    headings = {item.evidence_id: item.section_heading for item in evidence.evidence}
+    assert headings["evidence-03"] == "Rolling shutter and motion"
+    assert headings["evidence-04"] == "Engineering comparison"
+    assert headings["evidence-05"] == "Engineering comparison"
+    assert headings["evidence-06"] == "Rolling shutter and motion"
 
 
 def test_codex_claim_generation_runs_a_distinct_critique_pass(tmp_path: Path) -> None:

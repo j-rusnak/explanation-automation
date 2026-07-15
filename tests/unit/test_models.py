@@ -48,6 +48,17 @@ def test_factual_segment_and_limitation_are_required() -> None:
         )
 
 
+@pytest.mark.parametrize("segment_type", ["transition", "cta"])
+def test_nonfactual_label_cannot_bypass_claim_link(segment_type: str) -> None:
+    with pytest.raises(ValidationError, match="requires at least one claim"):
+        ScriptSegment(
+            segment_id="misclassified",
+            text="This factual conclusion has been deliberately misclassified.",
+            segment_type=segment_type,  # type: ignore[arg-type]
+            approximate_duration=1,
+        )
+
+
 def test_stable_hash_and_filename_safety() -> None:
     assert stable_hash({"b": 2, "a": 1}) == stable_hash({"a": 1, "b": 2})
     assert sanitize_filename("../hostile name.md") == "hostile-name.md"

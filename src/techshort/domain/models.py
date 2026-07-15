@@ -213,11 +213,11 @@ class ScriptSegment(StrictModel):
     approval_hash: str | None = None
 
     @model_validator(mode="after")
-    def factual_requires_claims(self) -> ScriptSegment:
-        if (
-            self.segment_type in {"factual", "hook", "analogy", "caveat", "limitation"}
-            and not self.claim_ids
-        ):
+    def every_segment_requires_claims(self) -> ScriptSegment:
+        # Requiring a contextual claim even for transitions and CTAs closes a
+        # deterministic misclassification loophole: factual prose cannot be made
+        # citation-free merely by labelling it as a transition or CTA.
+        if not self.claim_ids:
             raise ValueError(f"{self.segment_type} segment requires at least one claim")
         return self
 
@@ -273,8 +273,9 @@ class VisualSpec(BaseModel):
     left: str | None = None
     right: str | None = None
     citation: str | None = None
+    evidence_id: str | None = None
 
-    @field_validator("title", "body", "left", "right", "citation")
+    @field_validator("title", "body", "left", "right", "citation", "evidence_id")
     @classmethod
     def no_executable_markup(cls, value: str | None) -> str | None:
         return validate_inert_text(value) if value is not None else None
@@ -319,7 +320,7 @@ class Scene(StrictModel):
     visual: VisualSpec
     asset_ids: list[str] = Field(default_factory=list)
     accessibility_description: str
-    evidence_label: str | None = None
+    evidence_label: Literal["DOCUMENTED", "MEASURED", "SIMULATED", "INFERRED"] | None = None
     theme_overrides: dict[str, str] = Field(default_factory=dict)
     review_status: ReviewStatus = ReviewStatus.PENDING
     dependency_hash: str
