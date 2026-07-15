@@ -27,6 +27,8 @@ Assert-NativeSuccess "Python dependency install"
 Assert-NativeSuccess "techshort editable install"
 npm.cmd ci
 Assert-NativeSuccess "npm dependency install"
+npm.cmd exec remotion -- browser ensure
+Assert-NativeSuccess "Remotion browser install"
 & .\.venv\Scripts\python.exe scripts\export_schemas.py
 Assert-NativeSuccess "JSON Schema export"
 & .\.venv\Scripts\techshort.exe doctor
