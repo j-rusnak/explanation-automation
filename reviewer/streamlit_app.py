@@ -12,9 +12,17 @@ import streamlit as st
 from pydantic import BaseModel
 
 from techshort.alignment import cues_from_script, write_caption_files
-from techshort.audio import active_audio, import_audio, probe_duration
+from techshort.audio import (
+    active_audio,
+    active_transcript,
+    import_audio,
+    import_transcript,
+    probe_duration,
+)
 from techshort.domain.hashing import sha256_file, stable_hash
 from techshort.domain.models import (
+    AngleSelection,
+    AnglesManifest,
     AssetManifest,
     ClaimCritiqueReport,
     ClaimsManifest,
@@ -28,6 +36,7 @@ from techshort.domain.models import (
 )
 from techshort.domain.storage import ProjectStore, load_model, sanitize_filename
 from techshort.export import export_project, generate_evidence_page
+from techshort.generation import select_angle
 from techshort.qa import run_qa
 from techshort.rendering import render_video
 from techshort.review import (
@@ -145,6 +154,10 @@ def _import_uploaded_audio(
     uploaded_name: str,
     uploaded_bytes: bytes,
     rights_status: str,
+    creator: str,
+    license_name: str,
+    source_url: str,
+    required_attribution: str,
 ) -> Path:
     if len(uploaded_bytes) > 200 * 1024 * 1024:
         raise ValueError("audio exceeds the 200 MiB limit")
@@ -152,7 +165,27 @@ def _import_uploaded_audio(
     with tempfile.TemporaryDirectory(prefix="techshort-audio-") as temporary:
         staged = Path(temporary) / filename
         staged.write_bytes(uploaded_bytes)
-        return import_audio(store, staged, rights_status)
+        return import_audio(
+            store,
+            staged,
+            rights_status,
+            creator=creator or None,
+            license_name=license_name or None,
+            source_url=source_url or None,
+            required_attribution=required_attribution or None,
+        )
+
+
+def _import_uploaded_transcript(
+    store: ProjectStore, uploaded_name: str, uploaded_bytes: bytes
+) -> Path:
+    if len(uploaded_bytes) > 128 * 1024:
+        raise ValueError("narration transcript exceeds the 128 KiB safety limit")
+    filename = sanitize_filename(uploaded_name)
+    with tempfile.TemporaryDirectory(prefix="techshort-transcript-") as temporary:
+        staged = Path(temporary) / filename
+        staged.write_bytes(uploaded_bytes)
+        return import_transcript(store, staged)
 
 
 def _edit_scene_from_json(
@@ -444,6 +477,42 @@ def _show_claims(store: ProjectStore, reviewer: str) -> None:
 
 
 def _show_script(store: ProjectStore, reviewer: str) -> None:
+    angles = _load_if(store, "script/angles.json", AnglesManifest)
+    selection = _load_if(store, "script/angle-selection.json", AngleSelection)
+    st.subheader("Explainer angle")
+    if angles is None:
+        st.info(
+            "Generate the three candidates with `techshort script angles <project>`, then "
+            "select one before script generation."
+        )
+    else:
+        project = store.project()
+        if project.active_versions.get("angles") != angles.version_id:
+            st.warning("These angle candidates are stale; regenerate them from current claims.")
+        for candidate in angles.candidates:
+            with st.container(border=True):
+                st.markdown(f"#### {candidate.title}")
+                st.caption(candidate.angle)
+                st.write(candidate.rationale)
+                st.caption("Central approved claims: " + ", ".join(candidate.central_claim_ids))
+                is_selected = bool(
+                    selection
+                    and selection.angles_version_id == angles.version_id
+                    and selection.selected_angle == candidate.angle
+                    and project.active_versions.get("angle_selection") == selection.selection_id
+                )
+                if is_selected:
+                    st.success("Selected for the current script")
+                _perform(
+                    "Select this angle",
+                    f"angle-select-{candidate.angle}",
+                    select_angle,
+                    store,
+                    candidate.angle,
+                    disabled=is_selected
+                    or project.active_versions.get("angles") != angles.version_id,
+                )
+
     script = _load_if(store, "script/script.json", ScriptManifest)
     if script is None:
         st.info("Generate a script after approving claims.")
@@ -726,6 +795,23 @@ def _show_narration(store: ProjectStore) -> None:
         help="Unknown blocks export. Choose user-owned only if you own this recording.",
         key="narration-rights-status",
     )
+    creator = st.text_input(
+        "Narration creator",
+        help="Required with an explicit license; recommended for every recording.",
+        key="narration-creator",
+    )
+    license_name = st.text_input(
+        "Narration license (required for permissively licensed audio)",
+        key="narration-license",
+    )
+    source_url = st.text_input(
+        "Narration source URL (optional)",
+        key="narration-source-url",
+    )
+    required_attribution = st.text_input(
+        "Narration required attribution (optional)",
+        key="narration-attribution",
+    )
     if uploaded is not None:
         _perform(
             "Import narration",
@@ -735,11 +821,50 @@ def _show_narration(store: ProjectStore) -> None:
             uploaded.name,
             bytes(uploaded.getbuffer()),
             rights_status,
+            creator,
+            license_name,
+            source_url,
+            required_attribution,
         )
     else:
         st.button(
             "Import narration",
             key="narration-import-disabled",
+            disabled=True,
+            width="stretch",
+        )
+    transcript = None
+    transcript_error = None
+    if narration:
+        try:
+            transcript = active_transcript(store)
+        except (OSError, ValueError) as exc:
+            transcript_error = str(exc)
+    if transcript_error:
+        st.error(transcript_error)
+    elif transcript:
+        st.success(f"Hash-bound narration transcript: {transcript[1].name}")
+        with st.expander("Review narration transcript"):
+            st.text(transcript[0])
+    transcript_upload = st.file_uploader(
+        "Import a UTF-8 narration transcript",
+        type=["txt"],
+        key="narration-transcript-upload",
+        help="The transcript is bound to the exact active audio hash and used for QA comparison.",
+    )
+    if narration is not None and transcript_upload is not None:
+        _perform(
+            "Import transcript",
+            "narration-transcript-import",
+            _import_uploaded_transcript,
+            store,
+            transcript_upload.name,
+            bytes(transcript_upload.getbuffer()),
+        )
+    else:
+        st.button(
+            "Import transcript",
+            key="narration-transcript-import-disabled",
             disabled=True,
             width="stretch",
         )
@@ -758,7 +883,8 @@ def _show_narration(store: ProjectStore) -> None:
             st.warning(f"{extension.upper()} captions are missing.")
     st.caption(
         "When narration duration is readable, deterministic caption and scene timing scales to "
-        "that duration. Optional transcription/alignment is not required."
+        "that duration. A hash-bound transcript enables deterministic narration-to-script QA; "
+        "otherwise final review must compare the recording manually."
     )
 
 

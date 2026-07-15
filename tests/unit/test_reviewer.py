@@ -5,9 +5,15 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from techshort.domain.models import ClaimsManifest
+from techshort.domain.models import AnglesManifest, ClaimsManifest
 from techshort.domain.storage import ProjectStore, load_model
-from techshort.generation import fixture_claims, fixture_script, fixture_storyboard
+from techshort.generation import (
+    fixture_claims,
+    fixture_script,
+    fixture_storyboard,
+    generate_angles,
+    select_angle,
+)
 from techshort.ingestion import ingest_source
 from techshort.review import approve_claims, approve_script
 
@@ -19,6 +25,8 @@ def _reviewable_project(tmp_path: Path) -> Path:
     ingest_source(store, Path("examples/rolling-shutter/rolling-shutter.md"))
     fixture_claims(store)
     approve_claims(store, "test-reviewer")
+    generate_angles(store, "fixture")
+    select_angle(store, "everyday-mechanism")
     fixture_script(store)
     approve_script(store, "test-reviewer")
     fixture_storyboard(store)
@@ -71,3 +79,19 @@ def test_claim_step_exposes_individual_review_controls(
         assert app.button(key=f"claim-edit-{claim_id}")
         assert app.button(key=f"claim-reject-{claim_id}")
         assert app.button(key=f"claim-add-note-{claim_id}")
+
+
+def test_script_step_shows_all_angles_and_explicit_selection_controls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    projects = _reviewable_project(tmp_path)
+    store = ProjectStore(projects, "review-app")
+    angles = load_model(store.path("script/angles.json"), AnglesManifest)
+    monkeypatch.setenv("TECHSHORT_PROJECTS_ROOT", str(projects))
+    app = AppTest.from_file("reviewer/streamlit_app.py", default_timeout=30).run()
+    app.sidebar.radio(key="review-step").set_value("4 Script")
+    app.run()
+    assert not app.exception
+    for candidate in angles.candidates:
+        assert any(candidate.title in item.value for item in app.markdown)
+        assert app.button(key=f"angle-select-{candidate.angle}")
