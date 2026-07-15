@@ -1,0 +1,17 @@
+.venv/
+node_modules/
+dist/
+build/
+*.egg-info/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.streamlit/secrets.toml
+.env
+.tooling-*
+projects/*/
+!projects/.gitkeep
+renderer/public/project-data.json
+renderer/public/audio.*
+coverage/

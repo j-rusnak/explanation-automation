@@ -1,0 +1,135 @@
+{
+  "$defs": {
+    "ReviewStatus": {
+      "enum": [
+        "pending",
+        "approved",
+        "rejected",
+        "stale"
+      ],
+      "title": "ReviewStatus",
+      "type": "string"
+    },
+    "ScriptSegment": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "segment_id": {
+          "title": "Segment Id",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "segment_type": {
+          "enum": [
+            "factual",
+            "hook",
+            "transition",
+            "analogy",
+            "caveat",
+            "limitation",
+            "cta"
+          ],
+          "title": "Segment Type",
+          "type": "string"
+        },
+        "claim_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Claim Ids",
+          "type": "array"
+        },
+        "approximate_duration": {
+          "exclusiveMinimum": 0,
+          "title": "Approximate Duration",
+          "type": "number"
+        },
+        "pronunciation_notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pronunciation Notes"
+        },
+        "review_status": {
+          "$ref": "#/$defs/ReviewStatus",
+          "default": "pending"
+        },
+        "approval_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approval Hash"
+        }
+      },
+      "required": [
+        "segment_id",
+        "text",
+        "segment_type",
+        "approximate_duration"
+      ],
+      "title": "ScriptSegment",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "version_id": {
+      "title": "Version Id",
+      "type": "string"
+    },
+    "claims_version_id": {
+      "title": "Claims Version Id",
+      "type": "string"
+    },
+    "angle": {
+      "enum": [
+        "surprising-result",
+        "everyday-mechanism",
+        "engineering-tradeoff"
+      ],
+      "title": "Angle",
+      "type": "string"
+    },
+    "segments": {
+      "items": {
+        "$ref": "#/$defs/ScriptSegment"
+      },
+      "title": "Segments",
+      "type": "array"
+    }
+  },
+  "required": [
+    "version_id",
+    "claims_version_id",
+    "angle",
+    "segments"
+  ],
+  "title": "ScriptManifest",
+  "type": "object"
+}

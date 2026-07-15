@@ -1,0 +1,117 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "render_id": {
+      "title": "Render Id",
+      "type": "string"
+    },
+    "width": {
+      "title": "Width",
+      "type": "integer"
+    },
+    "height": {
+      "title": "Height",
+      "type": "integer"
+    },
+    "fps": {
+      "title": "Fps",
+      "type": "number"
+    },
+    "duration": {
+      "title": "Duration",
+      "type": "number"
+    },
+    "codec": {
+      "title": "Codec",
+      "type": "string"
+    },
+    "script_hash": {
+      "title": "Script Hash",
+      "type": "string"
+    },
+    "storyboard_hash": {
+      "title": "Storyboard Hash",
+      "type": "string"
+    },
+    "scene_versions": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Scene Versions",
+      "type": "object"
+    },
+    "asset_hashes": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Asset Hashes",
+      "type": "object"
+    },
+    "audio_hash": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Audio Hash"
+    },
+    "renderer_version": {
+      "title": "Renderer Version",
+      "type": "string"
+    },
+    "prompt_versions": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Prompt Versions",
+      "type": "object"
+    },
+    "source_hashes": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Source Hashes",
+      "type": "object"
+    },
+    "output_paths": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Output Paths",
+      "type": "array"
+    },
+    "rendered_at": {
+      "format": "date-time",
+      "title": "Rendered At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "render_id",
+    "width",
+    "height",
+    "fps",
+    "duration",
+    "codec",
+    "script_hash",
+    "storyboard_hash",
+    "scene_versions",
+    "asset_hashes",
+    "renderer_version",
+    "prompt_versions",
+    "source_hashes",
+    "output_paths"
+  ],
+  "title": "RenderManifest",
+  "type": "object"
+}

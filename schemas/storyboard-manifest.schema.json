@@ -1,0 +1,352 @@
+{
+  "$defs": {
+    "EdgeSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "target": {
+          "title": "Target",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        }
+      },
+      "required": [
+        "source",
+        "target"
+      ],
+      "title": "EdgeSpec",
+      "type": "object"
+    },
+    "NodeSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "x": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Y",
+          "type": "number"
+        },
+        "state": {
+          "default": "normal",
+          "enum": [
+            "normal",
+            "active",
+            "muted"
+          ],
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "x",
+        "y"
+      ],
+      "title": "NodeSpec",
+      "type": "object"
+    },
+    "ReviewStatus": {
+      "enum": [
+        "pending",
+        "approved",
+        "rejected",
+        "stale"
+      ],
+      "title": "ReviewStatus",
+      "type": "string"
+    },
+    "Scene": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "scene_id": {
+          "title": "Scene Id",
+          "type": "string"
+        },
+        "order": {
+          "minimum": 0,
+          "title": "Order",
+          "type": "integer"
+        },
+        "start_time": {
+          "minimum": 0,
+          "title": "Start Time",
+          "type": "number"
+        },
+        "duration": {
+          "exclusiveMinimum": 0,
+          "title": "Duration",
+          "type": "number"
+        },
+        "transition": {
+          "default": "fade",
+          "enum": [
+            "cut",
+            "fade",
+            "slide"
+          ],
+          "title": "Transition",
+          "type": "string"
+        },
+        "primitive": {
+          "enum": [
+            "KineticText",
+            "SourceReceipt",
+            "MechanismDiagram",
+            "ChartReveal",
+            "ParameterSimulation",
+            "Comparison",
+            "LimitationCard"
+          ],
+          "title": "Primitive",
+          "type": "string"
+        },
+        "script_segment_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Script Segment Ids",
+          "type": "array"
+        },
+        "claim_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Claim Ids",
+          "type": "array"
+        },
+        "on_screen_text": {
+          "title": "On Screen Text",
+          "type": "string"
+        },
+        "visual": {
+          "$ref": "#/$defs/VisualSpec"
+        },
+        "asset_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Asset Ids",
+          "type": "array"
+        },
+        "accessibility_description": {
+          "title": "Accessibility Description",
+          "type": "string"
+        },
+        "evidence_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Label"
+        },
+        "theme_overrides": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Theme Overrides",
+          "type": "object"
+        },
+        "review_status": {
+          "$ref": "#/$defs/ReviewStatus",
+          "default": "pending"
+        },
+        "dependency_hash": {
+          "title": "Dependency Hash",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scene_id",
+        "order",
+        "start_time",
+        "duration",
+        "primitive",
+        "script_segment_ids",
+        "on_screen_text",
+        "visual",
+        "accessibility_description",
+        "dependency_hash"
+      ],
+      "title": "Scene",
+      "type": "object"
+    },
+    "VisualSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "body": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Body"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/NodeSpec"
+          },
+          "title": "Nodes",
+          "type": "array"
+        },
+        "edges": {
+          "items": {
+            "$ref": "#/$defs/EdgeSpec"
+          },
+          "title": "Edges",
+          "type": "array"
+        },
+        "series": {
+          "items": {
+            "type": "number"
+          },
+          "maxItems": 30,
+          "title": "Series",
+          "type": "array"
+        },
+        "labels": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 30,
+          "title": "Labels",
+          "type": "array"
+        },
+        "parameter": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parameter"
+        },
+        "left": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Left"
+        },
+        "right": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Right"
+        },
+        "citation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Citation"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "title": "VisualSpec",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "version_id": {
+      "title": "Version Id",
+      "type": "string"
+    },
+    "script_version_id": {
+      "title": "Script Version Id",
+      "type": "string"
+    },
+    "scenes": {
+      "items": {
+        "$ref": "#/$defs/Scene"
+      },
+      "title": "Scenes",
+      "type": "array"
+    }
+  },
+  "required": [
+    "version_id",
+    "script_version_id",
+    "scenes"
+  ],
+  "title": "StoryboardManifest",
+  "type": "object"
+}

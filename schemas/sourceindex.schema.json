@@ -1,0 +1,114 @@
+{
+  "$defs": {
+    "SourceDocument": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "source_id": {
+          "title": "Source Id",
+          "type": "string"
+        },
+        "source_type": {
+          "enum": [
+            "pdf",
+            "markdown",
+            "text"
+          ],
+          "title": "Source Type",
+          "type": "string"
+        },
+        "original_filename": {
+          "title": "Original Filename",
+          "type": "string"
+        },
+        "content_hash": {
+          "title": "Content Hash",
+          "type": "string"
+        },
+        "local_path": {
+          "title": "Local Path",
+          "type": "string"
+        },
+        "ingested_at": {
+          "format": "date-time",
+          "title": "Ingested At",
+          "type": "string"
+        },
+        "page_or_section_count": {
+          "title": "Page Or Section Count",
+          "type": "integer"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Metadata",
+          "type": "object"
+        },
+        "rights_status": {
+          "default": "unknown",
+          "title": "Rights Status",
+          "type": "string"
+        },
+        "extraction_warnings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Extraction Warnings",
+          "type": "array"
+        },
+        "appears_incomplete": {
+          "default": false,
+          "title": "Appears Incomplete",
+          "type": "boolean"
+        },
+        "ocr_required": {
+          "default": false,
+          "title": "Ocr Required",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "source_id",
+        "source_type",
+        "original_filename",
+        "content_hash",
+        "local_path",
+        "page_or_section_count",
+        "title"
+      ],
+      "title": "SourceDocument",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "sources": {
+      "items": {
+        "$ref": "#/$defs/SourceDocument"
+      },
+      "title": "Sources",
+      "type": "array"
+    }
+  },
+  "required": [
+    "sources"
+  ],
+  "title": "SourceIndex",
+  "type": "object"
+}

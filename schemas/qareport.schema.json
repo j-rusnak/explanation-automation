@@ -1,0 +1,77 @@
+{
+  "$defs": {
+    "QACheck": {
+      "additionalProperties": false,
+      "properties": {
+        "check_id": {
+          "title": "Check Id",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "pass",
+            "warning",
+            "failure"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "hard_blocker": {
+          "default": false,
+          "title": "Hard Blocker",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "check_id",
+        "status",
+        "message"
+      ],
+      "title": "QACheck",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "title": "Generated At",
+      "type": "string"
+    },
+    "checks": {
+      "items": {
+        "$ref": "#/$defs/QACheck"
+      },
+      "title": "Checks",
+      "type": "array"
+    },
+    "export_blockers": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Export Blockers",
+      "type": "array"
+    }
+  },
+  "required": [
+    "project_id",
+    "checks",
+    "export_blockers"
+  ],
+  "title": "QAReport",
+  "type": "object"
+}
