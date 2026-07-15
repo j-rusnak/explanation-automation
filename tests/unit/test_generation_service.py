@@ -8,18 +8,23 @@ import pytest
 from pydantic import ValidationError
 
 from techshort.domain.models import (
+    AngleSelection,
+    AnglesManifest,
     Claim,
     ClaimCritiqueReport,
     ClaimsManifest,
     EvidenceManifest,
+    SourceDocument,
     SourceIndex,
 )
 from techshort.domain.storage import ProjectStore, load_model
 from techshort.generation import (
     build_evidence_candidates,
+    generate_angles,
     generate_claims,
     generate_script,
     generate_storyboard,
+    select_angle,
 )
 from techshort.ingestion import ingest_source
 from techshort.providers import CodexRunMetadata, FixtureProvider, ManualPromptPacket
@@ -55,6 +60,41 @@ def test_deterministic_evidence_candidates_resolve_exactly(tmp_path: Path) -> No
     for span in first.evidence:
         assert text[span.char_start : span.char_end] == span.excerpt
         assert span.source_hash == source.content_hash
+
+
+def test_pdf_evidence_uses_stored_printed_label_without_fabricating_one() -> None:
+    text = "--- Page 1 ---\nA deterministic PDF sentence provides enough text for evidence."
+    source = SourceDocument(
+        source_id="source-pdf",
+        source_type="pdf",
+        original_filename="fixture.pdf",
+        content_hash="a" * 64,
+        extracted_text_hash="b" * 64,
+        local_path="sources/originals/fixture.pdf",
+        page_or_section_count=1,
+        title="Fixture",
+    )
+
+    without_metadata = build_evidence_candidates(text, source)
+    assert without_metadata.evidence[0].page_index == 0
+    assert without_metadata.evidence[0].printed_page_label is None
+
+    with_metadata = build_evidence_candidates(
+        text,
+        source,
+        section_locations=[
+            {
+                "index": 0,
+                "heading": "Page 1",
+                "start": len("--- Page 1 ---\n"),
+                "end": len(text),
+                "page_index": 0,
+                "printed_page_label": "iv",
+            }
+        ],
+    )
+    assert with_metadata.evidence[0].page_index == 0
+    assert with_metadata.evidence[0].printed_page_label == "iv"
 
 
 def test_manual_claim_packet_and_strict_project_local_import(tmp_path: Path) -> None:
@@ -159,10 +199,18 @@ def test_manual_script_and_storyboard_share_the_service_contract(tmp_path: Path)
     claims = generate_claims(store, "fixture").require_artifact()
     approve_claims(store, "test")
     claims = load_model(store.path("claims/claims.json"), ClaimsManifest)
+    generate_angles(store, "fixture").require_artifact()
 
     script_pending = generate_script(store, "manual")
     assert script_pending.requires_manual_import
-    script_candidate = FixtureProvider().generate_script(claims, "everyday-mechanism")
+    angles = load_model(store.path("script/angles.json"), AnglesManifest)
+    selection = load_model(store.path("script/angle-selection.json"), AngleSelection)
+    script_candidate = FixtureProvider().generate_script(
+        claims,
+        "everyday-mechanism",
+        angles_version_id=angles.version_id,
+        angle_selection_id=selection.selection_id,
+    )
     store.path("script/manual-result.json").write_text(
         script_candidate.model_dump_json(indent=2), encoding="utf-8"
     )
@@ -184,6 +232,110 @@ def test_manual_script_and_storyboard_share_the_service_contract(tmp_path: Path)
     ).require_artifact()
     assert len(storyboard.scenes) == len(script.segments)
     assert all(scene.review_status == "pending" for scene in storyboard.scenes)
+
+
+def test_three_angles_require_explicit_hash_bound_selection(tmp_path: Path) -> None:
+    store = _rolling_store(tmp_path)
+    generate_claims(store, "fixture").require_artifact()
+    approve_claims(store, "test")
+
+    angles = generate_angles(store, "fixture").require_artifact()
+    assert [candidate.angle for candidate in angles.candidates] == [
+        "surprising-result",
+        "everyday-mechanism",
+        "engineering-tradeoff",
+    ]
+    assert all(candidate.title and candidate.rationale for candidate in angles.candidates)
+    assert not store.path("script/angle-selection.json").exists()
+
+    selection = select_angle(store, "engineering-tradeoff")
+    assert selection.angles_version_id == angles.version_id
+    assert store.project().active_versions["angle_selection"] == selection.selection_id
+    script = generate_script(
+        store,
+        "fixture",
+        angle="engineering-tradeoff",
+    ).require_artifact()
+    assert script.angles_version_id == angles.version_id
+    assert script.angle_selection_id == selection.selection_id
+    assert script.angle == "engineering-tradeoff"
+
+    changed = select_angle(store, "surprising-result")
+    assert changed.selection_id != selection.selection_id
+    assert store.project().approvals.script == "stale"
+    assert store.path(f"script/versions/{selection.selection_id}.json").is_file()
+
+
+def test_manual_angles_packet_imports_strict_three_candidate_artifact(tmp_path: Path) -> None:
+    store = _rolling_store(tmp_path)
+    claims = generate_claims(store, "fixture").require_artifact()
+    approve_claims(store, "test")
+
+    pending = generate_angles(store, "manual")
+    assert pending.requires_manual_import
+    assert pending.prompt_packet == store.path("script/angles-manual-prompt.json")
+    packet = ManualPromptPacket.model_validate_json(
+        pending.prompt_packet.read_text(encoding="utf-8")
+    )
+    assert packet.task == "angles"
+    candidate = FixtureProvider().generate_angles(claims)
+    result = store.path("script/manual-angles-result.json")
+    result.write_text(candidate.model_dump_json(indent=2), encoding="utf-8")
+    imported = generate_angles(
+        store,
+        "manual",
+        manual_result="script/manual-angles-result.json",
+    ).require_artifact()
+    assert len(imported.candidates) == 3
+    assert imported.version_id == store.project().active_versions["angles"]
+    assert store.path("script/angles-generation-receipt.json").is_file()
+
+
+def test_nonfixture_script_rejects_missing_current_angle_artifact(tmp_path: Path) -> None:
+    store = _rolling_store(tmp_path)
+    generate_claims(store, "fixture").require_artifact()
+    approve_claims(store, "test")
+
+    with pytest.raises(ValueError, match="current angle candidates are required"):
+        generate_script(store, "manual")
+
+
+def test_codex_angle_generation_uses_schema_constrained_provider(tmp_path: Path) -> None:
+    store = _rolling_store(tmp_path)
+    claims = generate_claims(store, "fixture").require_artifact()
+    approve_claims(store, "test")
+
+    class FakeCodex:
+        def __init__(self) -> None:
+            self.models: list[type[Any]] = []
+            self.last_run: CodexRunMetadata | None = None
+
+        def generate(
+            self,
+            instruction: str,
+            excerpts: list[dict[str, object]],
+            model: type[Any],
+        ) -> Any:
+            assert "exactly three" in instruction
+            assert excerpts
+            self.models.append(model)
+            self.last_run = CodexRunMetadata(
+                prompt_version="test-codex-v1",
+                prompt_hash="c" * 64,
+                input_hash="d" * 64,
+                attempts=1,
+                flags=("--sandbox", "read-only"),
+            )
+            return FixtureProvider().generate_angles(claims)
+
+    provider = FakeCodex()
+    angles = generate_angles(
+        store,
+        "codex",
+        codex_provider=provider,  # type: ignore[arg-type]
+    ).require_artifact()
+    assert provider.models == [AnglesManifest]
+    assert angles.version_id == store.project().active_versions["angles"]
 
 
 def test_fixture_claims_persist_independent_critique(tmp_path: Path) -> None:

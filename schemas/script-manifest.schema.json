@@ -102,6 +102,14 @@
       "title": "Angle",
       "type": "string"
     },
+    "angle_selection_id": {
+      "title": "Angle Selection Id",
+      "type": "string"
+    },
+    "angles_version_id": {
+      "title": "Angles Version Id",
+      "type": "string"
+    },
     "claims_version_id": {
       "title": "Claims Version Id",
       "type": "string"
@@ -127,6 +135,8 @@
   "required": [
     "version_id",
     "claims_version_id",
+    "angles_version_id",
+    "angle_selection_id",
     "angle",
     "segments"
   ],

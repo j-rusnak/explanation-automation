@@ -50,6 +50,41 @@ def test_missing_codex_fails_clearly() -> None:
         provider.generate("test", [], TinyResult)
 
 
+def test_codex_readiness_requires_saved_auth_without_leaking_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(args: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        if args[-1] == "--help":
+            return subprocess.CompletedProcess(args, 0, stdout=HELP)
+        assert args == ["codex", "login", "status"]
+        return subprocess.CompletedProcess(args, 1, stdout="", stderr="token=must-not-appear")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    ready, message = CodexCliProvider(executable="codex").readiness()
+    assert not ready
+    assert "not authenticated" in message
+    assert "must-not-appear" not in message
+
+
+def test_codex_readiness_accepts_bounded_login_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[-1] == "--help":
+            return subprocess.CompletedProcess(args, 0, stdout=HELP)
+        return subprocess.CompletedProcess(args, 0, stdout="Logged in using ChatGPT\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    provider = CodexCliProvider(executable="codex")
+    ready, message = provider.readiness()
+    assert ready
+    assert "authenticated using ChatGPT" in message
+    assert calls == [["codex", "exec", "--help"], ["codex", "login", "status"]]
+
+
 def test_codex_schema_requires_defaulted_fields_and_removes_defaults() -> None:
     schema = _strict_output_schema(DefaultedResult.model_json_schema())
     assert isinstance(schema, dict)

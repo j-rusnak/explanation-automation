@@ -1,0 +1,46 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "angles_version_id": {
+      "title": "Angles Version Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "selected_angle": {
+      "enum": [
+        "surprising-result",
+        "everyday-mechanism",
+        "engineering-tradeoff"
+      ],
+      "title": "Selected Angle",
+      "type": "string"
+    },
+    "selected_at": {
+      "format": "date-time",
+      "title": "Selected At",
+      "type": "string"
+    },
+    "selected_candidate_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Selected Candidate Hash",
+      "type": "string"
+    },
+    "selection_id": {
+      "title": "Selection Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "selection_id",
+    "angles_version_id",
+    "selected_angle",
+    "selected_candidate_hash"
+  ],
+  "title": "AngleSelection",
+  "type": "object"
+}

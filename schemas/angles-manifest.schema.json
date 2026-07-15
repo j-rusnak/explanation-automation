@@ -1,0 +1,80 @@
+{
+  "$defs": {
+    "AngleCandidate": {
+      "additionalProperties": false,
+      "properties": {
+        "angle": {
+          "enum": [
+            "surprising-result",
+            "everyday-mechanism",
+            "engineering-tradeoff"
+          ],
+          "title": "Angle",
+          "type": "string"
+        },
+        "central_claim_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "title": "Central Claim Ids",
+          "type": "array"
+        },
+        "rationale": {
+          "maxLength": 800,
+          "minLength": 12,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 120,
+          "minLength": 3,
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "angle",
+        "title",
+        "rationale",
+        "central_claim_ids"
+      ],
+      "title": "AngleCandidate",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "candidates": {
+      "items": {
+        "$ref": "#/$defs/AngleCandidate"
+      },
+      "maxItems": 3,
+      "minItems": 3,
+      "title": "Candidates",
+      "type": "array"
+    },
+    "claims_version_id": {
+      "title": "Claims Version Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "version_id": {
+      "title": "Version Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "version_id",
+    "claims_version_id",
+    "candidates"
+  ],
+  "title": "AnglesManifest",
+  "type": "object"
+}

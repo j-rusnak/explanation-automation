@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from techshort.domain.models import (
+    AngleSelection,
+    AnglesManifest,
     AssetManifest,
     ClaimCritiqueReport,
     ClaimsManifest,
@@ -25,6 +27,8 @@ MODELS = (
     EvidenceManifest,
     ClaimCritiqueReport,
     ClaimsManifest,
+    AnglesManifest,
+    AngleSelection,
     ScriptManifest,
     StoryboardManifest,
     AssetManifest,
