@@ -16,7 +16,7 @@ from techshort import __version__
 from techshort.alignment import cues_from_script, write_caption_files
 from techshort.audio import active_audio, import_audio, probe_duration
 from techshort.domain.hashing import sha256_file, stable_hash
-from techshort.domain.models import QAReport, ReviewStatus, ScriptManifest
+from techshort.domain.models import ClaimCritiqueReport, QAReport, ReviewStatus, ScriptManifest
 from techshort.domain.storage import ProjectStore, load_model
 from techshort.export import export_project, generate_evidence_page
 from techshort.generation import generate_claims, generate_script, generate_storyboard
@@ -250,8 +250,10 @@ def claims_generate(
             )
             return
         claims = outcome.require_artifact()
+        critique = load_model(store(slug).path("claims/critique.json"), ClaimCritiqueReport)
         console.print(
             f"Generated {len(claims.claims)} {selected} claims; "
+            f"independent critique found {len(critique.issues)} candidate issue(s); "
             f"run `techshort review {slug} --gate claims`"
         )
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:

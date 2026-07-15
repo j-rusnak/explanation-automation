@@ -65,6 +65,7 @@ def test_claim_step_exposes_individual_review_controls(
     app.sidebar.radio(key="review-step").set_value("3 Claims and evidence")
     app.run()
     assert not app.exception
+    assert any("Independent critique" in item.value for item in app.subheader)
     for claim_id in (claim.claim_id for claim in claims.claims):
         assert app.button(key=f"claim-approve-{claim_id}")
         assert app.button(key=f"claim-edit-{claim_id}")

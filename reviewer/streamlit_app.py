@@ -16,6 +16,7 @@ from techshort.audio import active_audio, import_audio, probe_duration
 from techshort.domain.hashing import sha256_file, stable_hash
 from techshort.domain.models import (
     AssetManifest,
+    ClaimCritiqueReport,
     ClaimsManifest,
     EvidenceManifest,
     QAReport,
@@ -320,6 +321,26 @@ def _show_claims(store: ProjectStore, reviewer: str) -> None:
     if claims is None or evidence is None:
         st.info("Generate claims after ingesting a source.")
         return
+    critique = _load_if(store, "claims/critique.json", ClaimCritiqueReport)
+    if critique is None:
+        st.warning("The independent claim critique report is missing; regenerate claims.")
+    else:
+        with st.container(border=True):
+            st.subheader("Independent critique")
+            st.caption(
+                f"{critique.provider} pass · {len(critique.issues)} candidate issue(s) · "
+                "critique is not approval"
+            )
+            st.write(critique.summary)
+            for issue in critique.issues:
+                message = (
+                    f"{issue.severity.upper()} · {issue.category} · {issue.claim_id}: "
+                    f"{issue.message}"
+                )
+                if issue.severity == "warning":
+                    st.warning(message)
+                else:
+                    st.error(message)
     evidence_map = {item.evidence_id: item for item in evidence.evidence}
     for claim in claims.claims:
         with st.container(border=True):
