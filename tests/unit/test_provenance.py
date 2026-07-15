@@ -65,6 +65,7 @@ def test_schema_100_artifacts_load_without_new_provenance_fields() -> None:
     )
     assert project.active_source_id is None
     assert source.extracted_text_hash is None
+    assert source.section_metadata_hash is None
     assert index.active_source_id is None
     assert qa.artifact_hashes == {}
     assert qa.media_hash is None
@@ -115,8 +116,15 @@ def test_ingestion_selects_active_source_and_records_exact_hashes(tmp_path: Path
     assert second_document.extracted_text_hash == sha256_file(
         store.path(f"sources/extracted/{second_document.source_id}.txt")
     )
+    assert second_document.section_metadata_hash == sha256_file(
+        store.path(f"sources/extracted/{second_document.source_id}.sections.json")
+    )
     assert (
         project.dependency_hashes["active-source-extracted"] == second_document.extracted_text_hash
+    )
+    assert (
+        project.dependency_hashes["active-source-sections"]
+        == second_document.section_metadata_hash
     )
 
 
@@ -142,7 +150,9 @@ def test_unchanged_reingestion_is_idempotent_but_new_source_invalidates(tmp_path
     assert "claims" in changed.stale_artifacts
 
 
-def test_source_integrity_detects_original_and_extracted_tampering(tmp_path: Path) -> None:
+def test_source_integrity_detects_original_extracted_and_section_tampering(
+    tmp_path: Path,
+) -> None:
     store = ProjectStore(tmp_path / "projects", "integrity")
     store.initialize("Integrity")
     source = tmp_path / "source.txt"
@@ -153,6 +163,14 @@ def test_source_integrity_detects_original_and_extracted_tampering(tmp_path: Pat
     extracted = store.path(f"sources/extracted/{document.source_id}.txt")
     extracted.write_text("tampered extraction", encoding="utf-8")
     with pytest.raises(ValueError, match="extracted text.*hash"):
+        verify_source_integrity(store, document)
+
+    ingest_source(store, source)
+    sections = store.path(f"sources/extracted/{document.source_id}.sections.json")
+    section_rows = json.loads(sections.read_text(encoding="utf-8"))
+    section_rows[0]["heading"] = "Fabricated"
+    atomic_write_json(sections, section_rows)
+    with pytest.raises(ValueError, match="section-location metadata.*hash"):
         verify_source_integrity(store, document)
 
     ingest_source(store, source)

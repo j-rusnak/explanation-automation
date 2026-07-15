@@ -22,6 +22,8 @@ from techshort.domain.storage import (
 MAX_FILE_BYTES = 25 * 1024 * 1024
 MAX_PAGES = 250
 MAX_EXTRACTED_OUTPUT_BYTES = 32 * 1024 * 1024
+_SECTION_BASE_KEYS = {"index", "heading", "start", "end"}
+_PDF_SECTION_KEYS = _SECTION_BASE_KEYS | {"page_index", "printed_page_label"}
 
 
 def _output_limit_label() -> str:
@@ -39,6 +41,90 @@ def _enforce_output_bound(payload: str, *, description: str) -> None:
         raise ValueError(
             f"{description} exceeds the {_output_limit_label()} extraction-output limit"
         )
+
+
+def _validate_section_locations(
+    value: object,
+    extracted_text: str,
+    *,
+    source_type: str,
+    expected_count: int,
+) -> list[dict[str, object]]:
+    """Validate section offsets against the exact normalized extraction.
+
+    PDF page numbers are derived during ingestion and must correspond one-to-one
+    with their zero-based page rows. Printed labels remain descriptive metadata,
+    but are protected by the bound section-metadata hash.
+    """
+
+    if not isinstance(value, list) or not all(isinstance(row, dict) for row in value):
+        raise ValueError("source section-location metadata must be a list of objects")
+    if len(value) != expected_count:
+        raise ValueError("source section-location metadata count does not match the source")
+
+    rows: list[dict[str, object]] = []
+    previous_end = 0
+    expected_keys = _PDF_SECTION_KEYS if source_type == "pdf" else _SECTION_BASE_KEYS
+    for position, untyped_row in enumerate(value):
+        row = dict(untyped_row)
+        if set(row) != expected_keys:
+            raise ValueError("source section-location metadata has unexpected or missing fields")
+        index = row.get("index")
+        start = row.get("start")
+        end = row.get("end")
+        heading = row.get("heading")
+        if type(index) is not int or index != position:
+            raise ValueError("source section-location metadata indices are not contiguous")
+        if type(start) is not int or type(end) is not int:
+            raise ValueError("source section-location metadata offsets must be integers")
+        if not isinstance(heading, str) or not heading or "\n" in heading or "\r" in heading:
+            raise ValueError("source section-location metadata heading is invalid")
+        marker = ("" if position == 0 else "\n\n") + f"--- {heading} ---\n"
+        expected_start = previous_end + len(marker)
+        if start != expected_start or extracted_text[previous_end:start] != marker:
+            raise ValueError("source section-location metadata does not match extracted text")
+        if end < start or end > len(extracted_text):
+            raise ValueError("source section-location metadata offsets are outside extracted text")
+
+        if source_type == "pdf":
+            page_index = row.get("page_index")
+            printed_label = row.get("printed_page_label")
+            if type(page_index) is not int or page_index != position:
+                raise ValueError("PDF section metadata does not correspond to source pages")
+            if heading != f"Page {position + 1}":
+                raise ValueError("PDF section heading does not correspond to its source page")
+            if printed_label is not None and (
+                not isinstance(printed_label, str)
+                or not printed_label
+                or len(printed_label) > 256
+                or any(character in printed_label for character in ("\x00", "\n", "\r"))
+            ):
+                raise ValueError("PDF printed page label is invalid")
+        rows.append(row)
+        previous_end = end
+
+    if previous_end != len(extracted_text):
+        raise ValueError("source section-location metadata does not cover extracted text")
+    return rows
+
+
+def _read_section_locations(
+    path: Path,
+    extracted_text: str,
+    *,
+    source_type: str,
+    expected_count: int,
+) -> list[dict[str, object]]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8", errors="strict"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("source section-location metadata is missing or invalid") from exc
+    return _validate_section_locations(
+        value,
+        extracted_text,
+        source_type=source_type,
+        expected_count=expected_count,
+    )
 
 
 def ingest_source(store: ProjectStore, source: Path) -> SourceDocument:
@@ -183,7 +269,19 @@ def ingest_source(store: ProjectStore, source: Path) -> SourceDocument:
             store.path(f"sources/extracted/{source_id}.raw-pages.json"), raw_pages_payload
         )
     index_path = store.path(f"sources/extracted/{source_id}.sections.json")
+    previous_section_metadata_hash = sha256_file(index_path) if index_path.exists() else None
+    _validate_section_locations(
+        section_rows,
+        normalized,
+        source_type="pdf"
+        if suffix == ".pdf"
+        else "markdown"
+        if suffix in {".md", ".markdown"}
+        else "text",
+        expected_count=len(sections),
+    )
     atomic_write_json(index_path, section_rows)
+    section_metadata_hash = sha256_file(index_path)
     document = SourceDocument(
         source_id=source_id,
         source_type="pdf"
@@ -194,6 +292,7 @@ def ingest_source(store: ProjectStore, source: Path) -> SourceDocument:
         original_filename=safe_name,
         content_hash=digest,
         extracted_text_hash=extracted_hash,
+        section_metadata_hash=section_metadata_hash,
         local_path=destination.relative_to(store.root).as_posix(),
         page_or_section_count=len(sections),
         title=metadata.get("Title", source.stem),
@@ -206,6 +305,7 @@ def ingest_source(store: ProjectStore, source: Path) -> SourceDocument:
         previous is not None
         and previous.content_hash == document.content_hash
         and previous.extracted_text_hash == document.extracted_text_hash
+        and previous.section_metadata_hash == document.section_metadata_hash
         and previous.local_path == document.local_path
     ):
         document = previous
@@ -221,16 +321,28 @@ def ingest_source(store: ProjectStore, source: Path) -> SourceDocument:
     project.active_source_id = source_id
     project.dependency_hashes[source_id] = digest
     project.dependency_hashes[f"{source_id}:extracted"] = extracted_hash
+    project.dependency_hashes[f"{source_id}:sections"] = section_metadata_hash
     project.dependency_hashes["active-source"] = digest
     project.dependency_hashes["active-source-extracted"] = extracted_hash
+    project.dependency_hashes["active-source-sections"] = section_metadata_hash
     store.save_project(project)
     extracted_changed = previous_extracted_hash not in {None, extracted_hash}
     indexed_extraction_changed = previous is not None and previous.extracted_text_hash not in {
         None,
         extracted_hash,
     }
+    section_metadata_changed = previous_section_metadata_hash not in {
+        None,
+        section_metadata_hash,
+    }
     is_new_selection = previous is None or active_changed or ambiguous_selection
-    if is_new_selection or extracted_changed or indexed_extraction_changed or original_was_repaired:
+    if (
+        is_new_selection
+        or extracted_changed
+        or indexed_extraction_changed
+        or section_metadata_changed
+        or original_was_repaired
+    ):
         reason = (
             f"active source selected: {source_id}"
             if is_new_selection
@@ -290,6 +402,34 @@ def verify_source_integrity(store: ProjectStore, source: SourceDocument | str) -
     recorded_extracted_hash = project.dependency_hashes.get(f"{document.source_id}:extracted")
     if recorded_extracted_hash is not None and recorded_extracted_hash != actual_extracted_hash:
         raise ValueError(f"project extracted-source hash is stale for {document.source_id}")
+    sections = store.path(f"sources/extracted/{document.source_id}.sections.json")
+    if not sections.is_file():
+        raise ValueError(f"section-location metadata is missing for source {document.source_id}")
+    actual_section_metadata_hash = sha256_file(sections)
+    if document.section_metadata_hash is None:
+        raise ValueError(
+            f"source {document.source_id} lacks a bound section-metadata hash; reingest it"
+        )
+    if actual_section_metadata_hash != document.section_metadata_hash:
+        raise ValueError(
+            f"section-location metadata for source {document.source_id} no longer matches its hash"
+        )
+    recorded_section_metadata_hash = project.dependency_hashes.get(
+        f"{document.source_id}:sections"
+    )
+    if recorded_section_metadata_hash is None:
+        raise ValueError(
+            f"project lacks a bound section-metadata hash for {document.source_id}; reingest it"
+        )
+    if recorded_section_metadata_hash != actual_section_metadata_hash:
+        raise ValueError(f"project section-metadata hash is stale for {document.source_id}")
+    extracted_text = extracted.read_text(encoding="utf-8", errors="strict")
+    _read_section_locations(
+        sections,
+        extracted_text,
+        source_type=document.source_type,
+        expected_count=document.page_or_section_count,
+    )
     return document
 
 

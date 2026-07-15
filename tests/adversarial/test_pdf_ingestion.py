@@ -7,8 +7,10 @@ import pytest
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
-from techshort.domain.storage import ProjectStore
-from techshort.ingestion import ingest_source
+from techshort.domain.hashing import sha256_file
+from techshort.domain.storage import ProjectStore, atomic_write_json
+from techshort.generation import generate_claims
+from techshort.ingestion import ingest_source, verify_source_integrity
 from techshort.ingestion.service import MAX_EXTRACTED_OUTPUT_BYTES, MAX_FILE_BYTES
 
 
@@ -109,6 +111,46 @@ def test_text_pdf_preserves_raw_page_and_printed_label_separately(tmp_path: Path
     assert sections[0]["printed_page_label"] == "appendix-A"
     normalized = (extracted_dir / f"{document.source_id}.txt").read_text(encoding="utf-8")
     assert "--- Page 1 ---" in normalized
+    assert document.section_metadata_hash == sha256_file(
+        extracted_dir / f"{document.source_id}.sections.json"
+    )
+    verify_source_integrity(store, document)
+
+
+def test_pdf_section_metadata_tampering_blocks_evidence_generation(tmp_path: Path) -> None:
+    path = tmp_path / "tampered-label.pdf"
+    _write_text_pdf(path, "A row-exposure fact with enough text for deterministic evidence.")
+    store = _store(tmp_path, "tampered-label")
+    document = ingest_source(store, path)
+    sections_path = store.path(f"sources/extracted/{document.source_id}.sections.json")
+    sections = json.loads(sections_path.read_text(encoding="utf-8"))
+    sections[0]["printed_page_label"] = "fabricated-label"
+    atomic_write_json(sections_path, sections)
+
+    with pytest.raises(ValueError, match="section-location metadata.*hash"):
+        generate_claims(store, "manual")
+
+
+def test_pdf_section_rows_must_correspond_to_source_pages_even_if_hash_is_rebound(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "bad-page-row.pdf"
+    _write_text_pdf(path, "A page-correspondence fact with enough text for evidence.")
+    store = _store(tmp_path, "bad-page-row")
+    document = ingest_source(store, path)
+    sections_path = store.path(f"sources/extracted/{document.source_id}.sections.json")
+    sections = json.loads(sections_path.read_text(encoding="utf-8"))
+    sections[0]["page_index"] = 7
+    atomic_write_json(sections_path, sections)
+    rebound_hash = sha256_file(sections_path)
+    rebound_document = document.model_copy(update={"section_metadata_hash": rebound_hash})
+    project = store.project()
+    project.dependency_hashes[f"{document.source_id}:sections"] = rebound_hash
+    project.dependency_hashes["active-source-sections"] = rebound_hash
+    store.save_project(project)
+
+    with pytest.raises(ValueError, match="does not correspond to source pages"):
+        verify_source_integrity(store, rebound_document)
 
 
 @pytest.mark.parametrize("suffix", [".txt", ".md"])
