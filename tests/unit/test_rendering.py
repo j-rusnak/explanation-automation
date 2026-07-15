@@ -95,7 +95,7 @@ def test_preview_scale_requires_vertical_project_ratio() -> None:
 def test_render_manifest_prompt_versions_come_from_generation_receipts(tmp_path: Path) -> None:
     store = fixture_store(tmp_path)
     versions = _generation_prompt_versions(store)
-    assert set(versions) == {"claims", "script", "storyboard"}
+    assert set(versions) == {"claims", "angles", "script", "storyboard"}
     assert all(value.startswith("fixture-v1@") for value in versions.values())
     assert all(len(value.split("@", 1)[1]) == 64 for value in versions.values())
 

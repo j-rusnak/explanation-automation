@@ -420,6 +420,7 @@ def _generation_prompt_versions(store: ProjectStore) -> dict[str, str]:
     versions: dict[str, str] = {}
     for stage, relative in (
         ("claims", "claims/generation-receipt.json"),
+        ("angles", "script/angles-generation-receipt.json"),
         ("script", "script/generation-receipt.json"),
         ("storyboard", "storyboard/generation-receipt.json"),
     ):
