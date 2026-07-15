@@ -6,44 +6,59 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any, NoReturn
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
 from techshort import __version__
-from techshort.alignment import as_srt, as_vtt, cues_from_script
-from techshort.audio import import_audio
-from techshort.domain.models import ScriptManifest
+from techshort.alignment import cues_from_script, write_caption_files
+from techshort.audio import active_audio, import_audio, probe_duration
+from techshort.domain.hashing import sha256_file, stable_hash
+from techshort.domain.models import QAReport, ReviewStatus, ScriptManifest
 from techshort.domain.storage import ProjectStore, load_model
 from techshort.export import export_project, generate_evidence_page
-from techshort.generation import fixture_claims, fixture_script, fixture_storyboard
+from techshort.generation import generate_claims, generate_script, generate_storyboard
 from techshort.ingestion import ingest_source
+from techshort.providers import CodexCliProvider
 from techshort.qa import run_qa
 from techshort.rendering import render_video
+from techshort.rendering.tools import media_tool
 from techshort.review import (
     approve_claims,
     approve_final,
     approve_rights,
     approve_script,
     approve_storyboard,
+    final_review_hash,
+    has_current_approval,
 )
 
 app = typer.Typer(
     help="Compile evidence-linked vertical technical explainers.", no_args_is_help=True
 )
 claims_app = typer.Typer(help="Generate evidence-linked candidate claims.")
-script_app = typer.Typer(help="Generate and manage scripts.")
-storyboard_app = typer.Typer(help="Generate structured storyboards.")
+script_app = typer.Typer(help="Generate and manage evidence-linked scripts.")
+storyboard_app = typer.Typer(help="Generate allowlisted structured storyboards.")
 audio_app = typer.Typer(help="Import user-recorded narration.")
-captions_app = typer.Typer(help="Generate deterministic captions.")
+captions_app = typer.Typer(help="Generate deterministic SRT, VTT, and burned-caption cues.")
 app.add_typer(claims_app, name="claims")
 app.add_typer(script_app, name="script")
 app.add_typer(storyboard_app, name="storyboard")
 app.add_typer(audio_app, name="audio")
 app.add_typer(captions_app, name="captions")
 console = Console()
+PROVIDERS = {"fixture", "manual", "codex"}
+ANGLES = {"surprising-result", "everyday-mechanism", "engineering-tradeoff"}
+RIGHTS_STATUSES = {
+    "original",
+    "user-owned",
+    "permissively-licensed",
+    "citation-only",
+    "unknown",
+    "restricted",
+}
 
 
 def projects_root() -> Path:
@@ -54,59 +69,150 @@ def store(slug: str) -> ProjectStore:
     return ProjectStore(projects_root(), slug)
 
 
-def fail(message: str) -> None:
+def fail(message: str) -> NoReturn:
     console.print(f"[red]Error:[/red] {message}")
     raise typer.Exit(1)
+
+
+def _provider(value: str) -> str:
+    normalized = value.lower()
+    if normalized not in PROVIDERS:
+        raise ValueError("provider must be fixture, manual, or codex")
+    return normalized
+
+
+def _package_version(name: str) -> str | None:
+    package_path = Path("node_modules") / name / "package.json"
+    if not package_path.is_file():
+        return None
+    data = json.loads(package_path.read_text(encoding="utf-8"))
+    value = data.get("version")
+    return str(value) if value else None
+
+
+def _tool_version(executable: str | None, flag: str = "--version") -> str | None:
+    if not executable:
+        return None
+    try:
+        result = subprocess.run(
+            [executable, flag],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    value = (result.stdout or result.stderr).strip().splitlines()
+    return value[0] if result.returncode == 0 and value else None
 
 
 @app.command()
 def doctor(
     json_output: Annotated[bool, typer.Option("--json", help="Machine-readable output.")] = False,
 ) -> None:
-    """Check the local toolchain and optional providers."""
-    tools = {
-        "python": sys.executable,
-        "node": shutil.which("node"),
-        "npm": shutil.which("npm.cmd") or shutil.which("npm"),
-        "ffmpeg": shutil.which("ffmpeg"),
-        "ffprobe": shutil.which("ffprobe"),
-        "codex": shutil.which("codex") or shutil.which("codex.exe"),
-        "git": shutil.which("git"),
+    """Check the local toolchain, renderer, media tools, and optional providers."""
+
+    browser_root = Path("node_modules/.remotion")
+    browser = (
+        next(browser_root.rglob("chrome-headless-shell.exe"), None)
+        if browser_root.exists()
+        else None
+    )
+    node = shutil.which("node")
+    npm = shutil.which("npm.cmd") or shutil.which("npm")
+    node_version = _tool_version(node)
+    try:
+        node_major = int(node_version.removeprefix("v").split(".", 1)[0]) if node_version else None
+    except ValueError:
+        node_major = None
+    renderer_version = _package_version("@remotion/cli")
+    codex = CodexCliProvider()
+    details: dict[str, dict[str, Any]] = {
+        "python": {
+            "required": True,
+            "ok": (3, 11) <= sys.version_info[:2] < (3, 15),
+            "value": f"{sys.version.split()[0]} at {sys.executable}",
+        },
+        "node": {
+            "required": True,
+            "ok": bool(node and node_major == 22),
+            "value": f"{node_version} at {node}" if node_version else "not found or unreadable",
+        },
+        "npm": {"required": True, "ok": bool(npm), "value": npm or "not found"},
+        "git": {
+            "required": True,
+            "ok": bool(shutil.which("git")),
+            "value": shutil.which("git") or "not found",
+        },
+        "ffmpeg": {
+            "required": True,
+            "ok": bool(media_tool("ffmpeg")),
+            "value": media_tool("ffmpeg") or "not found",
+        },
+        "ffprobe": {
+            "required": True,
+            "ok": bool(media_tool("ffprobe")),
+            "value": media_tool("ffprobe") or "not found",
+        },
+        "renderer": {
+            "required": True,
+            "ok": bool(renderer_version and Path("renderer/src/index.ts").is_file()),
+            "value": f"Remotion {renderer_version}" if renderer_version else "not installed",
+        },
+        "browser": {
+            "required": False,
+            "ok": True,
+            "value": str(browser) if browser else "downloaded automatically on first render",
+        },
+        "codex": {
+            "required": False,
+            "ok": codex.available,
+            "value": codex.diagnostics(),
+        },
+        "local_transcription": {
+            "required": False,
+            "ok": bool(shutil.which("whisper") or shutil.which("whisper.cpp")),
+            "value": shutil.which("whisper") or shutil.which("whisper.cpp") or "not installed",
+        },
     }
-    tools["renderer"] = str(Path("renderer/package.json").exists())
-    tools["local_transcription"] = shutil.which("whisper") or shutil.which("whisper.cpp")
+    overall = all(row["ok"] for row in details.values() if row["required"])
+    payload = {"techshort": __version__, "ok": overall, "dependencies": details}
     if json_output:
-        typer.echo(json.dumps(tools, indent=2))
-        return
-    table = Table(title=f"techshort {__version__} doctor")
-    table.add_column("Dependency")
-    table.add_column("Status")
-    table.add_column("Location / next step")
-    for name, value in tools.items():
-        present = bool(value) and value != "False"
-        required = name in {"python", "node", "npm", "git", "renderer"}
-        status = "OK" if present else "MISSING" if required else "OPTIONAL"
-        table.add_row(name, status, str(value or "not found"))
-    console.print(table)
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        table = Table(title=f"techshort {__version__} doctor")
+        table.add_column("Dependency")
+        table.add_column("Status")
+        table.add_column("Location / next step")
+        for name, row in details.items():
+            status = "OK" if row["ok"] else "MISSING" if row["required"] else "OPTIONAL"
+            table.add_row(name, status, str(row["value"]))
+        console.print(table)
+    if not overall:
+        raise typer.Exit(1)
 
 
 @app.command("init")
 def init_project(slug: str, title: Annotated[str | None, typer.Option()] = None) -> None:
-    """Create an idempotent project directory."""
+    """Create or safely resume a project directory."""
+
     try:
         manifest = store(slug).initialize(title or slug.replace("-", " ").title())
         console.print(f"Initialized [bold]{manifest.slug}[/bold] at {store(slug).root}")
-    except ValueError as exc:
+    except (OSError, ValueError) as exc:
         fail(str(exc))
 
 
 @app.command()
 def ingest(slug: str, source: Path) -> None:
-    """Safely ingest a local PDF, Markdown, or text source."""
+    """Safely ingest a local text PDF, Markdown file, or plain-text source."""
+
     try:
         document = ingest_source(store(slug), source)
         console.print(
-            f"Ingested {document.original_filename} as {document.source_id} ({document.page_or_section_count} locations)"
+            f"Ingested {document.original_filename} as {document.source_id} "
+            f"({document.page_or_section_count} locations)"
         )
         for warning in document.extraction_warnings:
             console.print(f"[yellow]Warning:[/yellow] {warning}")
@@ -115,44 +221,104 @@ def ingest(slug: str, source: Path) -> None:
 
 
 @claims_app.command("generate")
-def generate_claims(slug: str, provider: Annotated[str, typer.Option()] = "fixture") -> None:
-    if provider != "fixture":
-        fail(
-            "V1 checkpoint currently supports --provider fixture; manual/codex packets follow the deterministic slice"
-        )
+def claims_generate(
+    slug: str,
+    provider: Annotated[str, typer.Option()] = "fixture",
+    source_id: Annotated[str | None, typer.Option("--source-id")] = None,
+    manual_result: Annotated[
+        Path | None,
+        typer.Option(
+            "--manual-result",
+            help="Project-relative returned JSON for a previously exported manual packet.",
+        ),
+    ] = None,
+) -> None:
+    """Generate candidates, or export/import a strict manual prompt packet."""
+
     try:
-        claims = fixture_claims(store(slug))
-        console.print(
-            f"Generated {len(claims.claims)} claims; run `techshort review {slug} --gate claims`"
+        selected = _provider(provider)
+        outcome = generate_claims(
+            store(slug),
+            selected,  # type: ignore[arg-type]
+            source_id=source_id,
+            manual_result=manual_result,
         )
-    except (OSError, ValueError) as exc:
+        if outcome.requires_manual_import:
+            console.print(f"Manual claims packet ready: {outcome.prompt_packet}")
+            console.print(
+                "Return schema-valid JSON, then rerun with --manual-result <project path>."
+            )
+            return
+        claims = outcome.require_artifact()
+        console.print(
+            f"Generated {len(claims.claims)} {selected} claims; "
+            f"run `techshort review {slug} --gate claims`"
+        )
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         fail(str(exc))
 
 
 @script_app.command("generate")
-def generate_script(
+def script_generate(
     slug: str,
     provider: Annotated[str, typer.Option()] = "fixture",
-    angle: Annotated[str, typer.Option()] = "everyday-mechanism",
+    angle: Annotated[
+        str,
+        typer.Option(help="surprising-result, everyday-mechanism, or engineering-tradeoff"),
+    ] = "everyday-mechanism",
+    manual_result: Annotated[Path | None, typer.Option("--manual-result")] = None,
 ) -> None:
-    if provider != "fixture":
-        fail("Use --provider fixture for this offline vertical slice")
+    """Generate a clause-level script after explicitly selecting one of three angles."""
+
     try:
-        script = fixture_script(store(slug), angle)
+        selected = _provider(provider)
+        if angle not in ANGLES:
+            raise ValueError(
+                "angle must be surprising-result, everyday-mechanism, or engineering-tradeoff"
+            )
+        outcome = generate_script(
+            store(slug),
+            selected,  # type: ignore[arg-type]
+            angle=angle,  # type: ignore[arg-type]
+            manual_result=manual_result,
+        )
+        if outcome.requires_manual_import:
+            console.print(f"Manual script packet ready: {outcome.prompt_packet}")
+            console.print(
+                "Return schema-valid JSON, then rerun with --manual-result <project path>."
+            )
+            return
+        script = outcome.require_artifact()
         words = sum(len(segment.text.split()) for segment in script.segments)
-        console.print(f"Generated {len(script.segments)} segments ({words} words)")
-    except (OSError, ValueError) as exc:
+        console.print(f"Generated {len(script.segments)} segments ({words} spoken words)")
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         fail(str(exc))
 
 
 @storyboard_app.command("generate")
-def generate_storyboard(slug: str, provider: Annotated[str, typer.Option()] = "fixture") -> None:
-    if provider != "fixture":
-        fail("Use --provider fixture for this offline vertical slice")
+def storyboard_generate(
+    slug: str,
+    provider: Annotated[str, typer.Option()] = "fixture",
+    manual_result: Annotated[Path | None, typer.Option("--manual-result")] = None,
+) -> None:
+    """Generate an allowlisted, non-executable structured storyboard."""
+
     try:
-        storyboard = fixture_storyboard(store(slug))
-        console.print(f"Generated {len(storyboard.scenes)} typed scenes")
-    except (OSError, ValueError) as exc:
+        selected = _provider(provider)
+        outcome = generate_storyboard(
+            store(slug),
+            selected,  # type: ignore[arg-type]
+            manual_result=manual_result,
+        )
+        if outcome.requires_manual_import:
+            console.print(f"Manual storyboard packet ready: {outcome.prompt_packet}")
+            console.print(
+                "Return schema-valid JSON, then rerun with --manual-result <project path>."
+            )
+            return
+        storyboard = outcome.require_artifact()
+        console.print(f"Generated {len(storyboard.scenes)} typed scenes and registered font rights")
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         fail(str(exc))
 
 
@@ -162,48 +328,87 @@ def review(
     gate: Annotated[str, typer.Option(help="claims, script, storyboard, rights, or final")],
     reviewer: Annotated[str, typer.Option()] = "local-reviewer",
 ) -> None:
-    actions = {
-        "claims": approve_claims,
-        "script": approve_script,
-        "storyboard": approve_storyboard,
-        "rights": approve_rights,
-        "final": approve_final,
-    }
-    if gate not in actions:
-        fail("gate must be claims, script, storyboard, rights, or final")
+    """Explicitly approve one human review gate from the local CLI."""
+
     try:
-        actions[gate](store(slug), reviewer)
+        target = store(slug)
+        if gate == "claims":
+            approve_claims(target, reviewer)
+        elif gate == "script":
+            approve_script(target, reviewer)
+        elif gate == "storyboard":
+            approve_storyboard(target, reviewer)
+        elif gate == "rights":
+            approve_rights(target, reviewer)
+        elif gate == "final":
+            approve_final(target, reviewer)
+        else:
+            raise ValueError("gate must be claims, script, storyboard, rights, or final")
         console.print(f"Approved {gate} gate as {reviewer}")
     except (OSError, ValueError) as exc:
         fail(str(exc))
 
 
 @audio_app.command("import")
-def audio_import(slug: str, audio_file: Path) -> None:
+def audio_import(
+    slug: str,
+    audio_file: Path,
+    rights_status: Annotated[
+        str,
+        typer.Option(
+            "--rights-status",
+            help="Use user-owned only when you own the recording; unknown blocks export.",
+        ),
+    ] = "unknown",
+) -> None:
+    """Import narration with an explicit rights classification."""
+
     try:
-        path = import_audio(store(slug), audio_file)
+        if rights_status not in RIGHTS_STATUSES:
+            raise ValueError("invalid rights status")
+        path = import_audio(store(slug), audio_file, rights_status)
         console.print(f"Imported narration to {path}")
+        if rights_status in {"unknown", "restricted", "citation-only"}:
+            console.print(
+                "[yellow]Rights review will block embedding until metadata is corrected.[/yellow]"
+            )
     except (OSError, ValueError) as exc:
         fail(str(exc))
+
+
+def _generate_captions(target: ProjectStore) -> tuple[Path, Path]:
+    script = load_model(target.path("script/script.json"), ScriptManifest)
+    narration = active_audio(target)
+    narration_duration = probe_duration(narration) if narration else None
+    cues = cues_from_script(script, target_duration=narration_duration)
+    old_hashes = {
+        path.name: sha256_file(path)
+        for path in (target.path("captions/captions.srt"), target.path("captions/captions.vtt"))
+        if path.is_file()
+    }
+    srt, vtt = write_caption_files(target.path("captions"), cues)
+    new_hashes = {srt.name: sha256_file(srt), vtt.name: sha256_file(vtt)}
+    project = target.project()
+    project.active_versions["captions"] = stable_hash(new_hashes)
+    target.save_project(project)
+    if old_hashes != new_hashes:
+        target.invalidate_from("final", "captions regenerated")
+    return srt, vtt
 
 
 @captions_app.command("generate")
 def captions_generate(slug: str) -> None:
     try:
-        target = store(slug)
-        script = load_model(target.path("script/script.json"), ScriptManifest)
-        cues = cues_from_script(script)
-        target.path("captions").mkdir(exist_ok=True)
-        target.path("captions/captions.srt").write_text(as_srt(cues), encoding="utf-8")
-        target.path("captions/captions.vtt").write_text(as_vtt(cues), encoding="utf-8")
-        console.print(f"Generated {len(cues)} cues in SRT and VTT")
+        srt, vtt = _generate_captions(store(slug))
+        console.print(f"Generated matching caption sidecars: {srt} and {vtt}")
     except (OSError, ValueError) as exc:
         fail(str(exc))
 
 
 @app.command()
 def preview(slug: str) -> None:
-    """Render a visibly watermarked review preview."""
+    """Render a 360x640 review copy with a visible UNREVIEWED watermark."""
+
     try:
         path = render_video(store(slug), preview=True)
         console.print(f"Rendered watermarked preview: {path}")
@@ -213,40 +418,63 @@ def preview(slug: str) -> None:
 
 @app.command()
 def render(slug: str) -> None:
-    """Render an unwatermarked final only after final approval."""
+    """Render and hard-QA an unwatermarked 1080x1920 final after final approval."""
+
     target = store(slug)
-    if target.project().approvals.final != "approved":
-        fail("final render is blocked until the final review gate is approved")
     try:
+        project = target.project()
+        if project.approvals.final != ReviewStatus.APPROVED:
+            raise ValueError("final render is blocked until the final review gate is approved")
+        if not has_current_approval(target, "final", project.project_id):
+            raise ValueError("final approval no longer matches the reviewed preview")
+        if project.dependency_hashes.get("final_approval") != final_review_hash(target):
+            raise ValueError("final approval hash is stale")
         path = render_video(target, preview=False)
-        console.print(f"Rendered final: {path}")
+        report = run_qa(target, path, destination="renders/final/qa-report.json")
+        if not report.passed:
+            raise ValueError(f"final render failed QA: {'; '.join(report.export_blockers)}")
+        console.print(f"Rendered and verified final: {path}")
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         fail(str(exc))
 
 
 @app.command()
-def qa(slug: str) -> None:
+def qa(
+    slug: str,
+    final: Annotated[
+        bool, typer.Option("--final", help="Check the full-resolution final.")
+    ] = False,
+) -> None:
     try:
         target = store(slug)
-        preview_path = target.path("renders/previews/preview.mp4")
-        report = run_qa(target, preview_path if preview_path.exists() else None)
+        path = target.path("renders/final/final.mp4" if final else "renders/previews/preview.mp4")
+        report = run_qa(
+            target,
+            path,
+            destination="renders/final/qa-report.json"
+            if final
+            else "renders/previews/qa-report.json",
+        )
         console.print(
             f"QA {'passed' if report.passed else 'blocked'}: {len(report.export_blockers)} blocker(s)"
         )
-        if report.export_blockers:
-            for blocker in report.export_blockers:
-                console.print(f"[red]- {blocker}[/red]")
+        for blocker in report.export_blockers:
+            console.print(f"[red]- {blocker}[/red]")
+        if not report.passed:
             raise typer.Exit(1)
     except (OSError, ValueError) as exc:
         fail(str(exc))
 
 
-@app.command()
+@app.command("evidence-page")
 def evidence_page(slug: str) -> None:
-    target = store(slug)
-    path = target.path("renders/previews/evidence.html")
-    generate_evidence_page(target, path)
-    console.print(f"Generated {path}")
+    try:
+        target = store(slug)
+        path = target.path("renders/previews/evidence.html")
+        generate_evidence_page(target, path)
+        console.print(f"Generated cited companion page and ledger: {path}")
+    except (OSError, ValueError) as exc:
+        fail(str(exc))
 
 
 @app.command("export")
@@ -258,24 +486,107 @@ def export_command(slug: str) -> None:
         fail(str(exc))
 
 
+def _status_blockers(target: ProjectStore) -> list[str]:
+    project = target.project()
+    blockers = [
+        f"{gate} gate: {getattr(project.approvals, gate)}"
+        for gate in ("claims", "script", "storyboard", "rights", "final")
+        if getattr(project.approvals, gate) != ReviewStatus.APPROVED
+    ]
+    blockers.extend(f"stale artifact: {item}" for item in project.stale_artifacts)
+    preview_qa = target.path("renders/previews/qa-report.json")
+    if not preview_qa.is_file():
+        blockers.append("preview QA report is missing")
+    else:
+        try:
+            report = load_model(preview_qa, QAReport)
+            if not report.passed:
+                blockers.extend(f"QA: {item}" for item in report.export_blockers)
+        except ValueError:
+            blockers.append("preview QA report is invalid")
+    if project.approvals.final == ReviewStatus.APPROVED:
+        try:
+            final_is_current = has_current_approval(target, "final", project.project_id)
+        except (OSError, ValueError):
+            final_is_current = False
+        if not final_is_current:
+            blockers.append("final approval record is stale")
+        final_video = target.path("renders/final/final.mp4")
+        final_qa = target.path("renders/final/qa-report.json")
+        if not final_video.is_file():
+            blockers.append("final render is missing")
+        elif not final_qa.is_file():
+            blockers.append("final QA report is missing")
+        else:
+            try:
+                final_report = load_model(final_qa, QAReport)
+                if not final_report.passed:
+                    blockers.extend(f"final QA: {item}" for item in final_report.export_blockers)
+                if final_report.media_hash != sha256_file(final_video):
+                    blockers.append("final QA media hash is stale")
+            except (OSError, ValueError):
+                blockers.append("final QA report is invalid")
+    return list(dict.fromkeys(blockers))
+
+
 @app.command()
 def status(slug: str, json_output: Annotated[bool, typer.Option("--json")] = False) -> None:
     try:
-        project = store(slug).project()
-        blockers = [
-            f"{gate} gate: {getattr(project.approvals, gate)}"
-            for gate in ("claims", "script", "storyboard", "rights", "final")
-            if getattr(project.approvals, gate) != "approved"
-        ]
-        data = {"project": project.model_dump(mode="json"), "export_blockers": blockers}
+        target = store(slug)
+        project = target.project()
+        blockers = _status_blockers(target)
+        data = {
+            "project": project.model_dump(mode="json"),
+            "export_ready": not blockers,
+            "export_blockers": blockers,
+        }
         if json_output:
             typer.echo(json.dumps(data, indent=2))
         else:
             console.print(f"[bold]{project.title}[/bold] — {project.status}")
-            console.print(
-                "Export ready" if not blockers else "\n".join(f"- {item}" for item in blockers)
-            )
+            console.print("Export ready" if not blockers else "\n".join(f"- {x}" for x in blockers))
     except (OSError, ValueError) as exc:
+        fail(str(exc))
+
+
+@app.command()
+def demo(
+    slug: str = "rolling-shutter",
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", help="Confirm regeneration and all five fixture review gates."),
+    ] = False,
+) -> None:
+    """Run the complete deterministic offline rolling-shutter workflow."""
+
+    if not yes:
+        fail("demo requires --yes because it records human-gate fixture approvals")
+    target = store(slug)
+    reviewer = "demo-reviewer"
+    try:
+        target.initialize("Rolling-Shutter Distortion")
+        ingest_source(target, Path("examples/rolling-shutter/rolling-shutter.md"))
+        generate_claims(target, "fixture").require_artifact()
+        approve_claims(target, reviewer)
+        generate_script(target, "fixture", angle="everyday-mechanism").require_artifact()
+        approve_script(target, reviewer)
+        generate_storyboard(target, "fixture").require_artifact()
+        approve_storyboard(target, reviewer)
+        approve_rights(target, reviewer)
+        _generate_captions(target)
+        preview_path = render_video(target, preview=True)
+        preview_report = run_qa(target, preview_path)
+        if not preview_report.passed:
+            raise ValueError(f"preview QA failed: {'; '.join(preview_report.export_blockers)}")
+        generate_evidence_page(target, target.path("renders/previews/evidence.html"))
+        approve_final(target, reviewer)
+        final_path = render_video(target, preview=False)
+        final_report = run_qa(target, final_path, destination="renders/final/qa-report.json")
+        if not final_report.passed:
+            raise ValueError(f"final QA failed: {'; '.join(final_report.export_blockers)}")
+        exported = export_project(target)
+        console.print(f"Complete deterministic demo exported to [bold]{exported}[/bold]")
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         fail(str(exc))
 
 
