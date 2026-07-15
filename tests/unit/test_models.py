@@ -4,7 +4,15 @@ import pytest
 from pydantic import ValidationError
 
 from techshort.domain.hashing import stable_hash
-from techshort.domain.models import Asset, Scene, ScriptManifest, ScriptSegment, VisualSpec
+from techshort.domain.models import (
+    AngleCandidate,
+    AnglesManifest,
+    Asset,
+    Scene,
+    ScriptManifest,
+    ScriptSegment,
+    VisualSpec,
+)
 from techshort.domain.storage import sanitize_filename, validate_slug
 
 
@@ -43,8 +51,25 @@ def test_factual_segment_and_limitation_are_required() -> None:
         ScriptManifest(
             version_id="v1",
             claims_version_id="c1",
+            angles_version_id="angles-1",
+            angle_selection_id="selection-1",
             angle="everyday-mechanism",
             segments=[factual],
+        )
+
+
+def test_angles_require_exactly_one_candidate_of_each_kind() -> None:
+    surprising = AngleCandidate(
+        angle="surprising-result",
+        title="Unexpected camera geometry",
+        rationale="Explain a counterintuitive appearance from exact approved claims.",
+        central_claim_ids=["claim-1"],
+    )
+    with pytest.raises(ValidationError, match="each required candidate exactly once"):
+        AnglesManifest(
+            version_id="angles-invalid",
+            claims_version_id="claims-1",
+            candidates=[surprising, surprising, surprising],
         )
 
 

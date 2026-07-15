@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from techshort.domain.hashing import stable_hash
 
 T = TypeVar("T", bound=BaseModel)
-ManualTask = Literal["claims", "script", "storyboard"]
+ManualTask = Literal["claims", "angles", "script", "storyboard"]
 MAX_RESULT_BYTES = 2 * 1024 * 1024
 
 

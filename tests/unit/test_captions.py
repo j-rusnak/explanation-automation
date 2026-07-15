@@ -40,6 +40,8 @@ def test_long_unbroken_word_is_split_without_empty_cues() -> None:
     script = ScriptManifest(
         version_id="script-long-word",
         claims_version_id="claims-x",
+        angles_version_id="angles-x",
+        angle_selection_id="selection-x",
         angle="everyday-mechanism",
         segments=[
             ScriptSegment(

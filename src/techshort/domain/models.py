@@ -202,6 +202,51 @@ class ClaimCritiqueReport(StrictModel):
     issues: list[ClaimCritiqueIssue] = Field(default_factory=list)
 
 
+AngleKind = Literal["surprising-result", "everyday-mechanism", "engineering-tradeoff"]
+
+
+class AngleCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    angle: AngleKind
+    title: str = Field(min_length=3, max_length=120)
+    rationale: str = Field(min_length=12, max_length=800)
+    central_claim_ids: list[str] = Field(min_length=1, max_length=8)
+
+    @field_validator("central_claim_ids")
+    @classmethod
+    def central_claims_are_unique(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("angle central claim IDs must be unique")
+        return value
+
+
+class AnglesManifest(StrictModel):
+    version_id: str
+    claims_version_id: str
+    candidates: list[AngleCandidate] = Field(min_length=3, max_length=3)
+
+    @model_validator(mode="after")
+    def contains_each_required_angle_once(self) -> AnglesManifest:
+        expected = {
+            "surprising-result",
+            "everyday-mechanism",
+            "engineering-tradeoff",
+        }
+        actual = {candidate.angle for candidate in self.candidates}
+        if len(actual) != len(self.candidates) or actual != expected:
+            raise ValueError("angles must contain each required candidate exactly once")
+        return self
+
+
+class AngleSelection(StrictModel):
+    selection_id: str
+    angles_version_id: str
+    selected_angle: AngleKind
+    selected_candidate_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    selected_at: datetime = Field(default_factory=now_utc)
+
+
 class ScriptSegment(StrictModel):
     segment_id: str
     text: str
@@ -225,7 +270,9 @@ class ScriptSegment(StrictModel):
 class ScriptManifest(StrictModel):
     version_id: str
     claims_version_id: str
-    angle: Literal["surprising-result", "everyday-mechanism", "engineering-tradeoff"]
+    angles_version_id: str
+    angle_selection_id: str
+    angle: AngleKind
     segments: list[ScriptSegment]
 
     @model_validator(mode="after")

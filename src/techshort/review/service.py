@@ -6,6 +6,8 @@ from uuid import uuid4
 
 from techshort.domain.hashing import sha256_file, stable_hash
 from techshort.domain.models import (
+    AngleSelection,
+    AnglesManifest,
     Asset,
     AssetManifest,
     Claim,
@@ -130,12 +132,15 @@ def current_artifact_hashes(store: ProjectStore) -> dict[str, str]:
         "active-source-extracted": store.path(f"sources/extracted/{source.source_id}.txt"),
         "evidence": store.path("evidence/evidence.json"),
         "claims": store.path("claims/claims.json"),
+        "angles": store.path("script/angles.json"),
+        "angle-selection": store.path("script/angle-selection.json"),
         "script": store.path("script/script.json"),
         "storyboard": store.path("storyboard/storyboard.json"),
         "assets": store.path("assets/asset-manifest.json"),
         "claim-critique": store.path("claims/critique.json"),
         "claims-generation-receipt": store.path("claims/generation-receipt.json"),
         "claims-critique-receipt": store.path("claims/critique-receipt.json"),
+        "angles-generation-receipt": store.path("script/angles-generation-receipt.json"),
         "script-generation-receipt": store.path("script/generation-receipt.json"),
         "storyboard-generation-receipt": store.path("storyboard/generation-receipt.json"),
     }
@@ -423,6 +428,19 @@ def _activate_edited_manifest(
         project.dependency_hashes.pop("claims_critique_input", None)
         if "claims_critique" not in project.stale_artifacts:
             project.stale_artifacts.append("claims_critique")
+        project.active_versions.pop("angles", None)
+        project.active_versions.pop("angle_selection", None)
+        for key in (
+            "angles_prompt",
+            "angles_input",
+            "angle_selection",
+            "script_angles",
+            "script_angle_selection",
+        ):
+            project.dependency_hashes.pop(key, None)
+        for stale in ("angles", "angle_selection"):
+            if stale not in project.stale_artifacts:
+                project.stale_artifacts.append(stale)
     store.save_project(project)
 
 
@@ -538,6 +556,34 @@ def _validate_script_dependencies(
     _validate_claim_dependencies(store, claims, evidence, project)
     if script.claims_version_id != claims.version_id:
         raise ValueError("script was generated from a different claims version")
+    angles = load_model(store.path("script/angles.json"), AnglesManifest)
+    selection = load_model(store.path("script/angle-selection.json"), AngleSelection)
+    _ensure_active_versions(
+        project,
+        angles=angles.version_id,
+        angle_selection=selection.selection_id,
+    )
+    if angles.claims_version_id != claims.version_id:
+        raise ValueError("angles were generated from a different claims version")
+    if script.angles_version_id != angles.version_id:
+        raise ValueError("script was generated from a different angles version")
+    if selection.angles_version_id != angles.version_id:
+        raise ValueError("angle selection targets a different angles version")
+    selected = next(
+        (
+            candidate
+            for candidate in angles.candidates
+            if candidate.angle == selection.selected_angle
+        ),
+        None,
+    )
+    if selected is None or stable_hash(selected) != selection.selected_candidate_hash:
+        raise ValueError("angle selection no longer matches its selected candidate")
+    if (
+        script.angle_selection_id != selection.selection_id
+        or script.angle != selection.selected_angle
+    ):
+        raise ValueError("script was generated from a different angle selection")
     _ensure_active_versions(project, script=script.version_id)
     _validate_unique_ids([segment.segment_id for segment in script.segments], "script segment")
     approved = {

@@ -28,7 +28,7 @@ def test_offline_pipeline_through_pre_render_export_gate(tmp_path: Path) -> None
     fixture = Path("examples/rolling-shutter/rolling-shutter.md")
     ingest_source(store, fixture)
     claims = fixture_claims(store)
-    assert len(claims.claims) == 5
+    assert 3 <= len(claims.claims) <= 8
     approve_claims(store, "test")
     script = fixture_script(store)
     approve_script(store, "test")

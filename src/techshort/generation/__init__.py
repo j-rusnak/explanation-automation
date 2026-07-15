@@ -4,9 +4,11 @@ from techshort.generation.service import (
     fixture_claims,
     fixture_script,
     fixture_storyboard,
+    generate_angles,
     generate_claims,
     generate_script,
     generate_storyboard,
+    select_angle,
 )
 
 __all__ = [
@@ -15,7 +17,9 @@ __all__ = [
     "fixture_claims",
     "fixture_script",
     "fixture_storyboard",
+    "generate_angles",
     "generate_claims",
     "generate_script",
     "generate_storyboard",
+    "select_angle",
 ]

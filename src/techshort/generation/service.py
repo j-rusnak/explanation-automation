@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import shutil
 from dataclasses import dataclass
@@ -11,6 +12,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from techshort.assets import ensure_builtin_assets
 from techshort.domain.hashing import stable_hash
 from techshort.domain.models import (
+    AngleKind,
+    AngleSelection,
+    AnglesManifest,
     AssetManifest,
     Claim,
     ClaimCritiqueIssue,
@@ -57,8 +61,16 @@ SCRIPT_INSTRUCTION = (
     "Write an evidence-linked 130 to 170 word explainer lasting 45 to 75 seconds. Use only "
     "approved claim_id values supplied in the excerpts. Every factual, hook, analogy, caveat, "
     "and limitation segment must cite supporting claims. Include one meaningful limitation, "
-    "plain language, honest uncertainty, and no engagement bait. Set claims_version_id and "
-    "angle exactly to the supplied values and leave review fields pending."
+    "plain language, honest uncertainty, and no engagement bait. Set claims_version_id, "
+    "angles_version_id, angle_selection_id, and angle exactly to the supplied values and leave "
+    "review fields pending."
+)
+ANGLES_INSTRUCTION = (
+    "Create exactly three genuinely distinct explainer angles: one surprising-result angle, "
+    "one everyday-mechanism angle, and one engineering-tradeoff angle. Give each a meaningful "
+    "title, a concise rationale, and one or more central_claim_ids chosen only from the supplied "
+    "approved claims. Set claims_version_id exactly to the supplied value. Do not select an "
+    "angle; selection is a separate human action."
 )
 STORYBOARD_INSTRUCTION = (
     "Create a deterministic vertical storyboard covering every supplied script segment. Use "
@@ -128,6 +140,17 @@ def _source(store: ProjectStore, source_id: str | None) -> tuple[SourceDocument,
     return source, text
 
 
+def _section_locations(store: ProjectStore, source: SourceDocument) -> list[dict[str, object]]:
+    path = store.path(f"sources/extracted/{source.source_id}.sections.json")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8", errors="strict"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("source section-location metadata is missing or invalid") from exc
+    if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
+        raise ValueError("source section-location metadata must be a list of objects")
+    return [dict(item) for item in value]
+
+
 def _bounded_ranges(text: str, start: int, end: int) -> list[tuple[int, int]]:
     ranges: list[tuple[int, int]] = []
     body = text[start:end]
@@ -156,22 +179,34 @@ def build_evidence_candidates(
     source: SourceDocument,
     *,
     maximum: int = MAX_EVIDENCE_SPANS,
+    section_locations: list[dict[str, object]] | None = None,
 ) -> EvidenceManifest:
     """Create deterministic, exact-offset evidence candidates without model access."""
 
     if maximum < 1 or maximum > MAX_EVIDENCE_SPANS:
         raise ValueError(f"maximum evidence spans must be between 1 and {MAX_EVIDENCE_SPANS}")
     markers = list(SECTION_MARKER.finditer(source_text))
-    sections: list[tuple[str | None, int, int]] = []
+    sections: list[tuple[str | None, int, int, dict[str, object] | None]] = []
     if markers:
         for index, marker in enumerate(markers):
             end = markers[index + 1].start() if index + 1 < len(markers) else len(source_text)
-            sections.append((marker.group("heading"), marker.end(), end))
+            location = (
+                section_locations[index]
+                if section_locations is not None and index < len(section_locations)
+                else None
+            )
+            if location is not None:
+                if (
+                    location.get("heading") != marker.group("heading")
+                    or location.get("start") != marker.end()
+                ):
+                    raise ValueError("section location metadata does not match extracted text")
+            sections.append((marker.group("heading"), marker.end(), end, location))
     else:
-        sections.append((None, 0, len(source_text)))
+        sections.append((None, 0, len(source_text), None))
 
     spans: list[EvidenceSpan] = []
-    for heading, start, end in sections:
+    for heading, start, end, location in sections:
         for left, right in _bounded_ranges(source_text, start, end):
             excerpt = source_text[left:right]
             if not excerpt:
@@ -179,11 +214,16 @@ def build_evidence_candidates(
             page_index: int | None = None
             printed_page_label: str | None = None
             if source.source_type == "pdf" and heading:
-                page_match = re.fullmatch(r"Page\s+(\d+)", heading, re.IGNORECASE)
-                if page_match:
-                    page_number = int(page_match.group(1))
-                    page_index = page_number - 1
-                    printed_page_label = str(page_number)
+                stored_page_index = location.get("page_index") if location else None
+                stored_printed_label = location.get("printed_page_label") if location else None
+                if isinstance(stored_page_index, int) and stored_page_index >= 0:
+                    page_index = stored_page_index
+                else:
+                    page_match = re.fullmatch(r"Page\s+(\d+)", heading, re.IGNORECASE)
+                    if page_match:
+                        page_index = int(page_match.group(1)) - 1
+                if isinstance(stored_printed_label, str) and stored_printed_label:
+                    printed_page_label = stored_printed_label
             evidence_id = f"evidence-{stable_hash({'source_hash': source.content_hash, 'start': left, 'end': right, 'excerpt': excerpt})[:16]}"
             span = EvidenceSpan(
                 evidence_id=evidence_id,
@@ -277,6 +317,8 @@ def _script_excerpts(script: ScriptManifest) -> list[dict[str, object]]:
 
 
 def _manual_packet_path(store: ProjectStore, stage: ManualTask) -> Path:
+    if stage == "angles":
+        return store.path("script/angles-manual-prompt.json")
     return store.path(f"{stage}/manual-prompt.json")
 
 
@@ -508,14 +550,49 @@ def _deterministic_claim_critique(
     )
 
 
+def _normalize_angles(candidate: AnglesManifest, claims: ClaimsManifest) -> AnglesManifest:
+    if candidate.claims_version_id != claims.version_id:
+        raise ValueError("generated angles target a stale or unknown claims version")
+    approved = {
+        claim.claim_id for claim in claims.claims if claim.review_status == ReviewStatus.APPROVED
+    }
+    for angle in candidate.candidates:
+        missing = set(angle.central_claim_ids) - approved
+        if missing:
+            raise ValueError(
+                f"angle {angle.angle} references unapproved claims: " + ", ".join(sorted(missing))
+            )
+    candidate.version_id = f"angles-{stable_hash({'claims': claims.version_id, 'candidates': candidate.candidates})[:16]}"
+    return AnglesManifest.model_validate(candidate.model_dump(mode="json"))
+
+
+def _selection_for(angles: AnglesManifest, angle: AngleKind) -> AngleSelection:
+    candidate = next((item for item in angles.candidates if item.angle == angle), None)
+    if candidate is None:  # AnglesManifest validation normally makes this unreachable.
+        raise ValueError(f"selected angle is absent from the current angle candidates: {angle}")
+    candidate_hash = stable_hash(candidate)
+    selection_id = f"selection-{stable_hash({'angles': angles.version_id, 'angle': angle, 'candidate': candidate_hash})[:16]}"
+    return AngleSelection(
+        selection_id=selection_id,
+        angles_version_id=angles.version_id,
+        selected_angle=angle,
+        selected_candidate_hash=candidate_hash,
+    )
+
+
 def _normalize_script(
     candidate: ScriptManifest,
     claims: ClaimsManifest,
-    angle: Literal["surprising-result", "everyday-mechanism", "engineering-tradeoff"],
+    angles: AnglesManifest,
+    selection: AngleSelection,
 ) -> ScriptManifest:
     if candidate.claims_version_id != claims.version_id:
         raise ValueError("generated script targets a stale or unknown claims version")
-    if candidate.angle != angle:
+    if candidate.angles_version_id != angles.version_id:
+        raise ValueError("generated script targets a stale or unknown angles version")
+    if candidate.angle_selection_id != selection.selection_id:
+        raise ValueError("generated script did not preserve the current angle selection")
+    if candidate.angle != selection.selected_angle:
         raise ValueError("generated script did not preserve the selected angle")
     approved = {
         claim.claim_id for claim in claims.claims if claim.review_status == ReviewStatus.APPROVED
@@ -539,7 +616,7 @@ def _normalize_script(
     duration = sum(segment.approximate_duration for segment in candidate.segments)
     if not 45 <= duration <= 75:
         raise ValueError("generated script duration must be between 45 and 75 seconds")
-    candidate.version_id = f"script-{stable_hash(candidate.segments)[:16]}"
+    candidate.version_id = f"script-{stable_hash({'claims': claims.version_id, 'angles': angles.version_id, 'selection': selection.selection_id, 'segments': candidate.segments})[:16]}"
     return ScriptManifest.model_validate(candidate.model_dump(mode="json"))
 
 
@@ -674,7 +751,11 @@ def generate_claims(
         prompt_hash = stable_hash("fixture rolling-shutter claims v1")
         input_hash = stable_hash({"source_id": source.source_id, "hash": source.content_hash})
     else:
-        evidence = build_evidence_candidates(text, source)
+        evidence = build_evidence_candidates(
+            text,
+            source,
+            section_locations=_section_locations(store, source),
+        )
         excerpts = _evidence_excerpts(evidence)
         input_hash = stable_hash(excerpts)
         schema = ClaimsManifest.model_json_schema()
@@ -788,6 +869,129 @@ def generate_claims(
     return GenerationOutcome(provider=provider, artifact=claims)
 
 
+def generate_angles(
+    store: ProjectStore,
+    provider: ProviderName = "fixture",
+    *,
+    manual_result: str | Path | None = None,
+    codex_provider: CodexCliProvider | None = None,
+) -> GenerationOutcome[AnglesManifest]:
+    claims = load_model(store.path("claims/claims.json"), ClaimsManifest)
+    if not claims.claims or not all(
+        claim.review_status == ReviewStatus.APPROVED for claim in claims.claims
+    ):
+        raise ValueError("all claims must be approved before angle generation")
+    project = store.project()
+    if project.active_versions.get("claims") != claims.version_id:
+        raise ValueError("claims manifest is not the active claims version")
+    evidence = load_model(store.path("evidence/evidence.json"), EvidenceManifest)
+    excerpts = _claims_excerpts(claims, evidence)
+    input_hash = stable_hash(excerpts)
+
+    if provider == "fixture":
+        candidate = FixtureProvider().generate_angles(claims)
+        prompt_version = "fixture-v1"
+        prompt_hash = stable_hash("fixture rolling-shutter angles v1")
+    elif provider == "manual":
+        schema = AnglesManifest.model_json_schema()
+        expected_prompt_hash = ManualProvider.template_hash("angles", ANGLES_INSTRUCTION, schema)
+        packet_path = _manual_packet_path(store, "angles")
+        if manual_result is None:
+            _prepare_manual(
+                store,
+                "angles",
+                excerpts,
+                AnglesManifest,
+                ANGLES_INSTRUCTION,
+                input_hash,
+            )
+            return GenerationOutcome(provider="manual", prompt_packet=packet_path)
+        candidate = _manual_candidate(
+            store,
+            "angles",
+            manual_result,
+            AnglesManifest,
+            expected_input_hash=input_hash,
+            expected_prompt_hash=expected_prompt_hash,
+        )
+        prompt_version = ManualProvider.prompt_version
+        prompt_hash = expected_prompt_hash
+    elif provider == "codex":
+        client = codex_provider or CodexCliProvider()
+        candidate = client.generate(ANGLES_INSTRUCTION, excerpts, AnglesManifest)
+        if client.last_run is None:
+            raise RuntimeError("Codex provider returned without generation metadata")
+        prompt_version = client.last_run.prompt_version
+        prompt_hash = client.last_run.prompt_hash
+        input_hash = client.last_run.input_hash
+    else:
+        raise ValueError(f"unknown generation provider: {provider}")
+
+    angles = _normalize_angles(candidate, claims)
+    angles_path = store.path("script/angles.json")
+    if angles_path.exists():
+        previous = load_model(angles_path, AnglesManifest)
+        _archive(store, "script/angles.json", previous.version_id)
+    atomic_write_model(angles_path, angles)
+    receipt = _receipt(
+        "angles",
+        provider,
+        prompt_version,
+        prompt_hash,
+        input_hash,
+        angles.version_id,
+    )
+    atomic_write_model(store.path("script/angles-generation-receipt.json"), receipt)
+    store.invalidate_from("script", f"angles regenerated with {provider} provider")
+    project = store.project()
+    project.active_versions["angles"] = angles.version_id
+    project.active_versions.pop("angle_selection", None)
+    project.dependency_hashes["angles_prompt"] = receipt.prompt_hash
+    project.dependency_hashes["angles_input"] = receipt.input_hash
+    project.dependency_hashes.pop("angle_selection", None)
+    if "angle_selection" not in project.stale_artifacts:
+        project.stale_artifacts.append("angle_selection")
+    store.save_project(project)
+    return GenerationOutcome(provider=provider, artifact=angles)
+
+
+def select_angle(store: ProjectStore, angle: AngleKind) -> AngleSelection:
+    claims = load_model(store.path("claims/claims.json"), ClaimsManifest)
+    angles = load_model(store.path("script/angles.json"), AnglesManifest)
+    project = store.project()
+    if angles.claims_version_id != claims.version_id:
+        raise ValueError("angle candidates were generated from a different claims version")
+    if project.active_versions.get("angles") != angles.version_id:
+        raise ValueError("angle candidates are stale; generate a current angle artifact first")
+    selection = _selection_for(angles, angle)
+    selection_path = store.path("script/angle-selection.json")
+    if selection_path.exists():
+        previous = load_model(selection_path, AngleSelection)
+        if (
+            previous.selection_id == selection.selection_id
+            and project.active_versions.get("angle_selection") == previous.selection_id
+        ):
+            return previous
+        _archive(store, "script/angle-selection.json", previous.selection_id)
+    atomic_write_model(selection_path, selection)
+    store.invalidate_from("script", f"angle selected: {angle}")
+    project = store.project()
+    project.active_versions["angle_selection"] = selection.selection_id
+    project.dependency_hashes["angle_selection"] = stable_hash(
+        {
+            "selection_id": selection.selection_id,
+            "angles_version_id": selection.angles_version_id,
+            "selected_angle": selection.selected_angle,
+            "selected_candidate_hash": selection.selected_candidate_hash,
+        }
+    )
+    project.stale_artifacts = [
+        item for item in project.stale_artifacts if item != "angle_selection"
+    ]
+    store.save_project(project)
+    return selection
+
+
 def generate_script(
     store: ProjectStore,
     provider: ProviderName = "fixture",
@@ -803,13 +1007,47 @@ def generate_script(
         claim.review_status == ReviewStatus.APPROVED for claim in claims.claims
     ):
         raise ValueError("all claims must be approved before script generation")
+    angles_path = store.path("script/angles.json")
+    project = store.project()
+    angles_are_current = False
+    if angles_path.is_file():
+        existing_angles = load_model(angles_path, AnglesManifest)
+        angles_are_current = (
+            existing_angles.claims_version_id == claims.version_id
+            and project.active_versions.get("angles") == existing_angles.version_id
+        )
+    if not angles_are_current:
+        if provider != "fixture":
+            raise ValueError(
+                "current angle candidates are required; run `techshort script angles "
+                f"{store.slug} --provider {provider}` first"
+            )
+        generate_angles(store, "fixture").require_artifact()
+    angles = load_model(angles_path, AnglesManifest)
+    selection = select_angle(store, angle)
     evidence = load_model(store.path("evidence/evidence.json"), EvidenceManifest)
     excerpts = _claims_excerpts(claims, evidence)
-    excerpts.append({"selected_angle": angle, "claims_version_id": claims.version_id})
+    selected_candidate = next(
+        candidate for candidate in angles.candidates if candidate.angle == selection.selected_angle
+    )
+    excerpts.append(
+        {
+            "claims_version_id": claims.version_id,
+            "angles_version_id": angles.version_id,
+            "angle_selection_id": selection.selection_id,
+            "selected_angle": selection.selected_angle,
+            "selected_candidate": selected_candidate.model_dump(mode="json"),
+        }
+    )
     input_hash = stable_hash(excerpts)
 
     if provider == "fixture":
-        candidate = FixtureProvider().generate_script(claims, angle)
+        candidate = FixtureProvider().generate_script(
+            claims,
+            angle,
+            angles_version_id=angles.version_id,
+            angle_selection_id=selection.selection_id,
+        )
         prompt_version = "fixture-v1"
         prompt_hash = stable_hash("fixture rolling-shutter script v1")
     elif provider == "manual":
@@ -847,7 +1085,7 @@ def generate_script(
     else:
         raise ValueError(f"unknown generation provider: {provider}")
 
-    script = _normalize_script(candidate, claims, angle)
+    script = _normalize_script(candidate, claims, angles, selection)
     script_path = store.path("script/script.json")
     if script_path.exists():
         previous = load_model(script_path, ScriptManifest)
@@ -861,7 +1099,20 @@ def generate_script(
         input_hash,
         script.version_id,
     )
-    _save_project_state(store, "script", {"script": script.version_id}, receipt)
+    _save_project_state(
+        store,
+        "script",
+        {
+            "angles": angles.version_id,
+            "angle_selection": selection.selection_id,
+            "script": script.version_id,
+        },
+        receipt,
+        dependency_hashes={
+            "script_angles": angles.version_id,
+            "script_angle_selection": selection.selection_id,
+        },
+    )
     return GenerationOutcome(provider=provider, artifact=script)
 
 

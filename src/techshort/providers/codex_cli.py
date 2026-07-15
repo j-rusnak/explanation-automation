@@ -143,18 +143,54 @@ class CodexCliProvider:
         return self._help_text
 
     def diagnostics(self) -> str:
+        return self.readiness()[1]
+
+    def authentication_status(self) -> tuple[bool, str]:
+        """Run the bounded CLI login diagnostic without returning raw auth output."""
+
         if not self.executable:
-            return "Codex CLI not found on PATH. Offline fixture and manual providers remain available."
+            return (
+                False,
+                "Codex CLI not found on PATH. Offline fixture and manual providers remain available.",
+            )
+        try:
+            result = subprocess.run(
+                [self.executable, "login", "status"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+                env=_safe_environment(),
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return False, f"Codex login status failed: {type(exc).__name__}"
+        if result.returncode != 0:
+            return False, "Codex CLI is installed but not authenticated; run `codex login`."
+        status = f"{result.stdout}\n{result.stderr}".lower()
+        if "logged in" not in status and "authenticated" not in status:
+            return False, "Codex login status was inconclusive; run `codex login status`."
+        mechanism = " using ChatGPT" if "chatgpt" in status else ""
+        return True, f"Codex CLI is authenticated{mechanism}."
+
+    def readiness(self) -> tuple[bool, str]:
+        """Check required safe flags and saved CLI authentication."""
+
+        if not self.executable:
+            return (
+                False,
+                "Codex CLI not found on PATH. Offline fixture and manual providers remain available.",
+            )
         try:
             help_text = self._read_help()
         except (ValueError, RuntimeError) as exc:
-            return str(exc)
+            return False, str(exc)
         missing = [flag for flag in REQUIRED_EXEC_FLAGS if flag not in help_text]
-        return (
-            "Codex CLI ready."
-            if not missing
-            else f"Codex CLI lacks required flags: {', '.join(missing)}"
-        )
+        if missing:
+            return False, f"Codex CLI lacks required flags: {', '.join(missing)}"
+        authenticated, message = self.authentication_status()
+        if not authenticated:
+            return False, message
+        return True, "Codex CLI ready with safe structured-output flags; " + message
 
     @classmethod
     def template_hash(cls, instruction: str, schema: dict[str, object]) -> str:

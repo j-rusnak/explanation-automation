@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from techshort.domain.hashing import stable_hash
 from techshort.domain.models import (
+    AngleCandidate,
+    AnglesManifest,
     Claim,
     ClaimsManifest,
     EvidenceManifest,
@@ -169,10 +171,51 @@ class FixtureProvider:
             claims=claims,
         )
 
-    def generate_angles(self) -> list[str]:
-        return ["surprising-result", "everyday-mechanism", "engineering-tradeoff"]
+    def generate_angles(self, claims: ClaimsManifest) -> AnglesManifest:
+        candidates = [
+            AngleCandidate(
+                angle="surprising-result",
+                title="A straight blade can look curved",
+                rationale=(
+                    "Lead with the counterintuitive visible result, then resolve it as a "
+                    "row-timing effect rather than evidence that the blade physically bent."
+                ),
+                central_claim_ids=["claim-motion-skew", "claim-timing-interpretation"],
+            ),
+            AngleCandidate(
+                angle="everyday-mechanism",
+                title="A camera frame is scanned across time",
+                rationale=(
+                    "Use the familiar idea of scanning line by line to explain how motion "
+                    "during sequential row capture becomes skew in the assembled frame."
+                ),
+                central_claim_ids=["claim-row-timing", "claim-scan-analogy"],
+            ),
+            AngleCandidate(
+                angle="engineering-tradeoff",
+                title="Rolling and global shutters trade timing behavior",
+                rationale=(
+                    "Contrast sequential and simultaneous exposure while preserving the "
+                    "important limitation that a global shutter does not remove every source "
+                    "of image distortion."
+                ),
+                central_claim_ids=["claim-global", "claim-limitation"],
+            ),
+        ]
+        return AnglesManifest(
+            version_id=f"angles-{stable_hash(candidates)[:12]}",
+            claims_version_id=claims.version_id,
+            candidates=candidates,
+        )
 
-    def generate_script(self, claims: ClaimsManifest, angle: str) -> ScriptManifest:
+    def generate_script(
+        self,
+        claims: ClaimsManifest,
+        angle: str,
+        *,
+        angles_version_id: str | None = None,
+        angle_selection_id: str | None = None,
+    ) -> ScriptManifest:
         segments = [
             ScriptSegment(
                 segment_id="segment-01",
@@ -260,6 +303,10 @@ class FixtureProvider:
         return ScriptManifest(
             version_id=f"script-{stable_hash(segments)[:12]}",
             claims_version_id=claims.version_id,
+            angles_version_id=angles_version_id
+            or f"angles-direct-{stable_hash({'claims': claims.version_id})[:12]}",
+            angle_selection_id=angle_selection_id
+            or f"selection-direct-{stable_hash({'claims': claims.version_id, 'angle': angle})[:12]}",
             angle=angle,
             segments=segments,
         )
