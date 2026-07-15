@@ -69,6 +69,18 @@
       "title": "Schema Version",
       "type": "string"
     },
+    "section_metadata_hash": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Section Metadata Hash"
+    },
     "source_id": {
       "title": "Source Id",
       "type": "string"
