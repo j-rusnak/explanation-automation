@@ -32,6 +32,25 @@ def test_cli_help_is_discoverable() -> None:
         assert command in result.stdout
 
 
+def test_script_help_exposes_angle_generation_and_selection() -> None:
+    result = runner.invoke(app, ["script", "--help"])
+    assert result.exit_code == 0
+    assert "angles" in result.stdout
+    assert "select-angle" in result.stdout
+    assert "generate" in result.stdout
+
+
+def test_audio_help_exposes_transcript_and_rights_metadata() -> None:
+    result = runner.invoke(app, ["audio", "--help"])
+    assert result.exit_code == 0
+    assert "import-transcript" in result.stdout
+
+    import_help = runner.invoke(app, ["audio", "import", "--help"])
+    assert import_help.exit_code == 0
+    for option in ("--rights-status", "--creator", "--license", "--source-url"):
+        assert option in import_help.stdout
+
+
 def test_machine_status_lists_actionable_gate_blockers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

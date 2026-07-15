@@ -14,17 +14,28 @@ from rich.table import Table
 
 from techshort import __version__
 from techshort.alignment import cues_from_script, write_caption_files
-from techshort.audio import active_audio, import_audio, probe_duration
+from techshort.audio import active_audio, import_audio, import_transcript, probe_duration
 from techshort.domain.hashing import sha256_file, stable_hash
-from techshort.domain.models import ClaimCritiqueReport, QAReport, ReviewStatus, ScriptManifest
+from techshort.domain.models import (
+    ClaimCritiqueReport,
+    QAReport,
+    ReviewStatus,
+    ScriptManifest,
+)
 from techshort.domain.storage import ProjectStore, load_model
 from techshort.export import export_project, generate_evidence_page
-from techshort.generation import generate_claims, generate_script, generate_storyboard
+from techshort.generation import (
+    generate_angles,
+    generate_claims,
+    generate_script,
+    generate_storyboard,
+    select_angle,
+)
 from techshort.ingestion import ingest_source
 from techshort.providers import CodexCliProvider
 from techshort.qa import run_qa
 from techshort.rendering import render_video
-from techshort.rendering.tools import media_tool
+from techshort.rendering.tools import media_tool, remotion_browser_readiness
 from techshort.review import (
     approve_claims,
     approve_final,
@@ -113,12 +124,6 @@ def doctor(
 ) -> None:
     """Check the local toolchain, renderer, media tools, and optional providers."""
 
-    browser_root = Path("node_modules/.remotion")
-    browser = (
-        next(browser_root.rglob("chrome-headless-shell.exe"), None)
-        if browser_root.exists()
-        else None
-    )
     node = shutil.which("node")
     npm = shutil.which("npm.cmd") or shutil.which("npm")
     node_version = _tool_version(node)
@@ -128,6 +133,25 @@ def doctor(
         node_major = None
     renderer_version = _package_version("@remotion/cli")
     codex = CodexCliProvider()
+    browser_ready, browser_message = remotion_browser_readiness()
+    codex_ready, codex_message = codex.readiness()
+    configured_whisper = os.getenv("TECHSHORT_WHISPER_CLI")
+    whisper = (
+        shutil.which(configured_whisper)
+        if configured_whisper
+        else shutil.which("whisper-cli") or shutil.which("whisper")
+    )
+    configured_model = os.getenv("TECHSHORT_WHISPER_MODEL")
+    whisper_model = Path(configured_model).expanduser() if configured_model else None
+    transcription_ready = bool(whisper and whisper_model and whisper_model.is_file())
+    if not whisper:
+        transcription_message = "optional local whisper-cli/whisper not installed"
+    elif whisper_model is None or not whisper_model.is_file():
+        transcription_message = (
+            f"{whisper}; set TECHSHORT_WHISPER_MODEL to an existing local model file"
+        )
+    else:
+        transcription_message = f"{whisper}; local model {whisper_model.resolve()}"
     details: dict[str, dict[str, Any]] = {
         "python": {
             "required": True,
@@ -161,19 +185,19 @@ def doctor(
             "value": f"Remotion {renderer_version}" if renderer_version else "not installed",
         },
         "browser": {
-            "required": False,
-            "ok": True,
-            "value": str(browser) if browser else "downloaded automatically on first render",
+            "required": True,
+            "ok": browser_ready,
+            "value": browser_message,
         },
         "codex": {
             "required": False,
-            "ok": codex.available,
-            "value": codex.diagnostics(),
+            "ok": codex_ready,
+            "value": codex_message,
         },
         "local_transcription": {
             "required": False,
-            "ok": bool(shutil.which("whisper") or shutil.which("whisper.cpp")),
-            "value": shutil.which("whisper") or shutil.which("whisper.cpp") or "not installed",
+            "ok": transcription_ready,
+            "value": transcription_message,
         },
     }
     overall = all(row["ok"] for row in details.values() if row["required"])
@@ -265,16 +289,16 @@ def script_generate(
     slug: str,
     provider: Annotated[str, typer.Option()] = "fixture",
     angle: Annotated[
-        str,
-        typer.Option(help="surprising-result, everyday-mechanism, or engineering-tradeoff"),
-    ] = "everyday-mechanism",
+        str | None,
+        typer.Option(help="Optional assertion matching the already-selected explainer angle"),
+    ] = None,
     manual_result: Annotated[Path | None, typer.Option("--manual-result")] = None,
 ) -> None:
     """Generate a clause-level script after explicitly selecting one of three angles."""
 
     try:
         selected = _provider(provider)
-        if angle not in ANGLES:
+        if angle is not None and angle not in ANGLES:
             raise ValueError(
                 "angle must be surprising-result, everyday-mechanism, or engineering-tradeoff"
             )
@@ -294,6 +318,54 @@ def script_generate(
         words = sum(len(segment.text.split()) for segment in script.segments)
         console.print(f"Generated {len(script.segments)} segments ({words} spoken words)")
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        fail(str(exc))
+
+
+@script_app.command("angles")
+def script_angles(
+    slug: str,
+    provider: Annotated[str, typer.Option()] = "fixture",
+    manual_result: Annotated[Path | None, typer.Option("--manual-result")] = None,
+) -> None:
+    """Generate the three claim-linked angle candidates without selecting one."""
+
+    try:
+        selected = _provider(provider)
+        outcome = generate_angles(
+            store(slug),
+            selected,  # type: ignore[arg-type]
+            manual_result=manual_result,
+        )
+        if outcome.requires_manual_import:
+            console.print(f"Manual angles packet ready: {outcome.prompt_packet}")
+            console.print(
+                "Return schema-valid JSON, then rerun with --manual-result <project path>."
+            )
+            return
+        angles = outcome.require_artifact()
+        console.print(f"Generated {len(angles.candidates)} current angle candidates")
+        for candidate in angles.candidates:
+            console.print(f"- {candidate.angle}: {candidate.title}")
+        console.print(f"Select one with `techshort script select-angle {slug} <angle>`")
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        fail(str(exc))
+
+
+@script_app.command("select-angle")
+def script_select_angle(slug: str, angle: str) -> None:
+    """Persist an explicit selection from the current angle candidates."""
+
+    try:
+        if angle not in ANGLES:
+            raise ValueError(
+                "angle must be surprising-result, everyday-mechanism, or engineering-tradeoff"
+            )
+        selection = select_angle(store(slug), angle)  # type: ignore[arg-type]
+        console.print(
+            f"Selected {selection.selected_angle} from {selection.angles_version_id} "
+            f"as {selection.selection_id}"
+        )
+    except (OSError, ValueError) as exc:
         fail(str(exc))
 
 
@@ -362,18 +434,41 @@ def audio_import(
             help="Use user-owned only when you own the recording; unknown blocks export.",
         ),
     ] = "unknown",
+    creator: Annotated[str | None, typer.Option("--creator")] = None,
+    license_name: Annotated[str | None, typer.Option("--license")] = None,
+    source_url: Annotated[str | None, typer.Option("--source-url")] = None,
+    required_attribution: Annotated[str | None, typer.Option("--required-attribution")] = None,
 ) -> None:
     """Import narration with an explicit rights classification."""
 
     try:
         if rights_status not in RIGHTS_STATUSES:
             raise ValueError("invalid rights status")
-        path = import_audio(store(slug), audio_file, rights_status)
+        path = import_audio(
+            store(slug),
+            audio_file,
+            rights_status,
+            creator=creator,
+            license_name=license_name,
+            source_url=source_url,
+            required_attribution=required_attribution,
+        )
         console.print(f"Imported narration to {path}")
         if rights_status in {"unknown", "restricted", "citation-only"}:
             console.print(
                 "[yellow]Rights review will block embedding until metadata is corrected.[/yellow]"
             )
+    except (OSError, ValueError) as exc:
+        fail(str(exc))
+
+
+@audio_app.command("import-transcript")
+def audio_import_transcript(slug: str, transcript_file: Path) -> None:
+    """Import a UTF-8 transcript bound to the exact active narration bytes."""
+
+    try:
+        path = import_transcript(store(slug), transcript_file)
+        console.print(f"Imported narration transcript to {path}")
     except (OSError, ValueError) as exc:
         fail(str(exc))
 
@@ -570,6 +665,8 @@ def demo(
         ingest_source(target, Path("examples/rolling-shutter/rolling-shutter.md"))
         generate_claims(target, "fixture").require_artifact()
         approve_claims(target, reviewer)
+        generate_angles(target, "fixture").require_artifact()
+        select_angle(target, "everyday-mechanism")
         generate_script(target, "fixture", angle="everyday-mechanism").require_artifact()
         approve_script(target, reviewer)
         generate_storyboard(target, "fixture").require_artifact()

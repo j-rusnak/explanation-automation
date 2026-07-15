@@ -11,6 +11,8 @@ Invoke-Techshort init rolling-shutter --title "Rolling-Shutter Distortion"
 Invoke-Techshort ingest rolling-shutter examples\rolling-shutter\rolling-shutter.md
 Invoke-Techshort claims generate rolling-shutter --provider fixture
 Invoke-Techshort review rolling-shutter --gate claims
+Invoke-Techshort script angles rolling-shutter --provider fixture
+Invoke-Techshort script select-angle rolling-shutter everyday-mechanism
 Invoke-Techshort script generate rolling-shutter --provider fixture --angle everyday-mechanism
 Invoke-Techshort review rolling-shutter --gate script
 Invoke-Techshort storyboard generate rolling-shutter --provider fixture
