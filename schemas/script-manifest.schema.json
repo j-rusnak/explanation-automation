@@ -13,32 +13,22 @@
     "ScriptSegment": {
       "additionalProperties": false,
       "properties": {
-        "schema_version": {
-          "const": "1.0.0",
-          "default": "1.0.0",
-          "title": "Schema Version",
-          "type": "string"
-        },
-        "segment_id": {
-          "title": "Segment Id",
-          "type": "string"
-        },
-        "text": {
-          "title": "Text",
-          "type": "string"
-        },
-        "segment_type": {
-          "enum": [
-            "factual",
-            "hook",
-            "transition",
-            "analogy",
-            "caveat",
-            "limitation",
-            "cta"
+        "approval_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
           ],
-          "title": "Segment Type",
-          "type": "string"
+          "default": null,
+          "title": "Approval Hash"
+        },
+        "approximate_duration": {
+          "exclusiveMinimum": 0,
+          "title": "Approximate Duration",
+          "type": "number"
         },
         "claim_ids": {
           "items": {
@@ -46,11 +36,6 @@
           },
           "title": "Claim Ids",
           "type": "array"
-        },
-        "approximate_duration": {
-          "exclusiveMinimum": 0,
-          "title": "Approximate Duration",
-          "type": "number"
         },
         "pronunciation_notes": {
           "anyOf": [
@@ -68,17 +53,32 @@
           "$ref": "#/$defs/ReviewStatus",
           "default": "pending"
         },
-        "approval_hash": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "segment_id": {
+          "title": "Segment Id",
+          "type": "string"
+        },
+        "segment_type": {
+          "enum": [
+            "factual",
+            "hook",
+            "transition",
+            "analogy",
+            "caveat",
+            "limitation",
+            "cta"
           ],
-          "default": null,
-          "title": "Approval Hash"
+          "title": "Segment Type",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
         }
       },
       "required": [
@@ -93,20 +93,6 @@
   },
   "additionalProperties": false,
   "properties": {
-    "schema_version": {
-      "const": "1.0.0",
-      "default": "1.0.0",
-      "title": "Schema Version",
-      "type": "string"
-    },
-    "version_id": {
-      "title": "Version Id",
-      "type": "string"
-    },
-    "claims_version_id": {
-      "title": "Claims Version Id",
-      "type": "string"
-    },
     "angle": {
       "enum": [
         "surprising-result",
@@ -116,12 +102,26 @@
       "title": "Angle",
       "type": "string"
     },
+    "claims_version_id": {
+      "title": "Claims Version Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
     "segments": {
       "items": {
         "$ref": "#/$defs/ScriptSegment"
       },
       "title": "Segments",
       "type": "array"
+    },
+    "version_id": {
+      "title": "Version Id",
+      "type": "string"
     }
   },
   "required": [

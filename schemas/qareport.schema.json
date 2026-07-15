@@ -7,6 +7,15 @@
           "title": "Check Id",
           "type": "string"
         },
+        "hard_blocker": {
+          "default": false,
+          "title": "Hard Blocker",
+          "type": "boolean"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
         "status": {
           "enum": [
             "pass",
@@ -15,15 +24,6 @@
           ],
           "title": "Status",
           "type": "string"
-        },
-        "message": {
-          "title": "Message",
-          "type": "string"
-        },
-        "hard_blocker": {
-          "default": false,
-          "title": "Hard Blocker",
-          "type": "boolean"
         }
       },
       "required": [
@@ -37,20 +37,12 @@
   },
   "additionalProperties": false,
   "properties": {
-    "schema_version": {
-      "const": "1.0.0",
-      "default": "1.0.0",
-      "title": "Schema Version",
-      "type": "string"
-    },
-    "project_id": {
-      "title": "Project Id",
-      "type": "string"
-    },
-    "generated_at": {
-      "format": "date-time",
-      "title": "Generated At",
-      "type": "string"
+    "artifact_hashes": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Artifact Hashes",
+      "type": "object"
     },
     "checks": {
       "items": {
@@ -65,6 +57,45 @@
       },
       "title": "Export Blockers",
       "type": "array"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "title": "Generated At",
+      "type": "string"
+    },
+    "media_hash": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Media Hash"
+    },
+    "media_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Media Path"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
     }
   },
   "required": [

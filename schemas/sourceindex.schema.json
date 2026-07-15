@@ -3,6 +3,68 @@
     "SourceDocument": {
       "additionalProperties": false,
       "properties": {
+        "appears_incomplete": {
+          "default": false,
+          "title": "Appears Incomplete",
+          "type": "boolean"
+        },
+        "content_hash": {
+          "title": "Content Hash",
+          "type": "string"
+        },
+        "extracted_text_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Extracted Text Hash"
+        },
+        "extraction_warnings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Extraction Warnings",
+          "type": "array"
+        },
+        "ingested_at": {
+          "format": "date-time",
+          "title": "Ingested At",
+          "type": "string"
+        },
+        "local_path": {
+          "title": "Local Path",
+          "type": "string"
+        },
+        "metadata": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Metadata",
+          "type": "object"
+        },
+        "ocr_required": {
+          "default": false,
+          "title": "Ocr Required",
+          "type": "boolean"
+        },
+        "original_filename": {
+          "title": "Original Filename",
+          "type": "string"
+        },
+        "page_or_section_count": {
+          "title": "Page Or Section Count",
+          "type": "integer"
+        },
+        "rights_status": {
+          "default": "unknown",
+          "title": "Rights Status",
+          "type": "string"
+        },
         "schema_version": {
           "const": "1.0.0",
           "default": "1.0.0",
@@ -22,59 +84,9 @@
           "title": "Source Type",
           "type": "string"
         },
-        "original_filename": {
-          "title": "Original Filename",
-          "type": "string"
-        },
-        "content_hash": {
-          "title": "Content Hash",
-          "type": "string"
-        },
-        "local_path": {
-          "title": "Local Path",
-          "type": "string"
-        },
-        "ingested_at": {
-          "format": "date-time",
-          "title": "Ingested At",
-          "type": "string"
-        },
-        "page_or_section_count": {
-          "title": "Page Or Section Count",
-          "type": "integer"
-        },
         "title": {
           "title": "Title",
           "type": "string"
-        },
-        "metadata": {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "title": "Metadata",
-          "type": "object"
-        },
-        "rights_status": {
-          "default": "unknown",
-          "title": "Rights Status",
-          "type": "string"
-        },
-        "extraction_warnings": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Extraction Warnings",
-          "type": "array"
-        },
-        "appears_incomplete": {
-          "default": false,
-          "title": "Appears Incomplete",
-          "type": "boolean"
-        },
-        "ocr_required": {
-          "default": false,
-          "title": "Ocr Required",
-          "type": "boolean"
         }
       },
       "required": [
@@ -92,6 +104,18 @@
   },
   "additionalProperties": false,
   "properties": {
+    "active_source_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Active Source Id"
+    },
     "schema_version": {
       "const": "1.0.0",
       "default": "1.0.0",

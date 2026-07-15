@@ -1,51 +1,6 @@
 {
   "additionalProperties": false,
   "properties": {
-    "schema_version": {
-      "const": "1.0.0",
-      "default": "1.0.0",
-      "title": "Schema Version",
-      "type": "string"
-    },
-    "render_id": {
-      "title": "Render Id",
-      "type": "string"
-    },
-    "width": {
-      "title": "Width",
-      "type": "integer"
-    },
-    "height": {
-      "title": "Height",
-      "type": "integer"
-    },
-    "fps": {
-      "title": "Fps",
-      "type": "number"
-    },
-    "duration": {
-      "title": "Duration",
-      "type": "number"
-    },
-    "codec": {
-      "title": "Codec",
-      "type": "string"
-    },
-    "script_hash": {
-      "title": "Script Hash",
-      "type": "string"
-    },
-    "storyboard_hash": {
-      "title": "Storyboard Hash",
-      "type": "string"
-    },
-    "scene_versions": {
-      "additionalProperties": {
-        "type": "string"
-      },
-      "title": "Scene Versions",
-      "type": "object"
-    },
     "asset_hashes": {
       "additionalProperties": {
         "type": "string"
@@ -65,22 +20,27 @@
       "default": null,
       "title": "Audio Hash"
     },
-    "renderer_version": {
-      "title": "Renderer Version",
+    "codec": {
+      "title": "Codec",
       "type": "string"
     },
-    "prompt_versions": {
-      "additionalProperties": {
-        "type": "string"
-      },
-      "title": "Prompt Versions",
-      "type": "object"
+    "duration": {
+      "title": "Duration",
+      "type": "number"
     },
-    "source_hashes": {
+    "fps": {
+      "title": "Fps",
+      "type": "number"
+    },
+    "height": {
+      "title": "Height",
+      "type": "integer"
+    },
+    "output_hashes": {
       "additionalProperties": {
         "type": "string"
       },
-      "title": "Source Hashes",
+      "title": "Output Hashes",
       "type": "object"
     },
     "output_paths": {
@@ -90,10 +50,62 @@
       "title": "Output Paths",
       "type": "array"
     },
+    "prompt_versions": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Prompt Versions",
+      "type": "object"
+    },
+    "render_id": {
+      "title": "Render Id",
+      "type": "string"
+    },
     "rendered_at": {
       "format": "date-time",
       "title": "Rendered At",
       "type": "string"
+    },
+    "renderer_version": {
+      "title": "Renderer Version",
+      "type": "string"
+    },
+    "scene_versions": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Scene Versions",
+      "type": "object"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "script_hash": {
+      "title": "Script Hash",
+      "type": "string"
+    },
+    "source_hashes": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Source Hashes",
+      "type": "object"
+    },
+    "storyboard_hash": {
+      "title": "Storyboard Hash",
+      "type": "string"
+    },
+    "watermarked": {
+      "default": false,
+      "title": "Watermarked",
+      "type": "boolean"
+    },
+    "width": {
+      "title": "Width",
+      "type": "integer"
     }
   },
   "required": [

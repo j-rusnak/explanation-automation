@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from techshort.domain.models import (
@@ -12,12 +11,15 @@ from techshort.domain.models import (
     RenderManifest,
     ReviewLog,
     ScriptManifest,
+    SourceDocument,
     SourceIndex,
     StoryboardManifest,
 )
+from techshort.domain.storage import atomic_write_json
 
 MODELS = (
     ProjectManifest,
+    SourceDocument,
     SourceIndex,
     EvidenceManifest,
     ClaimsManifest,
@@ -35,9 +37,7 @@ def main() -> None:
     target.mkdir(exist_ok=True)
     for model in MODELS:
         name = model.__name__.replace("Manifest", "-manifest").lower()
-        (target / f"{name}.schema.json").write_text(
-            json.dumps(model.model_json_schema(), indent=2) + "\n", encoding="utf-8"
-        )
+        atomic_write_json(target / f"{name}.schema.json", model.model_json_schema())
 
 
 if __name__ == "__main__":

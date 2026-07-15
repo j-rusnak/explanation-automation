@@ -3,21 +3,11 @@
     "ApprovalState": {
       "additionalProperties": false,
       "properties": {
-        "schema_version": {
-          "const": "1.0.0",
-          "default": "1.0.0",
-          "title": "Schema Version",
-          "type": "string"
-        },
         "claims": {
           "$ref": "#/$defs/ReviewStatus",
           "default": "pending"
         },
-        "script": {
-          "$ref": "#/$defs/ReviewStatus",
-          "default": "pending"
-        },
-        "storyboard": {
+        "final": {
           "$ref": "#/$defs/ReviewStatus",
           "default": "pending"
         },
@@ -25,7 +15,17 @@
           "$ref": "#/$defs/ReviewStatus",
           "default": "pending"
         },
-        "final": {
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "script": {
+          "$ref": "#/$defs/ReviewStatus",
+          "default": "pending"
+        },
+        "storyboard": {
           "$ref": "#/$defs/ReviewStatus",
           "default": "pending"
         }
@@ -46,70 +46,17 @@
   },
   "additionalProperties": false,
   "properties": {
-    "schema_version": {
-      "const": "1.0.0",
-      "default": "1.0.0",
-      "title": "Schema Version",
-      "type": "string"
-    },
-    "project_id": {
-      "title": "Project Id",
-      "type": "string"
-    },
-    "slug": {
-      "title": "Slug",
-      "type": "string"
-    },
-    "title": {
-      "title": "Title",
-      "type": "string"
-    },
-    "status": {
-      "default": "draft",
-      "title": "Status",
-      "type": "string"
-    },
-    "created_at": {
-      "format": "date-time",
-      "title": "Created At",
-      "type": "string"
-    },
-    "modified_at": {
-      "format": "date-time",
-      "title": "Modified At",
-      "type": "string"
-    },
-    "target_duration_seconds": {
-      "default": 60,
-      "title": "Target Duration Seconds",
-      "type": "number"
-    },
-    "width": {
-      "default": 1080,
-      "title": "Width",
-      "type": "integer"
-    },
-    "height": {
-      "default": 1920,
-      "title": "Height",
-      "type": "integer"
-    },
-    "fps": {
-      "default": 30,
-      "title": "Fps",
-      "type": "integer"
-    },
-    "theme": {
-      "default": "midnight",
-      "title": "Theme",
-      "type": "string"
-    },
-    "source_ids": {
-      "items": {
-        "type": "string"
-      },
-      "title": "Source Ids",
-      "type": "array"
+    "active_source_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Active Source Id"
     },
     "active_versions": {
       "additionalProperties": {
@@ -131,6 +78,11 @@
       "title": "Content Risk",
       "type": "string"
     },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
     "dependency_hashes": {
       "additionalProperties": {
         "type": "string"
@@ -143,12 +95,72 @@
       "title": "Downstream Valid",
       "type": "boolean"
     },
+    "fps": {
+      "default": 30,
+      "title": "Fps",
+      "type": "integer"
+    },
+    "height": {
+      "default": 1920,
+      "title": "Height",
+      "type": "integer"
+    },
+    "modified_at": {
+      "format": "date-time",
+      "title": "Modified At",
+      "type": "string"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "slug": {
+      "title": "Slug",
+      "type": "string"
+    },
+    "source_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Source Ids",
+      "type": "array"
+    },
     "stale_artifacts": {
       "items": {
         "type": "string"
       },
       "title": "Stale Artifacts",
       "type": "array"
+    },
+    "status": {
+      "default": "draft",
+      "title": "Status",
+      "type": "string"
+    },
+    "target_duration_seconds": {
+      "default": 60,
+      "title": "Target Duration Seconds",
+      "type": "number"
+    },
+    "theme": {
+      "default": "midnight",
+      "title": "Theme",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "width": {
+      "default": 1080,
+      "title": "Width",
+      "type": "integer"
     }
   },
   "required": [

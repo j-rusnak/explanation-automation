@@ -3,12 +3,6 @@
     "Asset": {
       "additionalProperties": false,
       "properties": {
-        "schema_version": {
-          "const": "1.0.0",
-          "default": "1.0.0",
-          "title": "Schema Version",
-          "type": "string"
-        },
         "asset_id": {
           "title": "Asset Id",
           "type": "string"
@@ -17,36 +11,24 @@
           "title": "Asset Type",
           "type": "string"
         },
-        "local_path": {
-          "title": "Local Path",
-          "type": "string"
-        },
-        "sha256": {
-          "title": "Sha256",
-          "type": "string"
-        },
-        "origin": {
-          "title": "Origin",
-          "type": "string"
-        },
         "creator": {
           "title": "Creator",
           "type": "string"
         },
-        "source_url": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Source Url"
+        "embedding_allowed": {
+          "title": "Embedding Allowed",
+          "type": "boolean"
         },
         "license": {
           "title": "License",
+          "type": "string"
+        },
+        "local_path": {
+          "title": "Local Path",
+          "type": "string"
+        },
+        "origin": {
+          "title": "Origin",
           "type": "string"
         },
         "required_attribution": {
@@ -61,6 +43,10 @@
           "default": null,
           "title": "Required Attribution"
         },
+        "review_status": {
+          "$ref": "#/$defs/ReviewStatus",
+          "default": "pending"
+        },
         "rights_status": {
           "enum": [
             "original",
@@ -73,20 +59,34 @@
           "title": "Rights Status",
           "type": "string"
         },
-        "embedding_allowed": {
-          "title": "Embedding Allowed",
-          "type": "boolean"
-        },
-        "review_status": {
-          "$ref": "#/$defs/ReviewStatus",
-          "default": "pending"
-        },
         "scene_usage": {
           "items": {
             "type": "string"
           },
           "title": "Scene Usage",
           "type": "array"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        },
+        "source_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Url"
         }
       },
       "required": [
@@ -116,6 +116,13 @@
   },
   "additionalProperties": false,
   "properties": {
+    "assets": {
+      "items": {
+        "$ref": "#/$defs/Asset"
+      },
+      "title": "Assets",
+      "type": "array"
+    },
     "schema_version": {
       "const": "1.0.0",
       "default": "1.0.0",
@@ -125,13 +132,6 @@
     "version_id": {
       "title": "Version Id",
       "type": "string"
-    },
-    "assets": {
-      "items": {
-        "$ref": "#/$defs/Asset"
-      },
-      "title": "Assets",
-      "type": "array"
     }
   },
   "required": [

@@ -3,64 +3,6 @@
     "EvidenceSpan": {
       "additionalProperties": false,
       "properties": {
-        "schema_version": {
-          "const": "1.0.0",
-          "default": "1.0.0",
-          "title": "Schema Version",
-          "type": "string"
-        },
-        "evidence_id": {
-          "title": "Evidence Id",
-          "type": "string"
-        },
-        "source_id": {
-          "title": "Source Id",
-          "type": "string"
-        },
-        "page_index": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Page Index"
-        },
-        "printed_page_label": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Printed Page Label"
-        },
-        "section_heading": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Section Heading"
-        },
-        "char_start": {
-          "title": "Char Start",
-          "type": "integer"
-        },
-        "char_end": {
-          "title": "Char End",
-          "type": "integer"
-        },
         "bounding_box": {
           "anyOf": [
             {
@@ -89,19 +31,27 @@
           "default": null,
           "title": "Bounding Box"
         },
-        "excerpt": {
-          "maxLength": 600,
-          "minLength": 1,
-          "title": "Excerpt",
-          "type": "string"
+        "char_end": {
+          "title": "Char End",
+          "type": "integer"
+        },
+        "char_start": {
+          "title": "Char Start",
+          "type": "integer"
         },
         "context": {
           "maxLength": 1200,
           "title": "Context",
           "type": "string"
         },
-        "source_hash": {
-          "title": "Source Hash",
+        "evidence_id": {
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "excerpt": {
+          "maxLength": 600,
+          "minLength": 1,
+          "title": "Excerpt",
           "type": "string"
         },
         "extraction_confidence": {
@@ -110,16 +60,66 @@
           "title": "Extraction Confidence",
           "type": "number"
         },
+        "locator": {
+          "title": "Locator",
+          "type": "string"
+        },
+        "page_index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Page Index"
+        },
+        "printed_page_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Printed Page Label"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "section_heading": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Section Heading"
+        },
+        "source_hash": {
+          "title": "Source Hash",
+          "type": "string"
+        },
+        "source_id": {
+          "title": "Source Id",
+          "type": "string"
+        },
         "warnings": {
           "items": {
             "type": "string"
           },
           "title": "Warnings",
           "type": "array"
-        },
-        "locator": {
-          "title": "Locator",
-          "type": "string"
         }
       },
       "required": [
@@ -139,6 +139,13 @@
   },
   "additionalProperties": false,
   "properties": {
+    "evidence": {
+      "items": {
+        "$ref": "#/$defs/EvidenceSpan"
+      },
+      "title": "Evidence",
+      "type": "array"
+    },
     "schema_version": {
       "const": "1.0.0",
       "default": "1.0.0",
@@ -148,13 +155,6 @@
     "version_id": {
       "title": "Version Id",
       "type": "string"
-    },
-    "evidence": {
-      "items": {
-        "$ref": "#/$defs/EvidenceSpan"
-      },
-      "title": "Evidence",
-      "type": "array"
     }
   },
   "required": [
