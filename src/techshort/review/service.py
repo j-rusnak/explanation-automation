@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Literal
 from uuid import uuid4
 
@@ -10,6 +11,7 @@ from techshort.domain.models import (
     Claim,
     ClaimsManifest,
     EvidenceManifest,
+    EvidenceSpan,
     ProjectManifest,
     QAReport,
     ReviewDecision,
@@ -23,7 +25,13 @@ from techshort.domain.models import (
     StoryboardManifest,
     now_utc,
 )
-from techshort.domain.storage import ProjectStore, atomic_write_model, load_model
+from techshort.domain.storage import (
+    ProjectStore,
+    atomic_copy_file,
+    atomic_write_model,
+    load_model,
+)
+from techshort.evidence import unsupported_assertion_tokens
 from techshort.ingestion import (
     get_active_source,
     resolve_evidence_text,
@@ -32,6 +40,32 @@ from techshort.ingestion import (
 
 Decision = Literal["approve", "reject", "edit", "note"]
 ObjectType = Literal["claim", "script-segment", "scene", "asset-rights", "rights", "final"]
+VERSION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+REQUIRED_FINAL_QA_CHECKS = {
+    "manifest-validation",
+    "evidence-completeness",
+    "assertion-provenance",
+    "dependency-chain",
+    "approval-validity",
+    "required-limitation",
+    "rights-completeness",
+    "stale-dependencies",
+    "missing-citations",
+    "timeline-structure",
+    "duration",
+    "caption-integrity",
+    "caption-safe-zone",
+    "low-text-contrast",
+    "resolution",
+    "frame-rate",
+    "codec",
+    "media-duration",
+    "audio-stream",
+    "missing-frames",
+    "render-manifest",
+    "blank-frames",
+    "contact-sheet",
+}
 
 
 def claim_review_hash(claim: Claim, evidence: EvidenceManifest) -> str:
@@ -89,6 +123,7 @@ def rights_review_hash(assets: AssetManifest) -> str:
 def current_artifact_hashes(store: ProjectStore) -> dict[str, str]:
     source = verify_source_integrity(store, get_active_source(store))
     source_index = load_model(store.path("sources/source-index.json"), SourceIndex)
+    project = store.project()
     paths = {
         "source-index": store.path("sources/source-index.json"),
         "active-source": store.path(source.local_path),
@@ -98,11 +133,38 @@ def current_artifact_hashes(store: ProjectStore) -> dict[str, str]:
         "script": store.path("script/script.json"),
         "storyboard": store.path("storyboard/storyboard.json"),
         "assets": store.path("assets/asset-manifest.json"),
+        "claim-critique": store.path("claims/critique.json"),
+        "claims-generation-receipt": store.path("claims/generation-receipt.json"),
+        "claims-critique-receipt": store.path("claims/critique-receipt.json"),
+        "script-generation-receipt": store.path("script/generation-receipt.json"),
+        "storyboard-generation-receipt": store.path("storyboard/generation-receipt.json"),
     }
     missing = [key for key, path in paths.items() if not path.is_file()]
     if missing:
         raise ValueError(f"required artifact is missing: {missing[0]}")
     hashes = {key: sha256_file(path) for key, path in paths.items()}
+    hashes["project-config"] = stable_hash(
+        {
+            "project_id": project.project_id,
+            "slug": project.slug,
+            "title": project.title,
+            "target_duration_seconds": project.target_duration_seconds,
+            "width": project.width,
+            "height": project.height,
+            "fps": project.fps,
+            "theme": project.theme,
+            "content_risk": project.content_risk,
+            "active_source_id": project.active_source_id,
+        }
+    )
+    for key, relative in (
+        ("captions-srt", "captions/captions.srt"),
+        ("captions-vtt", "captions/captions.vtt"),
+        ("preview-render-manifest", "renders/previews/render-manifest.json"),
+    ):
+        path = store.path(relative)
+        if path.is_file():
+            hashes[key] = sha256_file(path)
     for indexed_source in source_index.sources:
         verify_source_integrity(store, indexed_source)
         hashes[f"source:{indexed_source.source_id}"] = sha256_file(
@@ -138,11 +200,15 @@ def final_review_hash(store: ProjectStore, qa_report: QAReport | None = None) ->
         {
             "project_id": project.project_id,
             "active_source_id": project.active_source_id,
-            "active_versions": project.active_versions,
+            "active_versions": {
+                key: value
+                for key, value in project.active_versions.items()
+                if key != "final_render"
+            },
             "dependency_hashes": {
                 key: value
                 for key, value in project.dependency_hashes.items()
-                if key != "final_approval"
+                if key != "final_approval" and not key.startswith("final_render")
             },
             "artifacts": artifacts,
             "qa_hash": sha256_file(qa_path),
@@ -320,6 +386,85 @@ def _ensure_active_versions(project: ProjectManifest, **versions: str) -> None:
         project.active_versions.setdefault(artifact, actual)
 
 
+def _archive_active_manifest(
+    store: ProjectStore,
+    artifact: str,
+    relative_path: str,
+    version_id: str,
+) -> None:
+    """Preserve the exact validated manifest before a human edit replaces it."""
+
+    if not VERSION_ID.fullmatch(version_id):
+        raise ValueError(f"{artifact} version_id is not a safe stable identifier")
+    project = store.project()
+    expected = project.active_versions.get(artifact)
+    if expected is not None and expected != version_id:
+        raise ValueError(
+            f"active {artifact} version is {expected}, not loaded version {version_id}"
+        )
+    current = store.path(relative_path)
+    archived = current.parent / "versions" / f"{version_id}.json"
+    if not archived.exists():
+        atomic_copy_file(current, archived)
+
+
+def _activate_edited_manifest(
+    store: ProjectStore,
+    artifact: str,
+    version_id: str,
+    invalidation_stage: Literal["claims", "script", "storyboard", "rights"],
+    reason: str,
+) -> None:
+    project = store.invalidate_from(invalidation_stage, reason)
+    project.active_versions[artifact] = version_id
+    if artifact == "claims":
+        project.active_versions.pop("claims_critique", None)
+        project.dependency_hashes.pop("claims_critique_prompt", None)
+        project.dependency_hashes.pop("claims_critique_input", None)
+        if "claims_critique" not in project.stale_artifacts:
+            project.stale_artifacts.append("claims_critique")
+    store.save_project(project)
+
+
+def _validate_edit_reviewer(reviewer: str) -> None:
+    if not reviewer.strip():
+        raise ValueError("reviewer identifier cannot be empty")
+
+
+def _claim_text(claim: Claim) -> str:
+    return " ".join(
+        value
+        for value in (claim.text, claim.reasoning, claim.scope, claim.limitation)
+        if value is not None
+    )
+
+
+def _claim_support(claim: Claim, evidence_by_id: dict[str, EvidenceSpan]) -> list[str]:
+    return [
+        span.excerpt
+        for evidence_id in claim.evidence_span_ids
+        if (span := evidence_by_id.get(evidence_id)) is not None
+    ]
+
+
+def _scene_assertion_text(scene: Scene) -> str:
+    visual = scene.visual
+    rows = [
+        scene.on_screen_text,
+        scene.accessibility_description,
+        visual.title,
+        visual.body,
+        visual.left,
+        visual.right,
+        *visual.labels,
+        *(node.label for node in visual.nodes),
+        *(edge.label for edge in visual.edges),
+    ]
+    if scene.primitive == "ChartReveal":
+        rows.extend(format(value, "g") for value in visual.series)
+    return " ".join(value for value in rows if value is not None)
+
+
 def _validate_claim_dependencies(
     store: ProjectStore,
     claims: ClaimsManifest,
@@ -364,6 +509,15 @@ def _validate_claim_dependencies(
             raise ValueError(
                 f"claim {claim.claim_id} references missing evidence {sorted(missing)[0]}"
             )
+        unsupported = unsupported_assertion_tokens(
+            _claim_text(claim),
+            [evidence_by_id[item].excerpt for item in claim.evidence_span_ids],
+        )
+        if unsupported:
+            raise ValueError(
+                f"claim {claim.claim_id} contains unsupported number, unit, or DOI: "
+                + ", ".join(unsupported)
+            )
 
 
 def _claim_is_current(store: ProjectStore, claim: Claim, evidence: EvidenceManifest) -> bool:
@@ -389,12 +543,28 @@ def _validate_script_dependencies(
     approved = {
         claim.claim_id for claim in claims.claims if _claim_is_current(store, claim, evidence)
     }
+    claims_by_id = {claim.claim_id: claim for claim in claims.claims}
+    evidence_by_id = {span.evidence_id: span for span in evidence.evidence}
     for segment in script.segments:
         missing = set(segment.claim_ids) - approved
         if missing:
             raise ValueError(
                 f"segment {segment.segment_id} references an unapproved or stale claim "
                 f"{sorted(missing)[0]}"
+            )
+        support = [
+            item
+            for claim_id in segment.claim_ids
+            for item in [
+                _claim_text(claims_by_id[claim_id]),
+                *_claim_support(claims_by_id[claim_id], evidence_by_id),
+            ]
+        ]
+        unsupported = unsupported_assertion_tokens(segment.text, support)
+        if unsupported:
+            raise ValueError(
+                f"segment {segment.segment_id} contains unsupported number, unit, or DOI: "
+                + ", ".join(unsupported)
             )
 
 
@@ -423,6 +593,8 @@ def _validate_storyboard_dependencies(
     approved_claims = {
         claim.claim_id for claim in claims.claims if _claim_is_current(store, claim, evidence)
     }
+    claims_by_id = {claim.claim_id: claim for claim in claims.claims}
+    evidence_by_id = {span.evidence_id: span for span in evidence.evidence}
     assets = _load_assets(store)
     asset_ids = {asset.asset_id for asset in assets.assets}
     for scene in storyboard.scenes:
@@ -443,18 +615,43 @@ def _validate_storyboard_dependencies(
                 f"{stale_segments[0]}"
             )
         linked_claims = {claim_id for segment in linked_segments for claim_id in segment.claim_ids}
-        if not set(scene.claim_ids).issubset(linked_claims):
+        if set(scene.claim_ids) != linked_claims:
             raise ValueError(
-                f"scene {scene.scene_id} cites a claim not carried by its script segments"
+                f"scene {scene.scene_id} must cite exactly the claims carried by its script segments"
             )
         if not set(scene.claim_ids).issubset(approved_claims):
             raise ValueError(f"scene {scene.scene_id} cites an unapproved or stale claim")
-        factual_types = {"factual", "hook", "analogy", "caveat", "limitation"}
-        if (
-            scene.evidence_label
-            or any(segment.segment_type in factual_types for segment in linked_segments)
-        ) and not scene.claim_ids:
-            raise ValueError(f"factual scene {scene.scene_id} requires approved claim IDs")
+        if not scene.claim_ids:
+            raise ValueError(f"scene {scene.scene_id} requires approved claim IDs")
+        if scene.visual.citation is not None and scene.visual.citation not in scene.claim_ids:
+            raise ValueError(f"scene {scene.scene_id} contains a fabricated visual citation")
+        scene_claims = [claims_by_id[item] for item in scene.claim_ids]
+        labels = {claim.evidence_label.upper() for claim in scene_claims}
+        expected_label = "INFERRED" if "INFERRED" in labels else None
+        if scene.evidence_label is None:
+            raise ValueError(f"scene {scene.scene_id} requires an evidence label")
+        if expected_label is not None and scene.evidence_label != expected_label:
+            raise ValueError(f"scene {scene.scene_id} understates inferred evidence")
+        if expected_label is None and scene.evidence_label not in labels:
+            raise ValueError(f"scene {scene.scene_id} evidence label does not match its claims")
+        support = [
+            item
+            for claim in scene_claims
+            for item in [_claim_text(claim), *_claim_support(claim, evidence_by_id)]
+        ]
+        unsupported = unsupported_assertion_tokens(_scene_assertion_text(scene), support)
+        if unsupported:
+            raise ValueError(
+                f"scene {scene.scene_id} contains unsupported number, unit, or DOI: "
+                + ", ".join(unsupported)
+            )
+        if scene.primitive == "SourceReceipt":
+            evidence_id = scene.visual.evidence_id
+            cited_evidence = {item for claim in scene_claims for item in claim.evidence_span_ids}
+            if evidence_id is None or evidence_id not in cited_evidence:
+                raise ValueError(
+                    f"SourceReceipt scene {scene.scene_id} requires evidence cited by its claims"
+                )
         expected_dependency = scene_dependency_hash(scene, script)
         if scene.dependency_hash != expected_dependency:
             raise ValueError(f"scene {scene.scene_id} has a stale script dependency hash")
@@ -756,6 +953,16 @@ def approve_final(store: ProjectStore, reviewer: str) -> None:
     report = load_model(qa, QAReport)
     if not report.passed:
         raise ValueError("QA report contains export blockers")
+    checks_by_id = {check.check_id: check for check in report.checks}
+    missing_checks = REQUIRED_FINAL_QA_CHECKS - checks_by_id.keys()
+    failed_checks = {
+        check_id
+        for check_id in REQUIRED_FINAL_QA_CHECKS
+        if check_id in checks_by_id and checks_by_id[check_id].status != "pass"
+    }
+    if missing_checks or failed_checks:
+        details = sorted(missing_checks | failed_checks)
+        raise ValueError("QA report lacks passing required checks: " + ", ".join(details))
     digest = final_review_hash(store, report)
     _record(store, "final", project.project_id, digest, "approve", reviewer)
     project.dependency_hashes["final_approval"] = digest
@@ -767,6 +974,7 @@ def approve_final(store: ProjectStore, reviewer: str) -> None:
 
 
 def edit_claim(store: ProjectStore, claim_id: str, new_text: str, reviewer: str) -> Claim:
+    _validate_edit_reviewer(reviewer)
     claims = load_model(store.path("claims/claims.json"), ClaimsManifest)
     claim = _find_claim(claims, claim_id)
     text = new_text.strip()
@@ -779,8 +987,22 @@ def edit_claim(store: ProjectStore, claim_id: str, new_text: str, reviewer: str)
     claim.review_status = ReviewStatus.PENDING
     claim.approval_hash = None
     claim.approval_timestamp = None
+    previous_version = claims.version_id
+    claims.version_id = f"claims-{stable_hash(claims.claims)[:16]}"
+    _archive_active_manifest(
+        store,
+        "claims",
+        "claims/claims.json",
+        previous_version,
+    )
     atomic_write_model(store.path("claims/claims.json"), claims)
-    store.invalidate_from("claims", f"claim {claim_id} edited")
+    _activate_edited_manifest(
+        store,
+        "claims",
+        claims.version_id,
+        "claims",
+        f"claim {claim_id} edited",
+    )
     object_hash = current_object_hash(store, "claim", claim_id)
     _record(store, "claim", claim_id, object_hash, "edit", reviewer, text)
     return claim
@@ -811,6 +1033,7 @@ def reject_claim(
 def edit_script_segment(
     store: ProjectStore, segment_id: str, new_text: str, reviewer: str
 ) -> ScriptSegment:
+    _validate_edit_reviewer(reviewer)
     script = load_model(store.path("script/script.json"), ScriptManifest)
     segment = _find_segment(script, segment_id)
     text = new_text.strip()
@@ -821,8 +1044,22 @@ def edit_script_segment(
     segment.text = text
     segment.review_status = ReviewStatus.PENDING
     segment.approval_hash = None
+    previous_version = script.version_id
+    script.version_id = f"script-{stable_hash(script.segments)[:16]}"
+    _archive_active_manifest(
+        store,
+        "script",
+        "script/script.json",
+        previous_version,
+    )
     atomic_write_model(store.path("script/script.json"), script)
-    store.invalidate_from("script", f"script segment {segment_id} edited")
+    _activate_edited_manifest(
+        store,
+        "script",
+        script.version_id,
+        "script",
+        f"script segment {segment_id} edited",
+    )
     _record(
         store,
         "script-segment",
@@ -865,6 +1102,7 @@ def edit_scene(
     updates: dict[str, object],
     reviewer: str,
 ) -> Scene:
+    _validate_edit_reviewer(reviewer)
     storyboard = load_model(store.path("storyboard/storyboard.json"), StoryboardManifest)
     scene = _find_scene(storyboard, scene_id)
     forbidden = {"schema_version", "scene_id", "review_status", "dependency_hash"}
@@ -877,8 +1115,22 @@ def edit_scene(
     if scene_review_hash(edited) == scene_review_hash(scene):
         return scene
     storyboard.scenes[storyboard.scenes.index(scene)] = edited
+    previous_version = storyboard.version_id
+    storyboard.version_id = f"storyboard-{stable_hash(storyboard.scenes)[:16]}"
+    _archive_active_manifest(
+        store,
+        "storyboard",
+        "storyboard/storyboard.json",
+        previous_version,
+    )
     atomic_write_model(store.path("storyboard/storyboard.json"), storyboard)
-    store.invalidate_from("storyboard", f"scene {scene_id} edited")
+    _activate_edited_manifest(
+        store,
+        "storyboard",
+        storyboard.version_id,
+        "storyboard",
+        f"scene {scene_id} edited",
+    )
     _record(
         store,
         "scene",
@@ -917,6 +1169,7 @@ def edit_asset(
     updates: dict[str, object],
     reviewer: str,
 ) -> Asset:
+    _validate_edit_reviewer(reviewer)
     assets = _load_assets(store)
     asset = _find_asset(assets, asset_id)
     forbidden = {"schema_version", "asset_id", "review_status"}
@@ -928,9 +1181,26 @@ def edit_asset(
     edited = Asset.model_validate(payload)
     if asset_review_hash(edited) == asset_review_hash(asset):
         return asset
+    edited_path = store.path(edited.local_path)
+    if not edited_path.is_file() or sha256_file(edited_path) != edited.sha256:
+        raise ValueError(f"asset file is missing or changed: {asset_id}")
     assets.assets[assets.assets.index(asset)] = edited
+    previous_version = assets.version_id
+    assets.version_id = f"assets-{stable_hash(assets.assets)[:12]}"
+    _archive_active_manifest(
+        store,
+        "assets",
+        "assets/asset-manifest.json",
+        previous_version,
+    )
     atomic_write_model(store.path("assets/asset-manifest.json"), assets)
-    store.invalidate_from("rights", f"asset {asset_id} edited")
+    _activate_edited_manifest(
+        store,
+        "assets",
+        assets.version_id,
+        "rights",
+        f"asset {asset_id} edited",
+    )
     _record(
         store,
         "asset-rights",

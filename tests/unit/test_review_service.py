@@ -10,7 +10,9 @@ from techshort.domain.models import (
     AssetManifest,
     ClaimsManifest,
     EvidenceManifest,
+    QACheck,
     QAReport,
+    ReviewLog,
     ReviewStatus,
     ScriptManifest,
     StoryboardManifest,
@@ -30,6 +32,7 @@ from techshort.review import (
     approve_storyboard,
     current_artifact_hashes,
     edit_asset,
+    edit_claim,
     edit_scene,
     edit_script_segment,
     final_review_hash,
@@ -38,6 +41,7 @@ from techshort.review import (
     note_claim,
     reject_claim,
 )
+from techshort.review.service import REQUIRED_FINAL_QA_CHECKS
 
 FIXTURE = Path("examples/rolling-shutter/rolling-shutter.md")
 
@@ -103,6 +107,64 @@ def test_claim_approval_rejects_wrong_evidence_version_and_source_hash(
         approve_claims(hash_store, "reviewer")
 
 
+def test_review_rejects_numbers_and_units_absent_from_approved_evidence(
+    tmp_path: Path,
+) -> None:
+    claim_store = _claims_store(tmp_path, "claim-number-bypass")
+    claims = load_model(claim_store.path("claims/claims.json"), ClaimsManifest)
+    claim = claims.claims[0]
+    edit_claim(claim_store, claim.claim_id, claim.text + " It runs at 9999 Hz.", "reviewer")
+    with pytest.raises(ValueError, match="unsupported number, unit, or DOI"):
+        approve_claim(claim_store, claim.claim_id, "reviewer")
+
+    script_store = _script_store(tmp_path, "script-number-bypass")
+    script = load_model(script_store.path("script/script.json"), ScriptManifest)
+    segment = script.segments[0]
+    edit_script_segment(
+        script_store,
+        segment.segment_id,
+        segment.text + " The offset is 9999 px.",
+        "reviewer",
+    )
+    with pytest.raises(ValueError, match="unsupported number, unit, or DOI"):
+        approve_script_segment(script_store, segment.segment_id, "reviewer")
+
+
+def test_claim_edit_archives_and_activates_a_content_derived_version(
+    tmp_path: Path,
+) -> None:
+    store = _claims_store(tmp_path, "claim-edit-version")
+    approve_claims(store, "reviewer")
+    path = store.path("claims/claims.json")
+    before = load_model(path, ClaimsManifest)
+    previous_bytes = path.read_bytes()
+    critique_path = store.path("claims/critique.json")
+    critique_bytes = critique_path.read_bytes()
+    assert "claims_critique" in store.project().active_versions
+    reviews_before = load_model(store.path("reviews/review-log.json"), ReviewLog)
+
+    edited = edit_claim(
+        store,
+        before.claims[0].claim_id,
+        before.claims[0].text + " Within this example.",
+        "reviewer",
+    )
+
+    after = load_model(path, ClaimsManifest)
+    assert after.version_id != before.version_id
+    assert after.version_id.startswith("claims-")
+    project = store.project()
+    assert project.active_versions["claims"] == after.version_id
+    assert "claims_critique" not in project.active_versions
+    assert "claims_critique" in project.stale_artifacts
+    assert critique_path.read_bytes() == critique_bytes
+    assert store.path(f"claims/versions/{before.version_id}.json").read_bytes() == previous_bytes
+    reviews_after = load_model(store.path("reviews/review-log.json"), ReviewLog)
+    assert len(reviews_after.reviews) == len(reviews_before.reviews) + 1
+    assert reviews_after.reviews[-1].decision == "edit"
+    assert reviews_after.reviews[-1].object_id == edited.claim_id
+
+
 def test_script_segment_actions_and_claims_version_dependency(tmp_path: Path) -> None:
     store = _script_store(tmp_path)
     script = load_model(store.path("script/script.json"), ScriptManifest)
@@ -112,7 +174,19 @@ def test_script_segment_actions_and_claims_version_dependency(tmp_path: Path) ->
     assert store.project().approvals.script == ReviewStatus.APPROVED
     assert has_current_approval(store, "script-segment", first.segment_id)
 
+    script_path = store.path("script/script.json")
+    previous_version = script.version_id
+    previous_bytes = script_path.read_bytes()
+    reviews_before = load_model(store.path("reviews/review-log.json"), ReviewLog)
     edit_script_segment(store, first.segment_id, first.text + " Clearly.", "reviewer")
+    edited_script = load_model(script_path, ScriptManifest)
+    assert edited_script.version_id != previous_version
+    assert edited_script.version_id.startswith("script-")
+    assert store.project().active_versions["script"] == edited_script.version_id
+    assert store.path(f"script/versions/{previous_version}.json").read_bytes() == previous_bytes
+    reviews_after = load_model(store.path("reviews/review-log.json"), ReviewLog)
+    assert len(reviews_after.reviews) == len(reviews_before.reviews) + 1
+    assert reviews_after.reviews[-1].decision == "edit"
     assert not has_current_approval(store, "script-segment", first.segment_id)
     assert store.project().approvals.script == ReviewStatus.STALE
 
@@ -136,12 +210,24 @@ def test_scene_actions_validate_script_version_dependency_and_inert_edits(
     assert store.project().approvals.storyboard == ReviewStatus.APPROVED
     assert has_current_approval(store, "scene", first.scene_id)
 
+    storyboard_path = store.path("storyboard/storyboard.json")
+    previous_version = storyboard.version_id
+    previous_bytes = storyboard_path.read_bytes()
+    reviews_before = load_model(store.path("reviews/review-log.json"), ReviewLog)
     edit_scene(
         store,
         first.scene_id,
         {"on_screen_text": "A clearer reviewed title"},
         "reviewer",
     )
+    edited_storyboard = load_model(storyboard_path, StoryboardManifest)
+    assert edited_storyboard.version_id != previous_version
+    assert edited_storyboard.version_id.startswith("storyboard-")
+    assert store.project().active_versions["storyboard"] == edited_storyboard.version_id
+    assert store.path(f"storyboard/versions/{previous_version}.json").read_bytes() == previous_bytes
+    reviews_after = load_model(store.path("reviews/review-log.json"), ReviewLog)
+    assert len(reviews_after.reviews) == len(reviews_before.reviews) + 1
+    assert reviews_after.reviews[-1].decision == "edit"
     assert not has_current_approval(store, "scene", first.scene_id)
     assert store.project().approvals.storyboard == ReviewStatus.STALE
 
@@ -168,6 +254,35 @@ def test_scene_actions_validate_script_version_dependency_and_inert_edits(
     atomic_write_model(dependency_path, stale_storyboard)
     with pytest.raises(ValueError, match="stale script dependency hash"):
         approve_storyboard(dependency, "reviewer")
+
+
+def test_storyboard_review_rejects_fabricated_labels_citations_and_receipts(
+    tmp_path: Path,
+) -> None:
+    citation_store = _storyboard_store(tmp_path, "fake-scene-citation")
+    storyboard = load_model(citation_store.path("storyboard/storyboard.json"), StoryboardManifest)
+    scene = storyboard.scenes[0]
+    visual = scene.visual.model_dump(mode="json")
+    visual["citation"] = "doi-10.9999-fabricated"
+    edit_scene(citation_store, scene.scene_id, {"visual": visual}, "reviewer")
+    with pytest.raises(ValueError, match="fabricated visual citation"):
+        approve_scene(citation_store, scene.scene_id, "reviewer")
+
+    label_store = _storyboard_store(tmp_path, "fake-scene-label")
+    storyboard = load_model(label_store.path("storyboard/storyboard.json"), StoryboardManifest)
+    scene = storyboard.scenes[0]
+    edit_scene(label_store, scene.scene_id, {"evidence_label": "MEASURED"}, "reviewer")
+    with pytest.raises(ValueError, match="evidence label"):
+        approve_scene(label_store, scene.scene_id, "reviewer")
+
+    receipt_store = _storyboard_store(tmp_path, "fake-source-receipt")
+    storyboard = load_model(receipt_store.path("storyboard/storyboard.json"), StoryboardManifest)
+    receipt = next(item for item in storyboard.scenes if item.primitive == "SourceReceipt")
+    visual = receipt.visual.model_dump(mode="json")
+    visual["evidence_id"] = "evidence-fabricated"
+    edit_scene(receipt_store, receipt.scene_id, {"visual": visual}, "reviewer")
+    with pytest.raises(ValueError, match="requires evidence cited by its claims"):
+        approve_scene(receipt_store, receipt.scene_id, "reviewer")
 
 
 def test_asset_actions_require_exact_file_hash_and_active_manifest_version(
@@ -203,7 +318,19 @@ def test_asset_actions_require_exact_file_hash_and_active_manifest_version(
     note_asset(store, asset.asset_id, "Ownership confirmed.", "reviewer")
     assert has_current_approval(store, "asset-rights", asset.asset_id)
 
+    assets_path = store.path("assets/asset-manifest.json")
+    previous_version = load_model(assets_path, AssetManifest).version_id
+    previous_bytes = assets_path.read_bytes()
+    reviews_before = load_model(store.path("reviews/review-log.json"), ReviewLog)
     edit_asset(store, asset.asset_id, {"creator": "Local design team"}, "reviewer")
+    edited_assets = load_model(assets_path, AssetManifest)
+    assert edited_assets.version_id != previous_version
+    assert edited_assets.version_id.startswith("assets-")
+    assert store.project().active_versions["assets"] == edited_assets.version_id
+    assert store.path(f"assets/versions/{previous_version}.json").read_bytes() == previous_bytes
+    reviews_after = load_model(store.path("reviews/review-log.json"), ReviewLog)
+    assert len(reviews_after.reviews) == len(reviews_before.reviews) + 1
+    assert reviews_after.reviews[-1].decision == "edit"
     assert not has_current_approval(store, "asset", asset.asset_id)
     assert store.project().approvals.rights == ReviewStatus.STALE
 
@@ -267,7 +394,10 @@ def test_final_review_digest_is_revalidatable_and_bound_to_qa_snapshot(
     artifacts = current_artifact_hashes(store)
     report = QAReport(
         project_id=store.project().project_id,
-        checks=[],
+        checks=[
+            QACheck(check_id=check_id, status="pass", message="verified")
+            for check_id in sorted(REQUIRED_FINAL_QA_CHECKS)
+        ],
         export_blockers=[],
         artifact_hashes=artifacts,
         media_path=preview.relative_to(store.root).as_posix(),
@@ -280,6 +410,19 @@ def test_final_review_digest_is_revalidatable_and_bound_to_qa_snapshot(
     project = store.project()
     assert project.dependency_hashes["final_approval"] == expected
     assert has_current_approval(store, "final", project.project_id)
+
+    project.active_versions["final_render"] = "render-derived-after-approval"
+    project.dependency_hashes["final_render_output"] = "a" * 64
+    project.dependency_hashes["final_render_dependencies"] = "b" * 64
+    store.save_project(project)
+    assert has_current_approval(store, "final", project.project_id)
+
+    project.width = 720
+    store.save_project(project)
+    with pytest.raises(ValueError, match="QA report does not match current artifact"):
+        final_review_hash(store)
+    project.width = 1080
+    store.save_project(project)
 
     source_index = store.path("sources/source-index.json")
     source_index.write_text(source_index.read_text(encoding="utf-8") + " ", encoding="utf-8")

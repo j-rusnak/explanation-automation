@@ -27,6 +27,7 @@ from techshort.domain.models import (
     StoryboardManifest,
 )
 from techshort.domain.storage import ProjectStore, atomic_write_model, load_model
+from techshort.evidence import unsupported_assertion_tokens
 from techshort.ingestion import resolve_evidence_text, verify_source_integrity
 from techshort.rendering.tools import media_tool
 from techshort.review import (
@@ -67,6 +68,86 @@ def _approval_is_current(store: ProjectStore, object_type: str, object_id: str) 
         return has_current_approval(store, object_type, object_id)
     except (OSError, ValueError):
         return False
+
+
+def _claim_support_texts(
+    claim_id: str,
+    claims_by_id: dict[str, Any],
+    evidence_by_id: dict[str, Any],
+) -> list[str]:
+    claim = claims_by_id.get(claim_id)
+    if claim is None:
+        return []
+    rows = [claim.text]
+    rows.extend(
+        value for value in (claim.reasoning, claim.scope, claim.limitation) if value is not None
+    )
+    rows.extend(
+        evidence_by_id[evidence_id].excerpt
+        for evidence_id in claim.evidence_span_ids
+        if evidence_id in evidence_by_id
+    )
+    return rows
+
+
+def _scene_assertion_text(scene: Any) -> str:
+    visual = scene.visual
+    rows = [
+        scene.on_screen_text,
+        scene.accessibility_description,
+        visual.title,
+        visual.body,
+        visual.left,
+        visual.right,
+        *visual.labels,
+        *(node.label for node in visual.nodes),
+        *(edge.label for edge in visual.edges),
+    ]
+    if scene.primitive == "ChartReveal":
+        rows.extend(format(value, "g") for value in visual.series)
+    return " ".join(value for value in rows if value is not None)
+
+
+def _storyboard_provenance_valid(
+    storyboard: StoryboardManifest,
+    claims_by_id: dict[str, Any],
+    evidence_by_id: dict[str, Any],
+) -> bool:
+    for scene in storyboard.scenes:
+        scene_claims = [claims_by_id.get(claim_id) for claim_id in scene.claim_ids]
+        if not scene.claim_ids or any(claim is None for claim in scene_claims):
+            return False
+        if scene.visual.citation is not None and scene.visual.citation not in scene.claim_ids:
+            return False
+        expected_labels = {claim.evidence_label.upper() for claim in scene_claims if claim}
+        expected_label = "INFERRED" if "INFERRED" in expected_labels else None
+        if scene.evidence_label is None:
+            return False
+        if expected_label is not None:
+            if scene.evidence_label != expected_label:
+                return False
+        elif scene.evidence_label not in expected_labels:
+            return False
+        support = [
+            item
+            for claim_id in scene.claim_ids
+            for item in _claim_support_texts(claim_id, claims_by_id, evidence_by_id)
+        ]
+        if unsupported_assertion_tokens(_scene_assertion_text(scene), support):
+            return False
+        if scene.primitive == "SourceReceipt":
+            evidence_id = scene.visual.evidence_id
+            if evidence_id is None or evidence_id not in evidence_by_id:
+                return False
+            allowed_evidence = {
+                item
+                for claim in scene_claims
+                if claim is not None
+                for item in claim.evidence_span_ids
+            }
+            if evidence_id not in allowed_evidence:
+                return False
+    return True
 
 
 def _write_report(
@@ -193,6 +274,44 @@ def run_qa(
         )
     )
 
+    claims_by_id = {claim.claim_id: claim for claim in claims.claims}
+    claims_assertions_valid = True
+    for claim in claims.claims:
+        support = [
+            evidence_by_id[evidence_id].excerpt
+            for evidence_id in claim.evidence_span_ids
+            if evidence_id in evidence_by_id
+        ]
+        claim_text = " ".join(
+            value
+            for value in (claim.text, claim.reasoning, claim.scope, claim.limitation)
+            if value is not None
+        )
+        claims_assertions_valid = claims_assertions_valid and not unsupported_assertion_tokens(
+            claim_text, support
+        )
+    script_assertions_valid = True
+    for segment in script.segments:
+        support = [
+            item
+            for claim_id in segment.claim_ids
+            for item in _claim_support_texts(claim_id, claims_by_id, evidence_by_id)
+        ]
+        script_assertions_valid = script_assertions_valid and not unsupported_assertion_tokens(
+            segment.text, support
+        )
+    storyboard_assertions_valid = _storyboard_provenance_valid(
+        storyboard, claims_by_id, evidence_by_id
+    )
+    checks.append(
+        _check(
+            "assertion-provenance",
+            claims_assertions_valid and script_assertions_valid and storyboard_assertions_valid,
+            "Concrete numbers, units, citations, labels, and source receipts resolve to approved evidence",
+            "A claim, script segment, or scene contains an unsupported number, unit, citation, label, or source receipt",
+        )
+    )
+
     project = store.project()
     version_chain_valid = (
         claims.evidence_version_id == evidence.version_id
@@ -229,7 +348,8 @@ def run_qa(
     segments_current = all(
         segment.review_status == ReviewStatus.APPROVED
         and _approval_is_current(store, "script-segment", segment.segment_id)
-        and (not segment.claim_ids or set(segment.claim_ids).issubset(approved_claim_ids))
+        and bool(segment.claim_ids)
+        and set(segment.claim_ids).issubset(approved_claim_ids)
         for segment in script.segments
     )
     scenes_current = all(
@@ -323,21 +443,16 @@ def run_qa(
     citation_valid = True
     for scene in storyboard.scenes:
         linked = [segment_by_id[item] for item in scene.script_segment_ids if item in segment_by_id]
-        factual = any(
-            segment.segment_type in {"factual", "hook", "analogy", "caveat", "limitation"}
-            for segment in linked
-        )
         implied_claims = {claim_id for segment in linked for claim_id in segment.claim_ids}
-        if factual:
-            citation_valid = citation_valid and bool(scene.claim_ids)
-            citation_valid = citation_valid and implied_claims.issubset(scene.claim_ids)
-            citation_valid = citation_valid and set(scene.claim_ids).issubset(approved_claim_ids)
+        citation_valid = citation_valid and bool(linked) and bool(implied_claims)
+        citation_valid = citation_valid and set(scene.claim_ids) == implied_claims
+        citation_valid = citation_valid and set(scene.claim_ids).issubset(approved_claim_ids)
     checks.append(
         _check(
             "missing-citations",
             citation_valid,
-            "Every factual narration clause and scene carries approved claim IDs",
-            "A factual narration clause or scene is missing its approved claim citation",
+            "Every narration segment and scene carries approved claim IDs",
+            "A narration segment or scene is missing its approved claim citation",
         )
     )
 
