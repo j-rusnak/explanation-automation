@@ -1,51 +1,746 @@
 from __future__ import annotations
 
+import re
+import shutil
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Generic, Literal, TypeVar, cast
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from techshort.assets import ensure_builtin_assets
+from techshort.domain.hashing import stable_hash
 from techshort.domain.models import (
+    AssetManifest,
+    Claim,
     ClaimsManifest,
+    EvidenceManifest,
+    EvidenceSpan,
+    ReviewStatus,
     ScriptManifest,
-    SourceIndex,
+    SourceDocument,
     StoryboardManifest,
 )
 from techshort.domain.storage import ProjectStore, atomic_write_model, load_model
+from techshort.ingestion import get_active_source, get_source, verify_source_integrity
+from techshort.providers.codex_cli import CodexCliProvider
 from techshort.providers.fixture import FixtureProvider
+from techshort.providers.manual import ManualPromptPacket, ManualProvider, ManualTask
+
+ProviderName = Literal["fixture", "manual", "codex"]
+ArtifactT = TypeVar("ArtifactT", bound=BaseModel)
+
+MAX_EVIDENCE_SPANS = 32
+SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+NUMBER_TOKEN = re.compile(r"(?<![\w.])[+-]?(?:\d+(?:[.,]\d+)?|\.\d+)(?:\s?(?:%|ms|s|Hz))?")
+DOI_TOKEN = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+\b", re.IGNORECASE)
+SECTION_MARKER = re.compile(r"(?m)^--- (?P<heading>[^\r\n]+) ---\n")
+SENTENCE = re.compile(r"\S.*?(?:[.!?](?=\s|$)|(?=\n{2,})|$)", re.DOTALL)
+
+
+CLAIMS_INSTRUCTION = (
+    "Create 3 to 8 concise candidate claims. Every claim must cite one or more exact "
+    "evidence_id values from the excerpts. Preserve scope, hedging, causal wording, numbers, "
+    "and units. Use relationship 'inferred' or 'synthesis' only with explicit reasoning. "
+    "Include a meaningful caveat or limitation when the evidence supports one. Set "
+    "evidence_version_id exactly to the supplied value and leave all review fields pending."
+)
+SCRIPT_INSTRUCTION = (
+    "Write an evidence-linked 130 to 170 word explainer lasting 45 to 75 seconds. Use only "
+    "approved claim_id values supplied in the excerpts. Every factual, hook, analogy, caveat, "
+    "and limitation segment must cite supporting claims. Include one meaningful limitation, "
+    "plain language, honest uncertainty, and no engagement bait. Set claims_version_id and "
+    "angle exactly to the supplied values and leave review fields pending."
+)
+STORYBOARD_INSTRUCTION = (
+    "Create a deterministic vertical storyboard covering every supplied script segment. Use "
+    "only the allowlisted scene primitives and structured visual fields in the schema. Every "
+    "factual scene must carry the relevant approved claim IDs. Do not include paths, HTML, SVG, "
+    "or executable text. Keep the total duration from 45 to 75 seconds. Set script_version_id "
+    "exactly to the supplied value and leave review fields pending."
+)
+
+
+@dataclass(frozen=True)
+class GenerationOutcome(Generic[ArtifactT]):
+    """One coherent result shape for fixture, manual, and Codex generation."""
+
+    provider: ProviderName
+    artifact: ArtifactT | None = None
+    prompt_packet: Path | None = None
+
+    @property
+    def requires_manual_import(self) -> bool:
+        return self.provider == "manual" and self.artifact is None
+
+    def require_artifact(self) -> ArtifactT:
+        if self.artifact is None:
+            location = f" at {self.prompt_packet}" if self.prompt_packet else ""
+            raise ValueError(f"manual generation requires a validated result import{location}")
+        return self.artifact
+
+
+class GenerationReceipt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    receipt_version: Literal["1.0.0"] = "1.0.0"
+    stage: ManualTask
+    provider: ProviderName
+    prompt_version: str
+    prompt_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    input_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    artifact_version: str
+
+
+def _require_safe_id(value: str, label: str) -> str:
+    if not SAFE_ID.fullmatch(value):
+        raise ValueError(f"{label} must be a safe stable identifier")
+    return value
+
+
+def _archive(store: ProjectStore, relative: str, version_id: str) -> None:
+    current = store.path(relative)
+    if not current.exists():
+        return
+    _require_safe_id(version_id, "artifact version_id")
+    versions = current.parent / "versions"
+    versions.mkdir(parents=True, exist_ok=True)
+    archived = versions / f"{version_id}.json"
+    if not archived.exists():
+        shutil.copyfile(current, archived)
+
+
+def _source(store: ProjectStore, source_id: str | None) -> tuple[SourceDocument, str]:
+    source = get_active_source(store) if source_id is None else get_source(store, source_id)
+    source = verify_source_integrity(store, source)
+    if source.ocr_required:
+        raise ValueError("source requires OCR, which is unsupported; claims were not generated")
+    extracted = store.path(f"sources/extracted/{source.source_id}.txt")
+    text = extracted.read_text(encoding="utf-8", errors="strict")
+    return source, text
+
+
+def _bounded_ranges(text: str, start: int, end: int) -> list[tuple[int, int]]:
+    ranges: list[tuple[int, int]] = []
+    body = text[start:end]
+    for sentence in SENTENCE.finditer(body):
+        left = start + sentence.start()
+        right = start + sentence.end()
+        while right > left and text[right - 1].isspace():
+            right -= 1
+        while left < right and text[left].isspace():
+            left += 1
+        while right - left > 500:
+            split = text.rfind(" ", left, left + 500)
+            if split <= left:
+                split = left + 500
+            ranges.append((left, split))
+            left = split
+            while left < right and text[left].isspace():
+                left += 1
+        if right > left:
+            ranges.append((left, right))
+    return ranges
+
+
+def build_evidence_candidates(
+    source_text: str,
+    source: SourceDocument,
+    *,
+    maximum: int = MAX_EVIDENCE_SPANS,
+) -> EvidenceManifest:
+    """Create deterministic, exact-offset evidence candidates without model access."""
+
+    if maximum < 1 or maximum > MAX_EVIDENCE_SPANS:
+        raise ValueError(f"maximum evidence spans must be between 1 and {MAX_EVIDENCE_SPANS}")
+    markers = list(SECTION_MARKER.finditer(source_text))
+    sections: list[tuple[str | None, int, int]] = []
+    if markers:
+        for index, marker in enumerate(markers):
+            end = markers[index + 1].start() if index + 1 < len(markers) else len(source_text)
+            sections.append((marker.group("heading"), marker.end(), end))
+    else:
+        sections.append((None, 0, len(source_text)))
+
+    spans: list[EvidenceSpan] = []
+    for heading, start, end in sections:
+        for left, right in _bounded_ranges(source_text, start, end):
+            excerpt = source_text[left:right]
+            if not excerpt:
+                continue
+            page_index: int | None = None
+            printed_page_label: str | None = None
+            if source.source_type == "pdf" and heading:
+                page_match = re.fullmatch(r"Page\s+(\d+)", heading, re.IGNORECASE)
+                if page_match:
+                    page_number = int(page_match.group(1))
+                    page_index = page_number - 1
+                    printed_page_label = str(page_number)
+            evidence_id = f"evidence-{stable_hash({'source_hash': source.content_hash, 'start': left, 'end': right, 'excerpt': excerpt})[:16]}"
+            span = EvidenceSpan(
+                evidence_id=evidence_id,
+                source_id=source.source_id,
+                page_index=page_index,
+                printed_page_label=printed_page_label,
+                section_heading=heading,
+                char_start=left,
+                char_end=right,
+                excerpt=excerpt,
+                context=source_text[max(start, left - 180) : min(end, right + 180)],
+                source_hash=source.content_hash,
+                extraction_confidence=1.0,
+                locator=f"techshort://source/{source.source_id}?start={left}&end={right}",
+            )
+            if source_text[span.char_start : span.char_end] != span.excerpt:
+                raise ValueError("internal evidence locator did not resolve exactly")
+            spans.append(span)
+            if len(spans) >= maximum:
+                break
+        if len(spans) >= maximum:
+            break
+    if not spans:
+        raise ValueError("source has no usable text evidence; OCR may be required")
+    return EvidenceManifest(
+        version_id=f"evidence-{stable_hash(spans)[:16]}",
+        evidence=spans,
+    )
+
+
+def _evidence_excerpts(evidence: EvidenceManifest) -> list[dict[str, object]]:
+    return [
+        {
+            "evidence_version_id": evidence.version_id,
+            "evidence_id": span.evidence_id,
+            "source_id": span.source_id,
+            "page_index": span.page_index,
+            "printed_page_label": span.printed_page_label,
+            "section_heading": span.section_heading,
+            "excerpt": span.excerpt,
+            "context": span.context,
+        }
+        for span in evidence.evidence
+    ]
+
+
+def _claims_excerpts(claims: ClaimsManifest, evidence: EvidenceManifest) -> list[dict[str, object]]:
+    evidence_by_id = {span.evidence_id: span for span in evidence.evidence}
+    rows: list[dict[str, object]] = []
+    for claim in claims.claims:
+        rows.append(
+            {
+                "claims_version_id": claims.version_id,
+                "claim_id": claim.claim_id,
+                "claim": claim.text,
+                "relationship": claim.relationship,
+                "evidence_label": claim.evidence_label,
+                "limitation": claim.limitation,
+                "evidence": [
+                    {
+                        "evidence_id": evidence_id,
+                        "excerpt": evidence_by_id[evidence_id].excerpt,
+                    }
+                    for evidence_id in claim.evidence_span_ids
+                    if evidence_id in evidence_by_id
+                ],
+            }
+        )
+    return rows
+
+
+def _script_excerpts(script: ScriptManifest) -> list[dict[str, object]]:
+    return [
+        {
+            "script_version_id": script.version_id,
+            "segment_id": segment.segment_id,
+            "text": segment.text,
+            "segment_type": segment.segment_type,
+            "claim_ids": segment.claim_ids,
+            "approximate_duration": segment.approximate_duration,
+        }
+        for segment in script.segments
+    ]
+
+
+def _manual_packet_path(store: ProjectStore, stage: ManualTask) -> Path:
+    return store.path(f"{stage}/manual-prompt.json")
+
+
+def _manual_candidate(
+    store: ProjectStore,
+    stage: ManualTask,
+    result_relative: str | Path,
+    model: type[ArtifactT],
+    *,
+    expected_input_hash: str,
+    expected_prompt_hash: str,
+) -> ArtifactT:
+    packet_path = _manual_packet_path(store, stage)
+    if not packet_path.is_file():
+        raise ValueError(f"export the {stage} manual prompt packet before importing a result")
+    packet = ManualPromptPacket.model_validate_json(packet_path.read_text(encoding="utf-8"))
+    if (
+        packet.task != stage
+        or packet.input_hash != expected_input_hash
+        or packet.prompt_hash != expected_prompt_hash
+    ):
+        raise ValueError(f"the {stage} manual prompt packet is stale; export a new packet")
+    result_path = store.path(str(result_relative))
+    return ManualProvider.import_result(result_path, model)
+
+
+def _prepare_manual(
+    store: ProjectStore,
+    stage: ManualTask,
+    excerpts: list[dict[str, object]],
+    model: type[BaseModel],
+    instruction: str,
+    input_hash: str,
+) -> ManualPromptPacket:
+    return ManualProvider.export_packet(
+        _manual_packet_path(store, stage),
+        stage,
+        excerpts,
+        model.model_json_schema(),
+        instruction=instruction,
+        input_hash=input_hash,
+    )
+
+
+def _numbers_are_supported(claim: Claim, evidence_by_id: dict[str, EvidenceSpan]) -> bool:
+    cited = " ".join(evidence_by_id[item].excerpt for item in claim.evidence_span_ids)
+    cited_compact = re.sub(r"\s+", "", cited).casefold()
+    tokens = NUMBER_TOKEN.findall(claim.text) + DOI_TOKEN.findall(claim.text)
+    return all(re.sub(r"\s+", "", token).casefold() in cited_compact for token in tokens)
+
+
+def _normalize_claims(candidate: ClaimsManifest, evidence: EvidenceManifest) -> ClaimsManifest:
+    if candidate.evidence_version_id != evidence.version_id:
+        raise ValueError("generated claims target a stale or unknown evidence version")
+    if not 1 <= len(candidate.claims) <= 12:
+        raise ValueError("generated claims must contain between 1 and 12 candidates")
+    evidence_by_id = {item.evidence_id: item for item in evidence.evidence}
+    seen: set[str] = set()
+    for claim in candidate.claims:
+        _require_safe_id(claim.claim_id, "claim_id")
+        if claim.claim_id in seen:
+            raise ValueError(f"duplicate claim_id: {claim.claim_id}")
+        seen.add(claim.claim_id)
+        if len(claim.evidence_span_ids) != len(set(claim.evidence_span_ids)):
+            raise ValueError(f"claim {claim.claim_id} repeats an evidence ID")
+        missing = set(claim.evidence_span_ids) - evidence_by_id.keys()
+        if missing:
+            raise ValueError(
+                f"claim {claim.claim_id} references unknown evidence: {', '.join(sorted(missing))}"
+            )
+        if not _numbers_are_supported(claim, evidence_by_id):
+            raise ValueError(
+                f"claim {claim.claim_id} contains a number or DOI absent from evidence"
+            )
+        claim.review_status = ReviewStatus.PENDING
+        claim.approval_timestamp = None
+        claim.approval_hash = None
+        claim.reviewer_edits = None
+    candidate.version_id = f"claims-{stable_hash(candidate.claims)[:16]}"
+    return ClaimsManifest.model_validate(candidate.model_dump(mode="json"))
+
+
+def _normalize_script(
+    candidate: ScriptManifest,
+    claims: ClaimsManifest,
+    angle: Literal["surprising-result", "everyday-mechanism", "engineering-tradeoff"],
+) -> ScriptManifest:
+    if candidate.claims_version_id != claims.version_id:
+        raise ValueError("generated script targets a stale or unknown claims version")
+    if candidate.angle != angle:
+        raise ValueError("generated script did not preserve the selected angle")
+    approved = {
+        claim.claim_id for claim in claims.claims if claim.review_status == ReviewStatus.APPROVED
+    }
+    seen: set[str] = set()
+    for segment in candidate.segments:
+        _require_safe_id(segment.segment_id, "segment_id")
+        if segment.segment_id in seen:
+            raise ValueError(f"duplicate segment_id: {segment.segment_id}")
+        seen.add(segment.segment_id)
+        if len(segment.claim_ids) != len(set(segment.claim_ids)):
+            raise ValueError(f"segment {segment.segment_id} repeats a claim ID")
+        missing = set(segment.claim_ids) - approved
+        if missing:
+            raise ValueError(
+                f"segment {segment.segment_id} references unapproved claims: "
+                + ", ".join(sorted(missing))
+            )
+        segment.review_status = ReviewStatus.PENDING
+        segment.approval_hash = None
+    duration = sum(segment.approximate_duration for segment in candidate.segments)
+    if not 45 <= duration <= 75:
+        raise ValueError("generated script duration must be between 45 and 75 seconds")
+    candidate.version_id = f"script-{stable_hash(candidate.segments)[:16]}"
+    return ScriptManifest.model_validate(candidate.model_dump(mode="json"))
+
+
+def _normalize_storyboard(
+    candidate: StoryboardManifest,
+    script: ScriptManifest,
+    allowed_asset_ids: set[str],
+) -> StoryboardManifest:
+    if candidate.script_version_id != script.version_id:
+        raise ValueError("generated storyboard targets a stale or unknown script version")
+    segments = {segment.segment_id: segment for segment in script.segments}
+    all_claims = {claim_id for segment in script.segments for claim_id in segment.claim_ids}
+    scene_ids: set[str] = set()
+    covered_segments: set[str] = set()
+    elapsed = 0.0
+    for expected_order, scene in enumerate(candidate.scenes):
+        _require_safe_id(scene.scene_id, "scene_id")
+        if scene.scene_id in scene_ids:
+            raise ValueError(f"duplicate scene_id: {scene.scene_id}")
+        scene_ids.add(scene.scene_id)
+        if scene.order != expected_order:
+            raise ValueError("storyboard scene order must be contiguous and start at zero")
+        if len(scene.script_segment_ids) != len(set(scene.script_segment_ids)):
+            raise ValueError(f"scene {scene.scene_id} repeats a script segment ID")
+        if len(scene.claim_ids) != len(set(scene.claim_ids)):
+            raise ValueError(f"scene {scene.scene_id} repeats a claim ID")
+        if len(scene.asset_ids) != len(set(scene.asset_ids)):
+            raise ValueError(f"scene {scene.scene_id} repeats an asset ID")
+        for asset_id in scene.asset_ids:
+            _require_safe_id(asset_id, "asset_id")
+        unknown_assets = set(scene.asset_ids) - allowed_asset_ids
+        if unknown_assets:
+            raise ValueError(
+                f"scene {scene.scene_id} references unknown assets: "
+                + ", ".join(sorted(unknown_assets))
+            )
+        missing_segments = set(scene.script_segment_ids) - segments.keys()
+        if missing_segments:
+            raise ValueError(
+                f"scene {scene.scene_id} references unknown segments: "
+                + ", ".join(sorted(missing_segments))
+            )
+        covered_segments.update(scene.script_segment_ids)
+        missing_claims = set(scene.claim_ids) - all_claims
+        if missing_claims:
+            raise ValueError(
+                f"scene {scene.scene_id} references unknown claims: "
+                + ", ".join(sorted(missing_claims))
+            )
+        required_claims = {
+            claim_id
+            for segment_id in scene.script_segment_ids
+            for claim_id in segments[segment_id].claim_ids
+        }
+        if set(scene.claim_ids) != required_claims:
+            raise ValueError(
+                f"scene {scene.scene_id} must carry exactly the claims from its script segments"
+            )
+        scene.start_time = elapsed
+        elapsed += scene.duration
+        scene.review_status = ReviewStatus.PENDING
+        linked_segments = [segments[item] for item in scene.script_segment_ids]
+        scene.dependency_hash = (
+            stable_hash(linked_segments[0])
+            if len(linked_segments) == 1
+            else stable_hash({"segments": linked_segments})
+        )
+    if covered_segments != segments.keys():
+        missing = sorted(segments.keys() - covered_segments)
+        raise ValueError(f"storyboard does not cover script segments: {', '.join(missing)}")
+    if not 45 <= elapsed <= 75:
+        raise ValueError("generated storyboard duration must be between 45 and 75 seconds")
+    candidate.version_id = f"storyboard-{stable_hash(candidate.scenes)[:16]}"
+    return StoryboardManifest.model_validate(candidate.model_dump(mode="json"))
+
+
+def _receipt(
+    stage: ManualTask,
+    provider: ProviderName,
+    prompt_version: str,
+    prompt_hash: str,
+    input_hash: str,
+    artifact_version: str,
+) -> GenerationReceipt:
+    return GenerationReceipt(
+        stage=stage,
+        provider=provider,
+        prompt_version=prompt_version,
+        prompt_hash=prompt_hash,
+        input_hash=input_hash,
+        artifact_version=artifact_version,
+    )
+
+
+def _save_project_state(
+    store: ProjectStore,
+    stage: ManualTask,
+    versions: dict[str, str],
+    receipt: GenerationReceipt,
+) -> None:
+    atomic_write_model(store.path(f"{stage}/generation-receipt.json"), receipt)
+    store.invalidate_from(stage, f"{stage} regenerated with {receipt.provider} provider")
+    project = store.project()
+    setattr(project.approvals, stage, ReviewStatus.PENDING)
+    project.active_versions.update(versions)
+    project.dependency_hashes[f"{stage}_prompt"] = receipt.prompt_hash
+    project.dependency_hashes[f"{stage}_input"] = receipt.input_hash
+    store.save_project(project)
+
+
+def generate_claims(
+    store: ProjectStore,
+    provider: ProviderName = "fixture",
+    *,
+    source_id: str | None = None,
+    manual_result: str | Path | None = None,
+    codex_provider: CodexCliProvider | None = None,
+) -> GenerationOutcome[ClaimsManifest]:
+    source, text = _source(store, source_id)
+    if provider == "fixture":
+        fixture = FixtureProvider()
+        evidence = fixture.evidence(text, source.source_id, source.content_hash)
+        candidate = fixture.generate_claims(text, source.source_id, source.content_hash)
+        prompt_version = "fixture-v1"
+        prompt_hash = stable_hash("fixture rolling-shutter claims v1")
+        input_hash = stable_hash({"source_id": source.source_id, "hash": source.content_hash})
+    else:
+        evidence = build_evidence_candidates(text, source)
+        excerpts = _evidence_excerpts(evidence)
+        input_hash = stable_hash(excerpts)
+        schema = ClaimsManifest.model_json_schema()
+        expected_prompt_hash = ManualProvider.template_hash("claims", CLAIMS_INSTRUCTION, schema)
+        if provider == "manual":
+            packet_path = _manual_packet_path(store, "claims")
+            if manual_result is None:
+                _prepare_manual(
+                    store,
+                    "claims",
+                    excerpts,
+                    ClaimsManifest,
+                    CLAIMS_INSTRUCTION,
+                    input_hash,
+                )
+                return GenerationOutcome(provider="manual", prompt_packet=packet_path)
+            candidate = _manual_candidate(
+                store,
+                "claims",
+                manual_result,
+                ClaimsManifest,
+                expected_input_hash=input_hash,
+                expected_prompt_hash=expected_prompt_hash,
+            )
+            prompt_version = ManualProvider.prompt_version
+            prompt_hash = expected_prompt_hash
+        elif provider == "codex":
+            client = codex_provider or CodexCliProvider()
+            candidate = client.generate(CLAIMS_INSTRUCTION, excerpts, ClaimsManifest)
+            if client.last_run is None:
+                raise RuntimeError("Codex provider returned without generation metadata")
+            prompt_version = client.last_run.prompt_version
+            prompt_hash = client.last_run.prompt_hash
+            input_hash = client.last_run.input_hash
+        else:
+            raise ValueError(f"unknown generation provider: {provider}")
+
+    claims = _normalize_claims(candidate, evidence)
+    evidence_path = store.path("evidence/evidence.json")
+    claims_path = store.path("claims/claims.json")
+    if evidence_path.exists():
+        previous_evidence = load_model(evidence_path, EvidenceManifest)
+        _archive(store, "evidence/evidence.json", previous_evidence.version_id)
+    if claims_path.exists():
+        previous_claims = load_model(claims_path, ClaimsManifest)
+        _archive(store, "claims/claims.json", previous_claims.version_id)
+    atomic_write_model(evidence_path, evidence)
+    atomic_write_model(claims_path, claims)
+    receipt = _receipt(
+        "claims",
+        provider,
+        prompt_version,
+        prompt_hash,
+        input_hash,
+        claims.version_id,
+    )
+    _save_project_state(
+        store,
+        "claims",
+        {"evidence": evidence.version_id, "claims": claims.version_id},
+        receipt,
+    )
+    return GenerationOutcome(provider=provider, artifact=claims)
+
+
+def generate_script(
+    store: ProjectStore,
+    provider: ProviderName = "fixture",
+    *,
+    angle: Literal[
+        "surprising-result", "everyday-mechanism", "engineering-tradeoff"
+    ] = "everyday-mechanism",
+    manual_result: str | Path | None = None,
+    codex_provider: CodexCliProvider | None = None,
+) -> GenerationOutcome[ScriptManifest]:
+    claims = load_model(store.path("claims/claims.json"), ClaimsManifest)
+    if not claims.claims or not all(
+        claim.review_status == ReviewStatus.APPROVED for claim in claims.claims
+    ):
+        raise ValueError("all claims must be approved before script generation")
+    evidence = load_model(store.path("evidence/evidence.json"), EvidenceManifest)
+    excerpts = _claims_excerpts(claims, evidence)
+    excerpts.append({"selected_angle": angle, "claims_version_id": claims.version_id})
+    input_hash = stable_hash(excerpts)
+
+    if provider == "fixture":
+        candidate = FixtureProvider().generate_script(claims, angle)
+        prompt_version = "fixture-v1"
+        prompt_hash = stable_hash("fixture rolling-shutter script v1")
+    elif provider == "manual":
+        schema = ScriptManifest.model_json_schema()
+        expected_prompt_hash = ManualProvider.template_hash("script", SCRIPT_INSTRUCTION, schema)
+        packet_path = _manual_packet_path(store, "script")
+        if manual_result is None:
+            _prepare_manual(
+                store,
+                "script",
+                excerpts,
+                ScriptManifest,
+                SCRIPT_INSTRUCTION,
+                input_hash,
+            )
+            return GenerationOutcome(provider="manual", prompt_packet=packet_path)
+        candidate = _manual_candidate(
+            store,
+            "script",
+            manual_result,
+            ScriptManifest,
+            expected_input_hash=input_hash,
+            expected_prompt_hash=expected_prompt_hash,
+        )
+        prompt_version = ManualProvider.prompt_version
+        prompt_hash = expected_prompt_hash
+    elif provider == "codex":
+        client = codex_provider or CodexCliProvider()
+        candidate = client.generate(SCRIPT_INSTRUCTION, excerpts, ScriptManifest)
+        if client.last_run is None:
+            raise RuntimeError("Codex provider returned without generation metadata")
+        prompt_version = client.last_run.prompt_version
+        prompt_hash = client.last_run.prompt_hash
+        input_hash = client.last_run.input_hash
+    else:
+        raise ValueError(f"unknown generation provider: {provider}")
+
+    script = _normalize_script(candidate, claims, angle)
+    script_path = store.path("script/script.json")
+    if script_path.exists():
+        previous = load_model(script_path, ScriptManifest)
+        _archive(store, "script/script.json", previous.version_id)
+    atomic_write_model(script_path, script)
+    receipt = _receipt(
+        "script",
+        provider,
+        prompt_version,
+        prompt_hash,
+        input_hash,
+        script.version_id,
+    )
+    _save_project_state(store, "script", {"script": script.version_id}, receipt)
+    return GenerationOutcome(provider=provider, artifact=script)
+
+
+def generate_storyboard(
+    store: ProjectStore,
+    provider: ProviderName = "fixture",
+    *,
+    manual_result: str | Path | None = None,
+    codex_provider: CodexCliProvider | None = None,
+) -> GenerationOutcome[StoryboardManifest]:
+    script = load_model(store.path("script/script.json"), ScriptManifest)
+    if not script.segments or not all(
+        segment.review_status == ReviewStatus.APPROVED for segment in script.segments
+    ):
+        raise ValueError("all script segments must be approved before storyboard generation")
+    excerpts = _script_excerpts(script)
+    input_hash = stable_hash(excerpts)
+
+    if provider == "fixture":
+        candidate = FixtureProvider().generate_storyboard(script)
+        prompt_version = "fixture-v1"
+        prompt_hash = stable_hash("fixture rolling-shutter storyboard v1")
+    elif provider == "manual":
+        schema = StoryboardManifest.model_json_schema()
+        expected_prompt_hash = ManualProvider.template_hash(
+            "storyboard", STORYBOARD_INSTRUCTION, schema
+        )
+        packet_path = _manual_packet_path(store, "storyboard")
+        if manual_result is None:
+            _prepare_manual(
+                store,
+                "storyboard",
+                excerpts,
+                StoryboardManifest,
+                STORYBOARD_INSTRUCTION,
+                input_hash,
+            )
+            return GenerationOutcome(provider="manual", prompt_packet=packet_path)
+        candidate = _manual_candidate(
+            store,
+            "storyboard",
+            manual_result,
+            StoryboardManifest,
+            expected_input_hash=input_hash,
+            expected_prompt_hash=expected_prompt_hash,
+        )
+        prompt_version = ManualProvider.prompt_version
+        prompt_hash = expected_prompt_hash
+    elif provider == "codex":
+        client = codex_provider or CodexCliProvider()
+        candidate = client.generate(STORYBOARD_INSTRUCTION, excerpts, StoryboardManifest)
+        if client.last_run is None:
+            raise RuntimeError("Codex provider returned without generation metadata")
+        prompt_version = client.last_run.prompt_version
+        prompt_hash = client.last_run.prompt_hash
+        input_hash = client.last_run.input_hash
+    else:
+        raise ValueError(f"unknown generation provider: {provider}")
+
+    asset_path = store.path("assets/asset-manifest.json")
+    allowed_asset_ids = (
+        {asset.asset_id for asset in load_model(asset_path, AssetManifest).assets}
+        if asset_path.exists()
+        else set()
+    )
+    storyboard = _normalize_storyboard(candidate, script, allowed_asset_ids)
+    storyboard_path = store.path("storyboard/storyboard.json")
+    if storyboard_path.exists():
+        previous = load_model(storyboard_path, StoryboardManifest)
+        _archive(store, "storyboard/storyboard.json", previous.version_id)
+    atomic_write_model(storyboard_path, storyboard)
+    ensure_builtin_assets(store)
+    receipt = _receipt(
+        "storyboard",
+        provider,
+        prompt_version,
+        prompt_hash,
+        input_hash,
+        storyboard.version_id,
+    )
+    _save_project_state(store, "storyboard", {"storyboard": storyboard.version_id}, receipt)
+    return GenerationOutcome(provider=provider, artifact=storyboard)
 
 
 def fixture_claims(store: ProjectStore) -> ClaimsManifest:
-    sources = load_model(store.path("sources/source-index.json"), SourceIndex)
-    if not sources.sources:
-        raise ValueError("ingest a source first")
-    source = sources.sources[0]
-    text = store.path(f"sources/extracted/{source.source_id}.txt").read_text(encoding="utf-8")
-    provider = FixtureProvider()
-    evidence = provider.evidence(text, source.source_id, source.content_hash)
-    claims = provider.generate_claims(text, source.source_id, source.content_hash)
-    atomic_write_model(store.path("evidence/evidence.json"), evidence)
-    atomic_write_model(store.path("claims/claims.json"), claims)
-    project = store.project()
-    project.active_versions.update(evidence=evidence.version_id, claims=claims.version_id)
-    store.save_project(project)
-    return claims
+    return generate_claims(store, "fixture").require_artifact()
 
 
 def fixture_script(store: ProjectStore, angle: str = "everyday-mechanism") -> ScriptManifest:
-    claims = load_model(store.path("claims/claims.json"), ClaimsManifest)
-    if not all(c.review_status == "approved" for c in claims.claims):
-        raise ValueError("all claims must be approved before script generation")
-    script = FixtureProvider().generate_script(claims, angle)
-    atomic_write_model(store.path("script/script.json"), script)
-    project = store.project()
-    project.active_versions["script"] = script.version_id
-    store.save_project(project)
-    return script
+    if angle not in {"surprising-result", "everyday-mechanism", "engineering-tradeoff"}:
+        raise ValueError(
+            "angle must be surprising-result, everyday-mechanism, or engineering-tradeoff"
+        )
+    selected = cast(
+        Literal["surprising-result", "everyday-mechanism", "engineering-tradeoff"], angle
+    )
+    return generate_script(store, "fixture", angle=selected).require_artifact()
 
 
 def fixture_storyboard(store: ProjectStore) -> StoryboardManifest:
-    script = load_model(store.path("script/script.json"), ScriptManifest)
-    if not all(s.review_status == "approved" for s in script.segments):
-        raise ValueError("all script segments must be approved before storyboard generation")
-    storyboard = FixtureProvider().generate_storyboard(script)
-    atomic_write_model(store.path("storyboard/storyboard.json"), storyboard)
-    project = store.project()
-    project.active_versions["storyboard"] = storyboard.version_id
-    store.save_project(project)
-    return storyboard
+    return generate_storyboard(store, "fixture").require_artifact()
