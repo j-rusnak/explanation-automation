@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -20,10 +21,24 @@ from techshort.domain.storage import (
 
 MAX_FILE_BYTES = 25 * 1024 * 1024
 MAX_PAGES = 250
+MAX_EXTRACTED_OUTPUT_BYTES = 32 * 1024 * 1024
+
+
+def _output_limit_label() -> str:
+    if MAX_EXTRACTED_OUTPUT_BYTES >= 1024 * 1024:
+        return f"{MAX_EXTRACTED_OUTPUT_BYTES // (1024 * 1024)} MiB"
+    return f"{MAX_EXTRACTED_OUTPUT_BYTES} bytes"
 
 
 def _normalize(text: str) -> str:
     return re.sub(r"[ \t]+", " ", text.replace("\r\n", "\n").replace("\r", "\n")).strip()
+
+
+def _enforce_output_bound(payload: str, *, description: str) -> None:
+    if len(payload.encode("utf-8")) > MAX_EXTRACTED_OUTPUT_BYTES:
+        raise ValueError(
+            f"{description} exceeds the {_output_limit_label()} extraction-output limit"
+        )
 
 
 def ingest_source(store: ProjectStore, source: Path) -> SourceDocument:
@@ -57,6 +72,7 @@ def ingest_source(store: ProjectStore, source: Path) -> SourceDocument:
     incomplete = False
     ocr_required = False
     sections: list[tuple[str, str]] = []
+    raw_pdf_pages: list[dict[str, str | int | None]] = []
     metadata: dict[str, str] = {}
     if suffix == ".pdf":
         try:
@@ -66,8 +82,25 @@ def ingest_source(store: ProjectStore, source: Path) -> SourceDocument:
             if len(reader.pages) > MAX_PAGES:
                 raise ValueError("PDF exceeds the 250-page limit")
             metadata = {str(k).lstrip("/"): str(v) for k, v in (reader.metadata or {}).items() if v}
+            page_labels = reader.page_labels
+            extracted_byte_count = 0
             for index, page in enumerate(reader.pages):
-                text = _normalize(page.extract_text() or "")
+                raw_text = page.extract_text() or ""
+                extracted_byte_count += len(raw_text.encode("utf-8"))
+                if extracted_byte_count > MAX_EXTRACTED_OUTPUT_BYTES:
+                    raise ValueError(
+                        "PDF extracted text exceeds the "
+                        f"{_output_limit_label()} extraction-output limit"
+                    )
+                printed_label = page_labels[index] if index < len(page_labels) else None
+                raw_pdf_pages.append(
+                    {
+                        "page_index": index,
+                        "printed_page_label": printed_label,
+                        "text": raw_text,
+                    }
+                )
+                text = _normalize(raw_text)
                 sections.append((f"Page {index + 1}", text))
             nonempty = sum(len(text) for _, text in sections)
             if nonempty < max(30, len(sections) * 10):
@@ -83,6 +116,7 @@ def ingest_source(store: ProjectStore, source: Path) -> SourceDocument:
             raw = destination.read_text(encoding="utf-8", errors="strict")
         except UnicodeDecodeError as exc:
             raise ValueError("text sources must be valid UTF-8") from exc
+        _enforce_output_bound(raw, description="Source text")
         if suffix in {".md", ".markdown"}:
             current = "Document"
             buffer: list[str] = []
@@ -101,23 +135,53 @@ def ingest_source(store: ProjectStore, source: Path) -> SourceDocument:
 
     indexed_parts: list[str] = []
     offset = 0
-    section_rows: list[dict[str, str | int]] = []
+    section_rows: list[dict[str, str | int | None]] = []
     for index, (heading, text) in enumerate(sections):
         marker = f"\n\n--- {heading} ---\n"
         start = offset + len(marker)
         indexed_parts.append(marker + text)
         offset += len(marker) + len(text)
-        section_rows.append({"index": index, "heading": heading, "start": start, "end": offset})
+        row: dict[str, str | int | None] = {
+            "index": index,
+            "heading": heading,
+            "start": start,
+            "end": offset,
+        }
+        if raw_pdf_pages:
+            row["page_index"] = raw_pdf_pages[index]["page_index"]
+            row["printed_page_label"] = raw_pdf_pages[index]["printed_page_label"]
+        section_rows.append(row)
     normalized = "".join(indexed_parts).lstrip("\n")
+    _enforce_output_bound(normalized, description="Normalized extracted text")
     # Recompute offsets after stripping the first two newlines.
     shift = 2 if indexed_parts else 0
     for row in section_rows:
-        row["start"] = int(row["start"]) - shift
-        row["end"] = int(row["end"]) - shift
+        row_start = row["start"]
+        row_end = row["end"]
+        if not isinstance(row_start, int) or not isinstance(row_end, int):
+            raise AssertionError("section offsets must be integers")
+        row["start"] = row_start - shift
+        row["end"] = row_end - shift
     extracted_path = store.path(f"sources/extracted/{source_id}.txt")
     previous_extracted_hash = sha256_file(extracted_path) if extracted_path.exists() else None
     extracted_hash = sha256_bytes(normalized.encode("utf-8"))
+    raw_pages_payload: str | None = None
+    if raw_pdf_pages:
+        raw_pages_payload = (
+            json.dumps(
+                {"source_id": source_id, "pages": raw_pdf_pages},
+                indent=2,
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            + "\n"
+        )
+        _enforce_output_bound(raw_pages_payload, description="Raw PDF page extraction")
     atomic_write_text(extracted_path, normalized)
+    if raw_pages_payload is not None:
+        atomic_write_text(
+            store.path(f"sources/extracted/{source_id}.raw-pages.json"), raw_pages_payload
+        )
     index_path = store.path(f"sources/extracted/{source_id}.sections.json")
     atomic_write_json(index_path, section_rows)
     document = SourceDocument(

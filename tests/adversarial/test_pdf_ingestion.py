@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 from pypdf import PdfWriter
+from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from techshort.domain.storage import ProjectStore
 from techshort.ingestion import ingest_source
-from techshort.ingestion.service import MAX_FILE_BYTES
+from techshort.ingestion.service import MAX_EXTRACTED_OUTPUT_BYTES, MAX_FILE_BYTES
 
 
 def _store(tmp_path: Path, slug: str) -> ProjectStore:
@@ -21,6 +23,28 @@ def _write_blank_pdf(path: Path, *, encrypted: bool = False) -> None:
     writer.add_blank_page(width=612, height=792)
     if encrypted:
         writer.encrypt("secret")
+    with path.open("wb") as handle:
+        writer.write(handle)
+
+
+def _write_text_pdf(path: Path, text: str, *, printed_label: str = "sheet-7") -> None:
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=612, height=792)
+    font = DictionaryObject(
+        {
+            NameObject("/Type"): NameObject("/Font"),
+            NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/BaseFont"): NameObject("/Helvetica"),
+        }
+    )
+    page[NameObject("/Resources")] = DictionaryObject(
+        {NameObject("/Font"): DictionaryObject({NameObject("/F1"): writer._add_object(font)})}
+    )
+    content = DecodedStreamObject()
+    escaped = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+    content.set_data(f"BT /F1 12 Tf 72 720 Td ({escaped}) Tj ET".encode("latin-1"))
+    page[NameObject("/Contents")] = writer._add_object(content)
+    writer.set_page_label(0, 0, prefix=printed_label)
     with path.open("wb") as handle:
         writer.write(handle)
 
@@ -55,3 +79,58 @@ def test_oversized_input_is_rejected_before_parsing(tmp_path: Path) -> None:
         handle.write(b"x")
     with pytest.raises(ValueError, match="25 MiB"):
         ingest_source(_store(tmp_path, "oversized"), path)
+
+
+def test_text_pdf_preserves_raw_page_and_printed_label_separately(tmp_path: Path) -> None:
+    path = tmp_path / "labeled.pdf"
+    _write_text_pdf(
+        path,
+        "Rolling shutter samples rows at different times.",
+        printed_label="appendix-A",
+    )
+    store = _store(tmp_path, "labeled")
+
+    document = ingest_source(store, path)
+
+    assert document.source_type == "pdf"
+    assert not document.ocr_required
+    extracted_dir = store.path("sources/extracted")
+    raw_pages = json.loads(
+        (extracted_dir / f"{document.source_id}.raw-pages.json").read_text(encoding="utf-8")
+    )
+    assert raw_pages["source_id"] == document.source_id
+    assert raw_pages["pages"][0]["page_index"] == 0
+    assert raw_pages["pages"][0]["printed_page_label"] == "appendix-A"
+    assert "Rolling shutter samples rows" in raw_pages["pages"][0]["text"]
+    sections = json.loads(
+        (extracted_dir / f"{document.source_id}.sections.json").read_text(encoding="utf-8")
+    )
+    assert sections[0]["page_index"] == 0
+    assert sections[0]["printed_page_label"] == "appendix-A"
+    normalized = (extracted_dir / f"{document.source_id}.txt").read_text(encoding="utf-8")
+    assert "--- Page 1 ---" in normalized
+
+
+@pytest.mark.parametrize("suffix", [".txt", ".md"])
+def test_text_extraction_output_is_bounded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, suffix: str
+) -> None:
+    monkeypatch.setattr("techshort.ingestion.service.MAX_EXTRACTED_OUTPUT_BYTES", 64)
+    path = tmp_path / f"large{suffix}"
+    path.write_text("# Heading\n" + "x" * 100, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="extraction-output limit"):
+        ingest_source(_store(tmp_path, f"bounded-{suffix[1:]}"), path)
+
+
+def test_pdf_extraction_output_is_bounded(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("techshort.ingestion.service.MAX_EXTRACTED_OUTPUT_BYTES", 64)
+    path = tmp_path / "large-extraction.pdf"
+    _write_text_pdf(path, "x" * 100)
+
+    with pytest.raises(ValueError, match="PDF extracted text.*extraction-output limit"):
+        ingest_source(_store(tmp_path, "bounded-pdf"), path)
+
+
+def test_default_extraction_output_bound_is_finite() -> None:
+    assert 0 < MAX_EXTRACTED_OUTPUT_BYTES <= 64 * 1024 * 1024
