@@ -18,7 +18,9 @@ from techshort.domain.hashing import sha256_file, stable_hash
 from techshort.domain.models import (
     AssetManifest,
     EvidenceManifest,
+    ProjectManifest,
     RenderManifest,
+    ReviewStatus,
     ScriptManifest,
     SourceIndex,
     StoryboardManifest,
@@ -119,6 +121,8 @@ def renderer_payload(
 
 def render_video(store: ProjectStore, preview: bool) -> Path:
     project = store.project()
+    if not preview:
+        _require_final_render_approval(store, project)
     repository = _repository_root()
     npm = shutil.which("npm.cmd") or shutil.which("npm")
     if not shutil.which("node") or not npm:
@@ -133,7 +137,7 @@ def render_video(store: ProjectStore, preview: bool) -> Path:
     narration_duration = probe_duration(narration) if narration is not None else None
     storyboard = load_model(store.path("storyboard/storyboard.json"), StoryboardManifest)
     expected_duration = narration_duration or _storyboard_duration(storyboard)
-    watermarked = preview or project.approvals.final != "approved"
+    watermarked = preview
     output = store.path("renders/previews/preview.mp4" if preview else "renders/final/final.mp4")
     output.parent.mkdir(parents=True, exist_ok=True)
     public_root = repository / "renderer/public"
@@ -420,6 +424,7 @@ def _generation_prompt_versions(store: ProjectStore) -> dict[str, str]:
     versions: dict[str, str] = {}
     for stage, relative in (
         ("claims", "claims/generation-receipt.json"),
+        ("claims-critique", "claims/critique-receipt.json"),
         ("angles", "script/angles-generation-receipt.json"),
         ("script", "script/generation-receipt.json"),
         ("storyboard", "storyboard/generation-receipt.json"),
@@ -439,6 +444,21 @@ def _generation_prompt_versions(store: ProjectStore) -> dict[str, str]:
             raise ValueError(f"incomplete {stage} generation receipt")
         versions[stage] = f"{version}@{prompt_hash}"
     return versions
+
+
+def _require_final_render_approval(store: ProjectStore, project: ProjectManifest) -> None:
+    """Keep the unwatermarked-render gate inside the library boundary."""
+
+    # Imported lazily because review hashes include render inputs from this module.
+    from techshort.review import final_review_hash, has_current_approval
+
+    for gate in ("claims", "script", "storyboard", "rights", "final"):
+        if getattr(project.approvals, gate) != ReviewStatus.APPROVED:
+            raise ValueError(f"final render is blocked until the {gate} gate is approved")
+    if not has_current_approval(store, "final", project.project_id):
+        raise ValueError("final render is blocked because final approval is missing or stale")
+    if project.dependency_hashes.get("final_approval") != final_review_hash(store):
+        raise ValueError("final render is blocked because reviewed preview inputs changed")
 
 
 def _generate_derivatives(video: Path, directory: Path, duration: float) -> list[str]:

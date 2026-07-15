@@ -9,7 +9,13 @@ import pytest
 from techshort.domain.hashing import sha256_file, stable_hash
 from techshort.domain.models import RenderManifest
 from techshort.domain.storage import ProjectStore, atomic_write_model
-from techshort.generation import fixture_claims, fixture_script, fixture_storyboard
+from techshort.generation import (
+    fixture_claims,
+    fixture_script,
+    fixture_storyboard,
+    generate_angles,
+    select_angle,
+)
 from techshort.ingestion import ingest_source
 from techshort.rendering import renderer_payload
 from techshort.rendering.service import (
@@ -19,6 +25,7 @@ from techshort.rendering.service import (
     _generation_prompt_versions,
     _preview_scale,
     _render_manifest_path,
+    _require_final_render_approval,
     probe_render_metadata,
 )
 from techshort.review import approve_claims, approve_script
@@ -30,6 +37,8 @@ def fixture_store(tmp_path: Path) -> ProjectStore:
     ingest_source(store, Path("examples/rolling-shutter/rolling-shutter.md"))
     fixture_claims(store)
     approve_claims(store, "renderer-test")
+    generate_angles(store, "fixture").require_artifact()
+    select_angle(store, "everyday-mechanism")
     fixture_script(store)
     approve_script(store, "renderer-test")
     fixture_storyboard(store)
@@ -95,9 +104,22 @@ def test_preview_scale_requires_vertical_project_ratio() -> None:
 def test_render_manifest_prompt_versions_come_from_generation_receipts(tmp_path: Path) -> None:
     store = fixture_store(tmp_path)
     versions = _generation_prompt_versions(store)
-    assert set(versions) == {"claims", "angles", "script", "storyboard"}
-    assert all(value.startswith("fixture-v1@") for value in versions.values())
+    assert set(versions) == {
+        "claims",
+        "claims-critique",
+        "angles",
+        "script",
+        "storyboard",
+    }
+    assert versions["claims-critique"].startswith("deterministic-critique-v1@")
+    assert all("@" in value for value in versions.values())
     assert all(len(value.split("@", 1)[1]) == 64 for value in versions.values())
+
+
+def test_unwatermarked_render_requires_all_current_human_gates(tmp_path: Path) -> None:
+    store = fixture_store(tmp_path)
+    with pytest.raises(ValueError, match="storyboard gate"):
+        _require_final_render_approval(store, store.project())
 
 
 def test_render_id_is_bound_to_exact_staged_output(
