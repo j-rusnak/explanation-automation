@@ -13,6 +13,8 @@ from techshort.domain.hashing import stable_hash
 from techshort.domain.models import (
     AssetManifest,
     Claim,
+    ClaimCritiqueIssue,
+    ClaimCritiqueReport,
     ClaimsManifest,
     EvidenceManifest,
     EvidenceSpan,
@@ -44,6 +46,13 @@ CLAIMS_INSTRUCTION = (
     "and units. Use relationship 'inferred' or 'synthesis' only with explicit reasoning. "
     "Include a meaningful caveat or limitation when the evidence supports one. Set "
     "evidence_version_id exactly to the supplied value and leave all review fields pending."
+)
+CRITIQUE_INSTRUCTION = (
+    "Independently critique every supplied candidate claim against only its cited evidence. "
+    "Report genuine unsupported or partially supported claims, missing scope, incorrect causal "
+    "wording, omitted uncertainty, mismatched numbers or units, and conflicting evidence. Do not "
+    "approve or rewrite claims. Use only supplied claim_id and evidence_id values, set provider to "
+    "'codex', and set claims_version_id exactly to the supplied value."
 )
 SCRIPT_INSTRUCTION = (
     "Write an evidence-linked 130 to 170 word explainer lasting 45 to 75 seconds. Use only "
@@ -233,11 +242,18 @@ def _claims_excerpts(claims: ClaimsManifest, evidence: EvidenceManifest) -> list
                 "claim": claim.text,
                 "relationship": claim.relationship,
                 "evidence_label": claim.evidence_label,
+                "reasoning": claim.reasoning,
+                "scope": claim.scope,
                 "limitation": claim.limitation,
+                "confidence": claim.confidence,
                 "evidence": [
                     {
                         "evidence_id": evidence_id,
                         "excerpt": evidence_by_id[evidence_id].excerpt,
+                        "section_heading": evidence_by_id[evidence_id].section_heading,
+                        "page_index": evidence_by_id[evidence_id].page_index,
+                        "printed_page_label": evidence_by_id[evidence_id].printed_page_label,
+                        "locator": evidence_by_id[evidence_id].locator,
                     }
                     for evidence_id in claim.evidence_span_ids
                     if evidence_id in evidence_by_id
@@ -342,6 +358,152 @@ def _normalize_claims(candidate: ClaimsManifest, evidence: EvidenceManifest) -> 
         claim.reviewer_edits = None
     candidate.version_id = f"claims-{stable_hash(candidate.claims)[:16]}"
     return ClaimsManifest.model_validate(candidate.model_dump(mode="json"))
+
+
+_CRITIQUE_WORD = re.compile(r"[a-z][a-z0-9-]{2,}", re.IGNORECASE)
+_CRITIQUE_STOPWORDS = {
+    "and",
+    "are",
+    "but",
+    "for",
+    "from",
+    "has",
+    "have",
+    "into",
+    "not",
+    "that",
+    "the",
+    "their",
+    "then",
+    "this",
+    "was",
+    "when",
+    "with",
+}
+_UNCERTAINTY_WORDS = re.compile(
+    r"\b(?:appears?|approximately|can|could|likely|may|might|suggests?|uncertain)\b",
+    re.IGNORECASE,
+)
+_CAUSAL_WORDS = re.compile(
+    r"\b(?:causes?|caused|drives?|leads? to|results? in|therefore)\b", re.IGNORECASE
+)
+
+
+def _claim_words(value: str) -> set[str]:
+    return {
+        token.casefold()
+        for token in _CRITIQUE_WORD.findall(value)
+        if token.casefold() not in _CRITIQUE_STOPWORDS
+    }
+
+
+def _deterministic_critique_issues(
+    claims: ClaimsManifest, evidence: EvidenceManifest
+) -> list[ClaimCritiqueIssue]:
+    """Run an independent lexical/support pass; human review remains authoritative."""
+
+    evidence_by_id = {item.evidence_id: item for item in evidence.evidence}
+    issues: list[ClaimCritiqueIssue] = []
+    for claim in claims.claims:
+        cited = [evidence_by_id[item] for item in claim.evidence_span_ids]
+        claim_words = _claim_words(claim.text)
+        evidence_words = _claim_words(" ".join(item.excerpt for item in cited))
+        overlap = len(claim_words & evidence_words) / max(1, len(claim_words))
+        if claim.relationship == "direct" and overlap < 0.35:
+            issues.append(
+                ClaimCritiqueIssue(
+                    claim_id=claim.claim_id,
+                    category="partial-support",
+                    severity="warning",
+                    message=(
+                        "The direct claim has low lexical overlap with its cited excerpts; "
+                        "a reviewer should verify that the paraphrase preserves meaning and scope."
+                    ),
+                    evidence_ids=claim.evidence_span_ids,
+                )
+            )
+        if claim.relationship != "direct" and not _UNCERTAINTY_WORDS.search(claim.text):
+            issues.append(
+                ClaimCritiqueIssue(
+                    claim_id=claim.claim_id,
+                    category="uncertainty",
+                    severity="warning",
+                    message="The inferred or synthesis claim does not express uncertainty.",
+                    evidence_ids=claim.evidence_span_ids,
+                )
+            )
+        if claim.relationship != "direct" and _CAUSAL_WORDS.search(claim.text):
+            issues.append(
+                ClaimCritiqueIssue(
+                    claim_id=claim.claim_id,
+                    category="causal-wording",
+                    severity="warning",
+                    message=(
+                        "Causal wording appears in a non-direct claim; verify that the cited "
+                        "evidence supports causation rather than association."
+                    ),
+                    evidence_ids=claim.evidence_span_ids,
+                )
+            )
+    return issues
+
+
+def _normalize_critique(
+    candidate: ClaimCritiqueReport,
+    provider: ProviderName,
+    claims: ClaimsManifest,
+    evidence: EvidenceManifest,
+) -> ClaimCritiqueReport:
+    if candidate.provider != provider:
+        raise ValueError("claim critique returned the wrong provider")
+    if candidate.claims_version_id != claims.version_id:
+        raise ValueError("claim critique targets a stale or unknown claims version")
+    claims_by_id = {claim.claim_id: claim for claim in claims.claims}
+    combined = [*_deterministic_critique_issues(claims, evidence), *candidate.issues]
+    issues: list[ClaimCritiqueIssue] = []
+    seen: set[tuple[str, str, str]] = set()
+    for issue in combined:
+        claim = claims_by_id.get(issue.claim_id)
+        if claim is None:
+            raise ValueError(f"claim critique references unknown claim: {issue.claim_id}")
+        unknown_evidence = set(issue.evidence_ids) - set(claim.evidence_span_ids)
+        if unknown_evidence:
+            raise ValueError(
+                f"claim critique issue for {issue.claim_id} references uncited evidence: "
+                + ", ".join(sorted(unknown_evidence))
+            )
+        key = (issue.claim_id, issue.category, issue.message)
+        if key not in seen:
+            issues.append(issue)
+            seen.add(key)
+    candidate.issues = issues
+    candidate.version_id = f"critique-{stable_hash({'claims': claims.version_id, 'provider': provider, 'issues': issues})[:16]}"
+    return ClaimCritiqueReport.model_validate(candidate.model_dump(mode="json"))
+
+
+def _deterministic_claim_critique(
+    provider: Literal["fixture", "manual"],
+    claims: ClaimsManifest,
+    evidence: EvidenceManifest,
+) -> ClaimCritiqueReport:
+    issues = _deterministic_critique_issues(claims, evidence)
+    summary = (
+        "Independent deterministic critique checked evidence references, exact locations, "
+        "numbers and units, direct-claim lexical support, causal wording, and uncertainty. "
+        "It found no candidate issues; semantic conflicts still require human review."
+        if not issues
+        else (
+            f"Independent deterministic critique found {len(issues)} candidate issue(s). "
+            "These warnings inform, but do not replace, human claim review."
+        )
+    )
+    return ClaimCritiqueReport(
+        version_id="critique-pending",
+        claims_version_id=claims.version_id,
+        provider=provider,
+        summary=summary,
+        issues=[],
+    )
 
 
 def _normalize_script(
@@ -475,6 +637,8 @@ def _save_project_state(
     stage: ManualTask,
     versions: dict[str, str],
     receipt: GenerationReceipt,
+    *,
+    dependency_hashes: dict[str, str] | None = None,
 ) -> None:
     atomic_write_model(store.path(f"{stage}/generation-receipt.json"), receipt)
     store.invalidate_from(stage, f"{stage} regenerated with {receipt.provider} provider")
@@ -483,6 +647,7 @@ def _save_project_state(
     project.active_versions.update(versions)
     project.dependency_hashes[f"{stage}_prompt"] = receipt.prompt_hash
     project.dependency_hashes[f"{stage}_input"] = receipt.input_hash
+    project.dependency_hashes.update(dependency_hashes or {})
     store.save_project(project)
 
 
@@ -542,16 +707,47 @@ def generate_claims(
             raise ValueError(f"unknown generation provider: {provider}")
 
     claims = _normalize_claims(candidate, evidence)
+    critique_excerpts = _claims_excerpts(claims, evidence)
+    critique_input_hash = stable_hash(critique_excerpts)
+    if provider == "codex":
+        critique_candidate = client.generate(
+            CRITIQUE_INSTRUCTION,
+            critique_excerpts,
+            ClaimCritiqueReport,
+        )
+        if client.last_run is None:
+            raise RuntimeError("Codex provider returned without critique metadata")
+        critique_prompt_version = client.last_run.prompt_version
+        critique_prompt_hash = client.last_run.prompt_hash
+        critique_input_hash = client.last_run.input_hash
+    elif provider in {"fixture", "manual"}:
+        critique_candidate = _deterministic_claim_critique(provider, claims, evidence)
+        critique_prompt_version = "deterministic-critique-v1"
+        critique_prompt_hash = stable_hash(
+            {
+                "prompt_version": critique_prompt_version,
+                "instruction": CRITIQUE_INSTRUCTION,
+                "schema": ClaimCritiqueReport.model_json_schema(),
+            }
+        )
+    else:  # pragma: no cover - provider is validated above
+        raise ValueError(f"unknown generation provider: {provider}")
+    critique = _normalize_critique(critique_candidate, provider, claims, evidence)
     evidence_path = store.path("evidence/evidence.json")
     claims_path = store.path("claims/claims.json")
+    critique_path = store.path("claims/critique.json")
     if evidence_path.exists():
         previous_evidence = load_model(evidence_path, EvidenceManifest)
         _archive(store, "evidence/evidence.json", previous_evidence.version_id)
     if claims_path.exists():
         previous_claims = load_model(claims_path, ClaimsManifest)
         _archive(store, "claims/claims.json", previous_claims.version_id)
+    if critique_path.exists():
+        previous_critique = load_model(critique_path, ClaimCritiqueReport)
+        _archive(store, "claims/critique.json", previous_critique.version_id)
     atomic_write_model(evidence_path, evidence)
     atomic_write_model(claims_path, claims)
+    atomic_write_model(critique_path, critique)
     receipt = _receipt(
         "claims",
         provider,
@@ -560,11 +756,28 @@ def generate_claims(
         input_hash,
         claims.version_id,
     )
+    critique_receipt = _receipt(
+        "claims",
+        provider,
+        critique_prompt_version,
+        critique_prompt_hash,
+        critique_input_hash,
+        critique.version_id,
+    )
+    atomic_write_model(store.path("claims/critique-receipt.json"), critique_receipt)
     _save_project_state(
         store,
         "claims",
-        {"evidence": evidence.version_id, "claims": claims.version_id},
+        {
+            "evidence": evidence.version_id,
+            "claims": claims.version_id,
+            "claims_critique": critique.version_id,
+        },
         receipt,
+        dependency_hashes={
+            "claims_critique_prompt": critique_prompt_hash,
+            "claims_critique_input": critique_input_hash,
+        },
     )
     return GenerationOutcome(provider=provider, artifact=claims)
 

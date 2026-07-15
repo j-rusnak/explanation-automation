@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
-from techshort.domain.models import Claim, ClaimsManifest, SourceIndex
+from techshort.domain.models import (
+    Claim,
+    ClaimCritiqueReport,
+    ClaimsManifest,
+    SourceIndex,
+)
 from techshort.domain.storage import ProjectStore, load_model
 from techshort.generation import (
     build_evidence_candidates,
@@ -15,7 +21,7 @@ from techshort.generation import (
     generate_storyboard,
 )
 from techshort.ingestion import ingest_source
-from techshort.providers import FixtureProvider, ManualPromptPacket
+from techshort.providers import CodexRunMetadata, FixtureProvider, ManualPromptPacket
 from techshort.review import approve_claims, approve_script
 
 
@@ -87,6 +93,10 @@ def test_manual_claim_packet_and_strict_project_local_import(tmp_path: Path) -> 
     assert artifact.claims[0].approval_hash is None
     assert artifact.version_id.startswith("claims-")
     assert store.path("claims/generation-receipt.json").is_file()
+    critique = load_model(store.path("claims/critique.json"), ClaimCritiqueReport)
+    assert critique.provider == "manual"
+    assert critique.claims_version_id == artifact.version_id
+    assert store.path("claims/critique-receipt.json").is_file()
 
     before = store.path("claims/claims.json").read_bytes()
     hostile = candidate.model_dump(mode="json")
@@ -173,6 +183,79 @@ def test_manual_script_and_storyboard_share_the_service_contract(tmp_path: Path)
     ).require_artifact()
     assert len(storyboard.scenes) == len(script.segments)
     assert all(scene.review_status == "pending" for scene in storyboard.scenes)
+
+
+def test_fixture_claims_persist_independent_critique(tmp_path: Path) -> None:
+    store = _rolling_store(tmp_path)
+    claims = generate_claims(store, "fixture").require_artifact()
+
+    critique = load_model(store.path("claims/critique.json"), ClaimCritiqueReport)
+    assert critique.provider == "fixture"
+    assert critique.claims_version_id == claims.version_id
+    assert critique.version_id == store.project().active_versions["claims_critique"]
+    assert "human review" in critique.summary
+    assert store.project().dependency_hashes["claims_critique_prompt"]
+
+
+def test_codex_claim_generation_runs_a_distinct_critique_pass(tmp_path: Path) -> None:
+    store = _rolling_store(tmp_path)
+
+    class FakeCodex:
+        def __init__(self) -> None:
+            self.calls: list[type[Any]] = []
+            self.last_run: CodexRunMetadata | None = None
+
+        def generate(
+            self,
+            instruction: str,
+            excerpts: list[dict[str, object]],
+            model: type[Any],
+        ) -> Any:
+            del instruction
+            self.calls.append(model)
+            self.last_run = CodexRunMetadata(
+                prompt_version="test-codex-v1",
+                prompt_hash="a" * 64,
+                input_hash="b" * 64,
+                attempts=1,
+                flags=("--sandbox", "read-only"),
+            )
+            if model is ClaimsManifest:
+                first = excerpts[0]
+                return ClaimsManifest(
+                    version_id="placeholder",
+                    evidence_version_id=str(first["evidence_version_id"]),
+                    claims=[
+                        Claim(
+                            claim_id="claim-codex-test",
+                            text=str(first["excerpt"]),
+                            evidence_span_ids=[str(first["evidence_id"])],
+                            relationship="direct",
+                            evidence_label="documented",
+                            confidence=0.8,
+                        )
+                    ],
+                )
+            assert model is ClaimCritiqueReport
+            return ClaimCritiqueReport(
+                version_id="placeholder",
+                claims_version_id=str(excerpts[0]["claims_version_id"]),
+                provider="codex",
+                summary="Independent model pass found no additional candidate issues.",
+                issues=[],
+            )
+
+    provider = FakeCodex()
+    claims = generate_claims(
+        store,
+        "codex",
+        codex_provider=provider,  # type: ignore[arg-type]
+    ).require_artifact()
+
+    assert provider.calls == [ClaimsManifest, ClaimCritiqueReport]
+    critique = load_model(store.path("claims/critique.json"), ClaimCritiqueReport)
+    assert critique.provider == "codex"
+    assert critique.claims_version_id == claims.version_id
 
 
 def test_stale_manual_packet_is_rejected_before_import(tmp_path: Path) -> None:

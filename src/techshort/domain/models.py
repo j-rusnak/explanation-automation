@@ -177,6 +177,31 @@ class ClaimsManifest(StrictModel):
     claims: list[Claim]
 
 
+class ClaimCritiqueIssue(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    claim_id: str
+    category: Literal[
+        "unsupported",
+        "partial-support",
+        "missing-scope",
+        "causal-wording",
+        "uncertainty",
+        "number-or-unit",
+        "conflicting-evidence",
+    ]
+    severity: Literal["warning", "error"]
+    message: str = Field(min_length=1, max_length=600)
+    evidence_ids: list[str] = Field(default_factory=list)
+
+
+class ClaimCritiqueReport(StrictModel):
+    version_id: str
+    claims_version_id: str
+    provider: Literal["fixture", "manual", "codex"]
+    summary: str = Field(min_length=1, max_length=1200)
+    issues: list[ClaimCritiqueIssue] = Field(default_factory=list)
+
+
 class ScriptSegment(StrictModel):
     segment_id: str
     text: str
@@ -437,6 +462,7 @@ Artifact = Annotated[
     ProjectManifest
     | SourceIndex
     | EvidenceManifest
+    | ClaimCritiqueReport
     | ClaimsManifest
     | ScriptManifest
     | StoryboardManifest

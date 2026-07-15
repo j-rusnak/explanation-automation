@@ -4,6 +4,7 @@ from pathlib import Path
 
 from techshort.domain.models import (
     AssetManifest,
+    ClaimCritiqueReport,
     ClaimsManifest,
     EvidenceManifest,
     ProjectManifest,
@@ -22,6 +23,7 @@ MODELS = (
     SourceDocument,
     SourceIndex,
     EvidenceManifest,
+    ClaimCritiqueReport,
     ClaimsManifest,
     ScriptManifest,
     StoryboardManifest,
