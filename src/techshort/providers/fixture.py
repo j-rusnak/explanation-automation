@@ -271,8 +271,7 @@ class FixtureProvider:
             ScriptSegment(
                 segment_id="segment-06",
                 text=(
-                    "A global shutter exposes all rows together, so it avoids this "
-                    "row-timing skew."
+                    "A global shutter exposes all rows together, so it avoids this row-timing skew."
                 ),
                 segment_type="factual",
                 claim_ids=["claim-global"],
