@@ -10,7 +10,13 @@ from techshort.alignment import as_srt, as_vtt, cues_from_script
 from techshort.domain.models import ScriptManifest
 from techshort.domain.storage import ProjectStore, load_model
 from techshort.export import export_project, generate_evidence_page
-from techshort.generation import fixture_claims, fixture_script, fixture_storyboard
+from techshort.generation import (
+    fixture_claims,
+    fixture_script,
+    fixture_storyboard,
+    generate_angles,
+    select_angle,
+)
 from techshort.ingestion import ingest_source
 from techshort.qa import run_qa
 from techshort.review import (
@@ -30,6 +36,8 @@ def test_offline_pipeline_through_pre_render_export_gate(tmp_path: Path) -> None
     claims = fixture_claims(store)
     assert 3 <= len(claims.claims) <= 8
     approve_claims(store, "test")
+    generate_angles(store, "fixture")
+    select_angle(store, "everyday-mechanism")
     script = fixture_script(store)
     approve_script(store, "test")
     storyboard = fixture_storyboard(store)

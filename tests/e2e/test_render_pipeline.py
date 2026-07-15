@@ -9,7 +9,13 @@ from techshort.alignment import cues_from_script, write_caption_files
 from techshort.domain.models import RenderManifest, ScriptManifest
 from techshort.domain.storage import ProjectStore, load_model
 from techshort.export import export_project, generate_evidence_page
-from techshort.generation import fixture_claims, fixture_script, fixture_storyboard
+from techshort.generation import (
+    fixture_claims,
+    fixture_script,
+    fixture_storyboard,
+    generate_angles,
+    select_angle,
+)
 from techshort.ingestion import ingest_source
 from techshort.qa import run_qa
 from techshort.rendering import probe_render_metadata, render_video
@@ -33,6 +39,8 @@ def test_complete_real_render_and_export(tmp_path: Path) -> None:
     ingest_source(store, Path("examples/rolling-shutter/rolling-shutter.md"))
     fixture_claims(store)
     approve_claims(store, "e2e-reviewer")
+    generate_angles(store, "fixture")
+    select_angle(store, "everyday-mechanism")
     fixture_script(store)
     approve_script(store, "e2e-reviewer")
     fixture_storyboard(store)

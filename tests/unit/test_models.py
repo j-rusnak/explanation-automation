@@ -6,12 +6,14 @@ from pydantic import ValidationError
 from techshort.domain.hashing import stable_hash
 from techshort.domain.models import (
     AngleCandidate,
+    AngleSelection,
     AnglesManifest,
     Asset,
     Scene,
     ScriptManifest,
     ScriptSegment,
     VisualSpec,
+    derive_angle_selection_id,
 )
 from techshort.domain.storage import sanitize_filename, validate_slug
 
@@ -70,6 +72,47 @@ def test_angles_require_exactly_one_candidate_of_each_kind() -> None:
             version_id="angles-invalid",
             claims_version_id="claims-1",
             candidates=[surprising, surprising, surprising],
+        )
+
+
+def test_angles_reject_duplicate_substance_under_different_labels() -> None:
+    candidates = [
+        AngleCandidate(
+            angle=angle,  # type: ignore[arg-type]
+            title="The same angle",
+            rationale="This duplicated rationale does not create a distinct editorial angle.",
+            central_claim_ids=["claim-1"],
+        )
+        for angle in (
+            "surprising-result",
+            "everyday-mechanism",
+            "engineering-tradeoff",
+        )
+    ]
+    with pytest.raises(ValidationError, match="distinct substantive content"):
+        AnglesManifest(
+            version_id="angles-duplicate",
+            claims_version_id="claims-1",
+            candidates=candidates,
+        )
+
+
+def test_angle_selection_id_is_content_derived() -> None:
+    candidate_hash = "a" * 64
+    expected = derive_angle_selection_id("angles-current", "everyday-mechanism", candidate_hash)
+    selection = AngleSelection(
+        selection_id=expected,
+        angles_version_id="angles-current",
+        selected_angle="everyday-mechanism",
+        selected_candidate_hash=candidate_hash,
+    )
+    assert selection.selection_id == expected
+    with pytest.raises(ValidationError, match="does not match its selected candidate"):
+        AngleSelection(
+            selection_id="selection-forged",
+            angles_version_id="angles-current",
+            selected_angle="everyday-mechanism",
+            selected_candidate_hash=candidate_hash,
         )
 
 

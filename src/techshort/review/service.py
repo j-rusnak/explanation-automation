@@ -4,6 +4,7 @@ import re
 from typing import Literal
 from uuid import uuid4
 
+from techshort.audio import active_audio, active_transcript
 from techshort.domain.hashing import sha256_file, stable_hash
 from techshort.domain.models import (
     AngleSelection,
@@ -25,6 +26,9 @@ from techshort.domain.models import (
     SourceDocument,
     SourceIndex,
     StoryboardManifest,
+    derive_angle_selection_id,
+    derive_angles_version_id,
+    derive_script_version_id,
     now_utc,
 )
 from techshort.domain.storage import (
@@ -170,6 +174,12 @@ def current_artifact_hashes(store: ProjectStore) -> dict[str, str]:
         path = store.path(relative)
         if path.is_file():
             hashes[key] = sha256_file(path)
+    narration = active_audio(store)
+    if narration is not None:
+        hashes["narration-audio"] = sha256_file(narration)
+        transcript = active_transcript(store)
+        if transcript is not None:
+            hashes["narration-transcript"] = sha256_file(transcript[1])
     for indexed_source in source_index.sources:
         verify_source_integrity(store, indexed_source)
         hashes[f"source:{indexed_source.source_id}"] = sha256_file(
@@ -565,6 +575,8 @@ def _validate_script_dependencies(
     )
     if angles.claims_version_id != claims.version_id:
         raise ValueError("angles were generated from a different claims version")
+    if angles.version_id != derive_angles_version_id(claims.version_id, angles.candidates):
+        raise ValueError("angles content does not match its version ID")
     if script.angles_version_id != angles.version_id:
         raise ValueError("script was generated from a different angles version")
     if selection.angles_version_id != angles.version_id:
@@ -579,16 +591,41 @@ def _validate_script_dependencies(
     )
     if selected is None or stable_hash(selected) != selection.selected_candidate_hash:
         raise ValueError("angle selection no longer matches its selected candidate")
+    if selection.selection_id != derive_angle_selection_id(
+        angles.version_id,
+        selection.selected_angle,
+        selection.selected_candidate_hash,
+    ):
+        raise ValueError("angle selection content does not match its stable ID")
     if (
         script.angle_selection_id != selection.selection_id
         or script.angle != selection.selected_angle
     ):
         raise ValueError("script was generated from a different angle selection")
+    if script.version_id != derive_script_version_id(
+        script.claims_version_id,
+        script.angles_version_id,
+        script.angle_selection_id,
+        script.angle,
+        script.segments,
+    ):
+        raise ValueError("script content does not match its version ID")
     _ensure_active_versions(project, script=script.version_id)
     _validate_unique_ids([segment.segment_id for segment in script.segments], "script segment")
     approved = {
         claim.claim_id for claim in claims.claims if _claim_is_current(store, claim, evidence)
     }
+    for candidate in angles.candidates:
+        missing = set(candidate.central_claim_ids) - approved
+        if missing:
+            raise ValueError(
+                f"angle {candidate.angle} references an unapproved or stale claim "
+                f"{sorted(missing)[0]}"
+            )
+    selected_claims = {claim_id for segment in script.segments for claim_id in segment.claim_ids}
+    missing_central = set(selected.central_claim_ids) - selected_claims
+    if missing_central:
+        raise ValueError("script omits selected angle central claim " + sorted(missing_central)[0])
     claims_by_id = {claim.claim_id: claim for claim in claims.claims}
     evidence_by_id = {span.evidence_id: span for span in evidence.evidence}
     for segment in script.segments:
@@ -991,6 +1028,9 @@ def approve_final(store: ProjectStore, reviewer: str) -> None:
     for gate in ("claims", "script", "storyboard", "rights"):
         if getattr(project.approvals, gate) != ReviewStatus.APPROVED:
             raise ValueError(f"{gate} gate is not approved")
+    upstream_stale = sorted(set(project.stale_artifacts) - {"final"})
+    if upstream_stale:
+        raise ValueError("upstream artifacts are stale: " + ", ".join(upstream_stale))
     _all_gate_dependencies_are_current(store)
     preview = store.path("renders/previews/preview.mp4")
     qa = store.path("renders/previews/qa-report.json")
@@ -1091,7 +1131,13 @@ def edit_script_segment(
     segment.review_status = ReviewStatus.PENDING
     segment.approval_hash = None
     previous_version = script.version_id
-    script.version_id = f"script-{stable_hash(script.segments)[:16]}"
+    script.version_id = derive_script_version_id(
+        script.claims_version_id,
+        script.angles_version_id,
+        script.angle_selection_id,
+        script.angle,
+        script.segments,
+    )
     _archive_active_manifest(
         store,
         "script",

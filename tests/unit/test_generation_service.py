@@ -8,7 +8,6 @@ import pytest
 from pydantic import ValidationError
 
 from techshort.domain.models import (
-    AngleSelection,
     AnglesManifest,
     Claim,
     ClaimCritiqueReport,
@@ -200,11 +199,11 @@ def test_manual_script_and_storyboard_share_the_service_contract(tmp_path: Path)
     approve_claims(store, "test")
     claims = load_model(store.path("claims/claims.json"), ClaimsManifest)
     generate_angles(store, "fixture").require_artifact()
+    angles = load_model(store.path("script/angles.json"), AnglesManifest)
+    selection = select_angle(store, "everyday-mechanism")
 
     script_pending = generate_script(store, "manual")
     assert script_pending.requires_manual_import
-    angles = load_model(store.path("script/angles.json"), AnglesManifest)
-    selection = load_model(store.path("script/angle-selection.json"), AngleSelection)
     script_candidate = FixtureProvider().generate_script(
         claims,
         "everyday-mechanism",
@@ -247,6 +246,8 @@ def test_three_angles_require_explicit_hash_bound_selection(tmp_path: Path) -> N
     ]
     assert all(candidate.title and candidate.rationale for candidate in angles.candidates)
     assert not store.path("script/angle-selection.json").exists()
+    with pytest.raises(ValueError, match="select one current angle"):
+        generate_script(store, "fixture")
 
     selection = select_angle(store, "engineering-tradeoff")
     assert selection.angles_version_id == angles.version_id
@@ -259,11 +260,40 @@ def test_three_angles_require_explicit_hash_bound_selection(tmp_path: Path) -> N
     assert script.angles_version_id == angles.version_id
     assert script.angle_selection_id == selection.selection_id
     assert script.angle == "engineering-tradeoff"
+    with pytest.raises(ValueError, match="does not match explicit selection"):
+        generate_script(store, "fixture", angle="everyday-mechanism")
 
     changed = select_angle(store, "surprising-result")
     assert changed.selection_id != selection.selection_id
     assert store.project().approvals.script == "stale"
     assert store.path(f"script/versions/{selection.selection_id}.json").is_file()
+
+
+def test_script_must_use_selected_angle_central_claims(tmp_path: Path) -> None:
+    store = _rolling_store(tmp_path)
+    claims = generate_claims(store, "fixture").require_artifact()
+    approve_claims(store, "test")
+    angles = generate_angles(store, "fixture").require_artifact()
+    selection = select_angle(store, "engineering-tradeoff")
+    generate_script(store, "manual")
+
+    candidate = FixtureProvider().generate_script(
+        claims,
+        selection.selected_angle,
+        angles_version_id=angles.version_id,
+        angle_selection_id=selection.selection_id,
+    )
+    for segment in candidate.segments:
+        segment.claim_ids = [
+            claim_id
+            for claim_id in segment.claim_ids
+            if claim_id not in {"claim-global", "claim-limitation"}
+        ] or ["claim-row-timing"]
+    result = store.path("script/manual-result.json")
+    result.write_text(candidate.model_dump_json(indent=2), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="omits selected angle central claims"):
+        generate_script(store, "manual", manual_result="script/manual-result.json")
 
 
 def test_manual_angles_packet_imports_strict_three_candidate_artifact(tmp_path: Path) -> None:

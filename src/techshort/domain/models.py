@@ -8,6 +8,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from techshort.domain.hashing import stable_hash
+
 SCHEMA_VERSION: Literal["1.0.0"] = "1.0.0"
 
 _ACTIVE_CONTENT_PATTERNS = (
@@ -87,6 +89,7 @@ class SourceDocument(StrictModel):
     original_filename: str
     content_hash: str
     extracted_text_hash: str | None = None
+    section_metadata_hash: str | None = None
     local_path: str
     ingested_at: datetime = Field(default_factory=now_utc)
     page_or_section_count: int
@@ -236,6 +239,16 @@ class AnglesManifest(StrictModel):
         actual = {candidate.angle for candidate in self.candidates}
         if len(actual) != len(self.candidates) or actual != expected:
             raise ValueError("angles must contain each required candidate exactly once")
+        substance = {
+            (
+                " ".join(candidate.title.casefold().split()),
+                " ".join(candidate.rationale.casefold().split()),
+                tuple(sorted(candidate.central_claim_ids)),
+            )
+            for candidate in self.candidates
+        }
+        if len(substance) != len(self.candidates):
+            raise ValueError("angle candidates must have distinct substantive content")
         return self
 
 
@@ -245,6 +258,17 @@ class AngleSelection(StrictModel):
     selected_angle: AngleKind
     selected_candidate_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     selected_at: datetime = Field(default_factory=now_utc)
+
+    @model_validator(mode="after")
+    def identity_matches_selected_candidate(self) -> AngleSelection:
+        expected = derive_angle_selection_id(
+            self.angles_version_id,
+            self.selected_angle,
+            self.selected_candidate_hash,
+        )
+        if self.selection_id != expected:
+            raise ValueError("angle selection ID does not match its selected candidate")
+        return self
 
 
 class ScriptSegment(StrictModel):
@@ -280,6 +304,48 @@ class ScriptManifest(StrictModel):
         if not any(s.segment_type == "limitation" for s in self.segments):
             raise ValueError("script requires a meaningful limitation segment")
         return self
+
+
+def derive_angles_version_id(claims_version_id: str, candidates: list[AngleCandidate]) -> str:
+    return "angles-" + stable_hash({"claims": claims_version_id, "candidates": candidates})[:16]
+
+
+def derive_angle_selection_id(
+    angles_version_id: str,
+    selected_angle: AngleKind,
+    selected_candidate_hash: str,
+) -> str:
+    return (
+        "selection-"
+        + stable_hash(
+            {
+                "angles": angles_version_id,
+                "angle": selected_angle,
+                "candidate": selected_candidate_hash,
+            }
+        )[:16]
+    )
+
+
+def derive_script_version_id(
+    claims_version_id: str,
+    angles_version_id: str,
+    angle_selection_id: str,
+    angle: AngleKind,
+    segments: list[ScriptSegment],
+) -> str:
+    return (
+        "script-"
+        + stable_hash(
+            {
+                "claims": claims_version_id,
+                "angles": angles_version_id,
+                "selection": angle_selection_id,
+                "angle": angle,
+                "segments": segments,
+            }
+        )[:16]
+    )
 
 
 class NodeSpec(BaseModel):
@@ -512,6 +578,8 @@ Artifact = Annotated[
     | EvidenceManifest
     | ClaimCritiqueReport
     | ClaimsManifest
+    | AnglesManifest
+    | AngleSelection
     | ScriptManifest
     | StoryboardManifest
     | AssetManifest

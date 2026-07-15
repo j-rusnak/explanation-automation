@@ -6,6 +6,7 @@ import pytest
 
 from techshort.domain.hashing import sha256_file
 from techshort.domain.models import (
+    AnglesManifest,
     Asset,
     AssetManifest,
     ClaimsManifest,
@@ -16,9 +17,16 @@ from techshort.domain.models import (
     ReviewStatus,
     ScriptManifest,
     StoryboardManifest,
+    derive_script_version_id,
 )
 from techshort.domain.storage import ProjectStore, atomic_write_model, load_model
-from techshort.generation import fixture_claims, fixture_script, fixture_storyboard
+from techshort.generation import (
+    fixture_claims,
+    fixture_script,
+    fixture_storyboard,
+    generate_angles,
+    select_angle,
+)
 from techshort.ingestion import ingest_source
 from techshort.review import (
     approve_asset,
@@ -57,6 +65,8 @@ def _claims_store(tmp_path: Path, slug: str = "review") -> ProjectStore:
 def _script_store(tmp_path: Path, slug: str = "script-review") -> ProjectStore:
     store = _claims_store(tmp_path, slug)
     approve_claims(store, "reviewer")
+    generate_angles(store, "fixture")
+    select_angle(store, "everyday-mechanism")
     fixture_script(store)
     return store
 
@@ -66,6 +76,28 @@ def _storyboard_store(tmp_path: Path, slug: str = "story-review") -> ProjectStor
     approve_script(store, "reviewer")
     fixture_storyboard(store)
     return store
+
+
+def test_reviewed_artifact_snapshot_binds_narration_and_transcript_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _storyboard_store(tmp_path, "narration-snapshot")
+    narration = tmp_path / "narration.wav"
+    transcript = tmp_path / "narration.txt"
+    narration.write_bytes(b"audio bytes")
+    transcript.write_text("approved narration", encoding="utf-8")
+    monkeypatch.setattr("techshort.review.service.active_audio", lambda _store: narration)
+    monkeypatch.setattr(
+        "techshort.review.service.active_transcript",
+        lambda _store: ("approved narration", transcript),
+    )
+
+    before = current_artifact_hashes(store)
+    transcript.write_text("changed narration", encoding="utf-8")
+    after = current_artifact_hashes(store)
+
+    assert before["narration-audio"] == after["narration-audio"]
+    assert before["narration-transcript"] != after["narration-transcript"]
 
 
 def test_claim_approval_hashes_are_current_and_notes_do_not_replace_decision(
@@ -182,6 +214,13 @@ def test_script_segment_actions_and_claims_version_dependency(tmp_path: Path) ->
     edited_script = load_model(script_path, ScriptManifest)
     assert edited_script.version_id != previous_version
     assert edited_script.version_id.startswith("script-")
+    assert edited_script.version_id == derive_script_version_id(
+        edited_script.claims_version_id,
+        edited_script.angles_version_id,
+        edited_script.angle_selection_id,
+        edited_script.angle,
+        edited_script.segments,
+    )
     assert store.project().active_versions["script"] == edited_script.version_id
     assert store.path(f"script/versions/{previous_version}.json").read_bytes() == previous_bytes
     reviews_after = load_model(store.path("reviews/review-log.json"), ReviewLog)
@@ -197,6 +236,20 @@ def test_script_segment_actions_and_claims_version_dependency(tmp_path: Path) ->
     atomic_write_model(mismatch_path, mismatched_script)
     with pytest.raises(ValueError, match="different claims version"):
         approve_script(mismatch, "reviewer")
+
+
+def test_script_review_rejects_tampered_angle_claim_links(tmp_path: Path) -> None:
+    store = _script_store(tmp_path, "angle-claim-tamper")
+    angles_path = store.path("script/angles.json")
+    angles = load_model(angles_path, AnglesManifest)
+    selected = next(
+        candidate for candidate in angles.candidates if candidate.angle == "everyday-mechanism"
+    )
+    selected.central_claim_ids = ["claim-fabricated"]
+    atomic_write_model(angles_path, angles)
+
+    with pytest.raises(ValueError, match="content does not match its version ID"):
+        approve_script(store, "reviewer")
 
 
 def test_scene_actions_validate_script_version_dependency_and_inert_edits(

@@ -26,6 +26,9 @@ from techshort.domain.models import (
     ScriptManifest,
     SourceDocument,
     StoryboardManifest,
+    derive_angle_selection_id,
+    derive_angles_version_id,
+    derive_script_version_id,
 )
 from techshort.domain.storage import ProjectStore, atomic_write_model, load_model
 from techshort.evidence import unsupported_assertion_tokens
@@ -33,6 +36,11 @@ from techshort.ingestion import get_active_source, get_source, verify_source_int
 from techshort.providers.codex_cli import CodexCliProvider
 from techshort.providers.fixture import FixtureProvider
 from techshort.providers.manual import ManualPromptPacket, ManualProvider, ManualTask
+from techshort.review import (
+    claim_review_hash,
+    has_current_approval,
+    script_segment_review_hash,
+)
 
 ProviderName = Literal["fixture", "manual", "codex"]
 ArtifactT = TypeVar("ArtifactT", bound=BaseModel)
@@ -550,19 +558,34 @@ def _deterministic_claim_critique(
     )
 
 
-def _normalize_angles(candidate: AnglesManifest, claims: ClaimsManifest) -> AnglesManifest:
+def _current_approved_claim_ids(
+    store: ProjectStore,
+    claims: ClaimsManifest,
+    evidence: EvidenceManifest,
+) -> set[str]:
+    return {
+        claim.claim_id
+        for claim in claims.claims
+        if claim.review_status == ReviewStatus.APPROVED
+        and claim.approval_hash == claim_review_hash(claim, evidence)
+        and has_current_approval(store, "claim", claim.claim_id)
+    }
+
+
+def _normalize_angles(
+    candidate: AnglesManifest,
+    claims: ClaimsManifest,
+    approved_claim_ids: set[str],
+) -> AnglesManifest:
     if candidate.claims_version_id != claims.version_id:
         raise ValueError("generated angles target a stale or unknown claims version")
-    approved = {
-        claim.claim_id for claim in claims.claims if claim.review_status == ReviewStatus.APPROVED
-    }
     for angle in candidate.candidates:
-        missing = set(angle.central_claim_ids) - approved
+        missing = set(angle.central_claim_ids) - approved_claim_ids
         if missing:
             raise ValueError(
                 f"angle {angle.angle} references unapproved claims: " + ", ".join(sorted(missing))
             )
-    candidate.version_id = f"angles-{stable_hash({'claims': claims.version_id, 'candidates': candidate.candidates})[:16]}"
+    candidate.version_id = derive_angles_version_id(claims.version_id, candidate.candidates)
     return AnglesManifest.model_validate(candidate.model_dump(mode="json"))
 
 
@@ -571,7 +594,7 @@ def _selection_for(angles: AnglesManifest, angle: AngleKind) -> AngleSelection:
     if candidate is None:  # AnglesManifest validation normally makes this unreachable.
         raise ValueError(f"selected angle is absent from the current angle candidates: {angle}")
     candidate_hash = stable_hash(candidate)
-    selection_id = f"selection-{stable_hash({'angles': angles.version_id, 'angle': angle, 'candidate': candidate_hash})[:16]}"
+    selection_id = derive_angle_selection_id(angles.version_id, angle, candidate_hash)
     return AngleSelection(
         selection_id=selection_id,
         angles_version_id=angles.version_id,
@@ -585,6 +608,7 @@ def _normalize_script(
     claims: ClaimsManifest,
     angles: AnglesManifest,
     selection: AngleSelection,
+    approved_claim_ids: set[str],
 ) -> ScriptManifest:
     if candidate.claims_version_id != claims.version_id:
         raise ValueError("generated script targets a stale or unknown claims version")
@@ -594,10 +618,8 @@ def _normalize_script(
         raise ValueError("generated script did not preserve the current angle selection")
     if candidate.angle != selection.selected_angle:
         raise ValueError("generated script did not preserve the selected angle")
-    approved = {
-        claim.claim_id for claim in claims.claims if claim.review_status == ReviewStatus.APPROVED
-    }
     seen: set[str] = set()
+    linked_claim_ids: set[str] = set()
     for segment in candidate.segments:
         _require_safe_id(segment.segment_id, "segment_id")
         if segment.segment_id in seen:
@@ -605,7 +627,7 @@ def _normalize_script(
         seen.add(segment.segment_id)
         if len(segment.claim_ids) != len(set(segment.claim_ids)):
             raise ValueError(f"segment {segment.segment_id} repeats a claim ID")
-        missing = set(segment.claim_ids) - approved
+        missing = set(segment.claim_ids) - approved_claim_ids
         if missing:
             raise ValueError(
                 f"segment {segment.segment_id} references unapproved claims: "
@@ -613,10 +635,26 @@ def _normalize_script(
             )
         segment.review_status = ReviewStatus.PENDING
         segment.approval_hash = None
+        linked_claim_ids.update(segment.claim_ids)
+    selected_candidate = next(
+        item for item in angles.candidates if item.angle == selection.selected_angle
+    )
+    missing_central = set(selected_candidate.central_claim_ids) - linked_claim_ids
+    if missing_central:
+        raise ValueError(
+            "generated script omits selected angle central claims: "
+            + ", ".join(sorted(missing_central))
+        )
     duration = sum(segment.approximate_duration for segment in candidate.segments)
     if not 45 <= duration <= 75:
         raise ValueError("generated script duration must be between 45 and 75 seconds")
-    candidate.version_id = f"script-{stable_hash({'claims': claims.version_id, 'angles': angles.version_id, 'selection': selection.selection_id, 'segments': candidate.segments})[:16]}"
+    candidate.version_id = derive_script_version_id(
+        claims.version_id,
+        angles.version_id,
+        selection.selection_id,
+        selection.selected_angle,
+        candidate.segments,
+    )
     return ScriptManifest.model_validate(candidate.model_dump(mode="json"))
 
 
@@ -877,14 +915,13 @@ def generate_angles(
     codex_provider: CodexCliProvider | None = None,
 ) -> GenerationOutcome[AnglesManifest]:
     claims = load_model(store.path("claims/claims.json"), ClaimsManifest)
-    if not claims.claims or not all(
-        claim.review_status == ReviewStatus.APPROVED for claim in claims.claims
-    ):
-        raise ValueError("all claims must be approved before angle generation")
     project = store.project()
     if project.active_versions.get("claims") != claims.version_id:
         raise ValueError("claims manifest is not the active claims version")
     evidence = load_model(store.path("evidence/evidence.json"), EvidenceManifest)
+    approved_claim_ids = _current_approved_claim_ids(store, claims, evidence)
+    if not claims.claims or len(approved_claim_ids) != len(claims.claims):
+        raise ValueError("all claims must have current approvals before angle generation")
     excerpts = _claims_excerpts(claims, evidence)
     input_hash = stable_hash(excerpts)
 
@@ -927,7 +964,7 @@ def generate_angles(
     else:
         raise ValueError(f"unknown generation provider: {provider}")
 
-    angles = _normalize_angles(candidate, claims)
+    angles = _normalize_angles(candidate, claims, approved_claim_ids)
     angles_path = store.path("script/angles.json")
     if angles_path.exists():
         previous = load_model(angles_path, AnglesManifest)
@@ -949,6 +986,7 @@ def generate_angles(
     project.dependency_hashes["angles_prompt"] = receipt.prompt_hash
     project.dependency_hashes["angles_input"] = receipt.input_hash
     project.dependency_hashes.pop("angle_selection", None)
+    project.stale_artifacts = [item for item in project.stale_artifacts if item != "angles"]
     if "angle_selection" not in project.stale_artifacts:
         project.stale_artifacts.append("angle_selection")
     store.save_project(project)
@@ -957,12 +995,26 @@ def generate_angles(
 
 def select_angle(store: ProjectStore, angle: AngleKind) -> AngleSelection:
     claims = load_model(store.path("claims/claims.json"), ClaimsManifest)
+    evidence = load_model(store.path("evidence/evidence.json"), EvidenceManifest)
     angles = load_model(store.path("script/angles.json"), AnglesManifest)
     project = store.project()
+    approved_claim_ids = _current_approved_claim_ids(store, claims, evidence)
+    if not claims.claims or len(approved_claim_ids) != len(claims.claims):
+        raise ValueError("all claims must have current approvals before angle selection")
     if angles.claims_version_id != claims.version_id:
         raise ValueError("angle candidates were generated from a different claims version")
-    if project.active_versions.get("angles") != angles.version_id:
+    if (
+        angles.version_id != derive_angles_version_id(claims.version_id, angles.candidates)
+        or project.active_versions.get("angles") != angles.version_id
+    ):
         raise ValueError("angle candidates are stale; generate a current angle artifact first")
+    for angle_candidate in angles.candidates:
+        missing = set(angle_candidate.central_claim_ids) - approved_claim_ids
+        if missing:
+            raise ValueError(
+                f"angle {angle_candidate.angle} references unapproved claims: "
+                + ", ".join(sorted(missing))
+            )
     selection = _selection_for(angles, angle)
     selection_path = store.path("script/angle-selection.json")
     if selection_path.exists():
@@ -996,40 +1048,64 @@ def generate_script(
     store: ProjectStore,
     provider: ProviderName = "fixture",
     *,
-    angle: Literal[
-        "surprising-result", "everyday-mechanism", "engineering-tradeoff"
-    ] = "everyday-mechanism",
+    angle: AngleKind | None = None,
     manual_result: str | Path | None = None,
     codex_provider: CodexCliProvider | None = None,
 ) -> GenerationOutcome[ScriptManifest]:
     claims = load_model(store.path("claims/claims.json"), ClaimsManifest)
-    if not claims.claims or not all(
-        claim.review_status == ReviewStatus.APPROVED for claim in claims.claims
-    ):
-        raise ValueError("all claims must be approved before script generation")
+    evidence = load_model(store.path("evidence/evidence.json"), EvidenceManifest)
+    approved_claim_ids = _current_approved_claim_ids(store, claims, evidence)
+    if not claims.claims or len(approved_claim_ids) != len(claims.claims):
+        raise ValueError("all claims must have current approvals before script generation")
     angles_path = store.path("script/angles.json")
     project = store.project()
-    angles_are_current = False
-    if angles_path.is_file():
-        existing_angles = load_model(angles_path, AnglesManifest)
-        angles_are_current = (
-            existing_angles.claims_version_id == claims.version_id
-            and project.active_versions.get("angles") == existing_angles.version_id
+    if not angles_path.is_file():
+        raise ValueError(
+            "current angle candidates are required; run `techshort script angles "
+            f"{store.slug} --provider {provider}` first"
         )
-    if not angles_are_current:
-        if provider != "fixture":
-            raise ValueError(
-                "current angle candidates are required; run `techshort script angles "
-                f"{store.slug} --provider {provider}` first"
-            )
-        generate_angles(store, "fixture").require_artifact()
     angles = load_model(angles_path, AnglesManifest)
-    selection = select_angle(store, angle)
-    evidence = load_model(store.path("evidence/evidence.json"), EvidenceManifest)
-    excerpts = _claims_excerpts(claims, evidence)
+    expected_angles_version = derive_angles_version_id(claims.version_id, angles.candidates)
+    if (
+        angles.claims_version_id != claims.version_id
+        or angles.version_id != expected_angles_version
+        or project.active_versions.get("angles") != angles.version_id
+    ):
+        raise ValueError("angle candidates are stale or have an invalid content version")
+    for angle_candidate in angles.candidates:
+        missing = set(angle_candidate.central_claim_ids) - approved_claim_ids
+        if missing:
+            raise ValueError(
+                f"angle {angle_candidate.angle} references unapproved claims: "
+                + ", ".join(sorted(missing))
+            )
+    selection_path = store.path("script/angle-selection.json")
+    if not selection_path.is_file():
+        raise ValueError(
+            "select one current angle with `techshort script select-angle "
+            f"{store.slug} <angle>` before script generation"
+        )
+    selection = load_model(selection_path, AngleSelection)
+    if (
+        selection.angles_version_id != angles.version_id
+        or project.active_versions.get("angle_selection") != selection.selection_id
+    ):
+        raise ValueError("angle selection is stale; explicitly select a current angle")
     selected_candidate = next(
-        candidate for candidate in angles.candidates if candidate.angle == selection.selected_angle
+        (item for item in angles.candidates if item.angle == selection.selected_angle),
+        None,
     )
+    if (
+        selected_candidate is None
+        or stable_hash(selected_candidate) != selection.selected_candidate_hash
+    ):
+        raise ValueError("angle selection no longer matches its selected candidate")
+    if angle is not None and angle != selection.selected_angle:
+        raise ValueError(
+            f"requested angle {angle} does not match explicit selection {selection.selected_angle}"
+        )
+    selected_angle = selection.selected_angle
+    excerpts = _claims_excerpts(claims, evidence)
     excerpts.append(
         {
             "claims_version_id": claims.version_id,
@@ -1044,7 +1120,7 @@ def generate_script(
     if provider == "fixture":
         candidate = FixtureProvider().generate_script(
             claims,
-            angle,
+            selected_angle,
             angles_version_id=angles.version_id,
             angle_selection_id=selection.selection_id,
         )
@@ -1085,7 +1161,13 @@ def generate_script(
     else:
         raise ValueError(f"unknown generation provider: {provider}")
 
-    script = _normalize_script(candidate, claims, angles, selection)
+    script = _normalize_script(
+        candidate,
+        claims,
+        angles,
+        selection,
+        approved_claim_ids,
+    )
     script_path = store.path("script/script.json")
     if script_path.exists():
         previous = load_model(script_path, ScriptManifest)
@@ -1124,10 +1206,19 @@ def generate_storyboard(
     codex_provider: CodexCliProvider | None = None,
 ) -> GenerationOutcome[StoryboardManifest]:
     script = load_model(store.path("script/script.json"), ScriptManifest)
-    if not script.segments or not all(
-        segment.review_status == ReviewStatus.APPROVED for segment in script.segments
-    ):
-        raise ValueError("all script segments must be approved before storyboard generation")
+    project = store.project()
+    segments_are_current = bool(script.segments) and all(
+        segment.review_status == ReviewStatus.APPROVED
+        and segment.approval_hash == script_segment_review_hash(segment)
+        and has_current_approval(store, "script-segment", segment.segment_id)
+        for segment in script.segments
+    )
+    if not segments_are_current:
+        raise ValueError(
+            "all script segments must have current approvals before storyboard generation"
+        )
+    if project.active_versions.get("script") != script.version_id:
+        raise ValueError("script manifest is not the active script version")
     excerpts = _script_excerpts(script)
     input_hash = stable_hash(excerpts)
 
