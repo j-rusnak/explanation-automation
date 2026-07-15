@@ -414,9 +414,7 @@ def verify_source_integrity(store: ProjectStore, source: SourceDocument | str) -
         raise ValueError(
             f"section-location metadata for source {document.source_id} no longer matches its hash"
         )
-    recorded_section_metadata_hash = project.dependency_hashes.get(
-        f"{document.source_id}:sections"
-    )
+    recorded_section_metadata_hash = project.dependency_hashes.get(f"{document.source_id}:sections")
     if recorded_section_metadata_hash is None:
         raise ValueError(
             f"project lacks a bound section-metadata hash for {document.source_id}; reingest it"

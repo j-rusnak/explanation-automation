@@ -123,8 +123,7 @@ def test_ingestion_selects_active_source_and_records_exact_hashes(tmp_path: Path
         project.dependency_hashes["active-source-extracted"] == second_document.extracted_text_hash
     )
     assert (
-        project.dependency_hashes["active-source-sections"]
-        == second_document.section_metadata_hash
+        project.dependency_hashes["active-source-sections"] == second_document.section_metadata_hash
     )
 
 
