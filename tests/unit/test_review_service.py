@@ -16,6 +16,7 @@ from techshort.domain.models import (
     ReviewLog,
     ReviewStatus,
     ScriptManifest,
+    SourceIndex,
     StoryboardManifest,
     derive_script_version_id,
 )
@@ -98,6 +99,31 @@ def test_reviewed_artifact_snapshot_binds_narration_and_transcript_bytes(
 
     assert before["narration-audio"] == after["narration-audio"]
     assert before["narration-transcript"] != after["narration-transcript"]
+
+
+def test_unused_legacy_source_does_not_block_current_evidence_snapshot(tmp_path: Path) -> None:
+    store = _storyboard_store(tmp_path, "unused-legacy-source")
+    index_path = store.path("sources/source-index.json")
+    source_index = load_model(index_path, SourceIndex)
+    current = source_index.sources[0]
+    legacy = current.model_copy(
+        update={
+            "source_id": "source-unused-legacy",
+            "local_path": "sources/originals/unused-legacy.md",
+            "section_metadata_hash": None,
+        }
+    )
+    store.path(legacy.local_path).write_bytes(store.path(current.local_path).read_bytes())
+    store.path(f"sources/extracted/{legacy.source_id}.txt").write_bytes(
+        store.path(f"sources/extracted/{current.source_id}.txt").read_bytes()
+    )
+    source_index.sources.append(legacy)
+    atomic_write_model(index_path, source_index)
+
+    hashes = current_artifact_hashes(store)
+
+    assert f"source:{current.source_id}" in hashes
+    assert f"source:{legacy.source_id}" not in hashes
 
 
 def test_claim_approval_hashes_are_current_and_notes_do_not_replace_decision(

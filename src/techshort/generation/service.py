@@ -2,15 +2,14 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, Literal, TypeVar, cast
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from techshort.assets import ensure_builtin_assets
-from techshort.domain.hashing import stable_hash
+from techshort.domain.hashing import sha256_file, stable_hash
 from techshort.domain.models import (
     AngleKind,
     AngleSelection,
@@ -30,7 +29,12 @@ from techshort.domain.models import (
     derive_angles_version_id,
     derive_script_version_id,
 )
-from techshort.domain.storage import ProjectStore, atomic_write_model, load_model
+from techshort.domain.storage import (
+    ProjectStore,
+    atomic_copy_file,
+    atomic_write_model,
+    load_model,
+)
 from techshort.evidence import unsupported_assertion_tokens
 from techshort.ingestion import get_active_source, get_source, verify_source_integrity
 from techshort.providers.codex_cli import CodexCliProvider
@@ -134,8 +138,29 @@ def _archive(store: ProjectStore, relative: str, version_id: str) -> None:
     versions = current.parent / "versions"
     versions.mkdir(parents=True, exist_ok=True)
     archived = versions / f"{version_id}.json"
+    current_hash = sha256_file(current)
+    if archived.exists() and sha256_file(archived) != current_hash:
+        # Content IDs deliberately exclude review metadata. Preserve a distinct
+        # approved/pending byte state without replacing the canonical archive.
+        archived = versions / f"{version_id}-state-{current_hash[:12]}.json"
     if not archived.exists():
-        shutil.copyfile(current, archived)
+        atomic_copy_file(current, archived)
+    elif sha256_file(archived) != current_hash:  # pragma: no cover - SHA collision guard
+        raise ValueError(f"archive hash collision for artifact version {version_id}")
+
+
+def _archive_script_for_regeneration(store: ProjectStore) -> None:
+    """Archive current or pre-angle-schema script bytes before safe replacement."""
+
+    current = store.path("script/script.json")
+    if not current.exists():
+        return
+    try:
+        version_id = load_model(current, ScriptManifest).version_id
+    except ValidationError:
+        # Preserve legacy bytes without trusting fields the current schema rejects.
+        version_id = f"legacy-script-{sha256_file(current)[:16]}"
+    _archive(store, "script/script.json", version_id)
 
 
 def _source(store: ProjectStore, source_id: str | None) -> tuple[SourceDocument, str]:
@@ -1169,9 +1194,7 @@ def generate_script(
         approved_claim_ids,
     )
     script_path = store.path("script/script.json")
-    if script_path.exists():
-        previous = load_model(script_path, ScriptManifest)
-        _archive(store, "script/script.json", previous.version_id)
+    _archive_script_for_regeneration(store)
     atomic_write_model(script_path, script)
     receipt = _receipt(
         "script",

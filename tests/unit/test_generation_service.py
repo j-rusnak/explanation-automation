@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from techshort.domain.hashing import sha256_file
 from techshort.domain.models import (
     AnglesManifest,
     Claim,
@@ -260,6 +261,7 @@ def test_three_angles_require_explicit_hash_bound_selection(tmp_path: Path) -> N
     assert script.angles_version_id == angles.version_id
     assert script.angle_selection_id == selection.selection_id
     assert script.angle == "engineering-tradeoff"
+    assert 130 <= sum(len(segment.text.split()) for segment in script.segments) <= 170
     with pytest.raises(ValueError, match="does not match explicit selection"):
         generate_script(store, "fixture", angle="everyday-mechanism")
 
@@ -294,6 +296,59 @@ def test_script_must_use_selected_angle_central_claims(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="omits selected angle central claims"):
         generate_script(store, "manual", manual_result="script/manual-result.json")
+
+
+def test_script_regeneration_archives_pre_angle_schema_bytes(tmp_path: Path) -> None:
+    store = _rolling_store(tmp_path)
+    claims = generate_claims(store, "fixture").require_artifact()
+    approve_claims(store, "test")
+    generate_angles(store, "fixture").require_artifact()
+    select_angle(store, "everyday-mechanism")
+    legacy = {
+        "schema_version": "1.0.0",
+        "version_id": "script-pre-angle",
+        "claims_version_id": claims.version_id,
+        "angle": "everyday-mechanism",
+        "segments": [
+            {
+                "segment_id": "segment-legacy",
+                "text": "See the evidence.",
+                "segment_type": "cta",
+                "claim_ids": [],
+                "approximate_duration": 2,
+            }
+        ],
+    }
+    script_path = store.path("script/script.json")
+    script_path.write_text(json.dumps(legacy), encoding="utf-8")
+    legacy_hash = sha256_file(script_path)
+
+    regenerated = generate_script(store, "fixture").require_artifact()
+
+    archived = store.path(f"script/versions/legacy-script-{legacy_hash[:16]}.json")
+    assert archived.is_file()
+    assert sha256_file(archived) == legacy_hash
+    assert regenerated.angle_selection_id == store.project().active_versions["angle_selection"]
+
+
+def test_regeneration_preserves_distinct_review_states_for_one_content_version(
+    tmp_path: Path,
+) -> None:
+    store = _rolling_store(tmp_path)
+    first = generate_claims(store, "fixture").require_artifact()
+    approve_claims(store, "first-review")
+    generate_claims(store, "fixture").require_artifact()
+    approve_claims(store, "second-review")
+    reviewed_hash = sha256_file(store.path("claims/claims.json"))
+
+    third = generate_claims(store, "fixture").require_artifact()
+
+    assert third.version_id == first.version_id
+    state_archive = store.path(
+        f"claims/versions/{first.version_id}-state-{reviewed_hash[:12]}.json"
+    )
+    assert state_archive.is_file()
+    assert sha256_file(state_archive) == reviewed_hash
 
 
 def test_manual_angles_packet_imports_strict_three_candidate_artifact(tmp_path: Path) -> None:

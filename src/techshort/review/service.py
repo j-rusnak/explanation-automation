@@ -151,6 +151,12 @@ def current_artifact_hashes(store: ProjectStore) -> dict[str, str]:
     missing = [key for key, path in paths.items() if not path.is_file()]
     if missing:
         raise ValueError(f"required artifact is missing: {missing[0]}")
+    evidence = load_model(paths["evidence"], EvidenceManifest)
+    referenced_source_ids = {source.source_id} | {span.source_id for span in evidence.evidence}
+    indexed_source_ids = {item.source_id for item in source_index.sources}
+    missing_sources = referenced_source_ids - indexed_source_ids
+    if missing_sources:
+        raise ValueError(f"evidence references missing source: {sorted(missing_sources)[0]}")
     hashes = {key: sha256_file(path) for key, path in paths.items()}
     hashes["project-config"] = stable_hash(
         {
@@ -181,6 +187,8 @@ def current_artifact_hashes(store: ProjectStore) -> dict[str, str]:
         if transcript is not None:
             hashes["narration-transcript"] = sha256_file(transcript[1])
     for indexed_source in source_index.sources:
+        if indexed_source.source_id not in referenced_source_ids:
+            continue
         verify_source_integrity(store, indexed_source)
         hashes[f"source:{indexed_source.source_id}"] = sha256_file(
             store.path(indexed_source.local_path)

@@ -220,7 +220,7 @@ class FixtureProvider:
             ScriptSegment(
                 segment_id="segment-01",
                 text=(
-                    "Why can a straight rotating blade appear curved in one camera frame? "
+                    "Why can a straight rotating blade appear curved? "
                     "The source explains a timing effect."
                 ),
                 segment_type="hook",
@@ -252,7 +252,7 @@ class FixtureProvider:
                 segment_id="segment-04",
                 text=(
                     "Think of scanning a page line by line while the paper slides sideways. "
-                    "Each line can be locally faithful, while the assembled page appears skewed."
+                    "Each line can be faithful, while the assembled page appears skewed."
                 ),
                 segment_type="analogy",
                 claim_ids=["claim-scan-analogy"],
@@ -271,7 +271,7 @@ class FixtureProvider:
             ScriptSegment(
                 segment_id="segment-06",
                 text=(
-                    "A global shutter exposes all rows together, so it avoids this specific "
+                    "A global shutter exposes all rows together, so it avoids this "
                     "row-timing skew."
                 ),
                 segment_type="factual",
@@ -282,7 +282,7 @@ class FixtureProvider:
                 segment_id="segment-07",
                 text=(
                     "But that does not promise a perfect image. Motion blur, lens distortion, "
-                    "stabilization, resampling, and image processing can still change the "
+                    "stabilization, and image processing can still change the "
                     "recorded geometry."
                 ),
                 segment_type="limitation",
