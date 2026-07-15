@@ -89,8 +89,12 @@ export const SourceReceipt: React.FC<{ scene: SceneData }> = ({ scene }) => {
         }}
       >
         <div style={{ fontSize: 24, letterSpacing: 3 }}>SOURCE RECEIPT</div>
-        <p style={{ fontSize: 42, lineHeight: 1.35 }}>{scene.visual.body}</p>
-        <code style={{ fontSize: 25 }}>{scene.visual.citation}</code>
+        <p style={{ fontSize: 42, lineHeight: 1.35 }}>
+          {scene.visual.evidence_excerpt ?? scene.visual.body}
+        </p>
+        <code style={{ fontSize: 25 }}>
+          {scene.visual.evidence_id} · {scene.visual.source_locator}
+        </code>
       </div>
     </Frame>
   );

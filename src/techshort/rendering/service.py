@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -16,16 +17,23 @@ from techshort.audio.service import active_audio, probe_duration
 from techshort.domain.hashing import sha256_file, stable_hash
 from techshort.domain.models import (
     AssetManifest,
+    EvidenceManifest,
     RenderManifest,
     ScriptManifest,
     SourceIndex,
     StoryboardManifest,
 )
-from techshort.domain.storage import ProjectStore, atomic_write_model, load_model
+from techshort.domain.storage import (
+    ProjectStore,
+    atomic_copy_file,
+    atomic_write_model,
+    load_model,
+)
 from techshort.rendering.tools import media_tool
 
 PREVIEW_WIDTH = 360
 PREVIEW_HEIGHT = 640
+SAFE_RENDER_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 @dataclass(frozen=True)
@@ -55,6 +63,8 @@ def renderer_payload(
     project = store.project()
     script = load_model(store.path("script/script.json"), ScriptManifest)
     storyboard = load_model(store.path("storyboard/storyboard.json"), StoryboardManifest)
+    evidence = load_model(store.path("evidence/evidence.json"), EvidenceManifest)
+    evidence_by_id = {span.evidence_id: span for span in evidence.evidence}
     source_duration = _storyboard_duration(storyboard)
     script_duration = sum(segment.approximate_duration for segment in script.segments)
     if target_duration is not None and target_duration <= 0:
@@ -72,6 +82,23 @@ def renderer_payload(
         item = scene.model_dump(mode="json", by_alias=True)
         item["start_time"] = scene.start_time * scene_timing_scale
         item["duration"] = scene.duration * scene_timing_scale
+        if scene.primitive == "SourceReceipt":
+            evidence_id = scene.visual.evidence_id
+            if evidence_id is None or evidence_id not in evidence_by_id:
+                raise ValueError(
+                    f"SourceReceipt scene {scene.scene_id} requires a resolvable evidence_id"
+                )
+            span = evidence_by_id[evidence_id]
+            visual = item.get("visual")
+            if not isinstance(visual, dict):
+                raise ValueError(f"scene {scene.scene_id} has an invalid visual specification")
+            visual["evidence_excerpt"] = span.excerpt
+            location = span.section_heading or "source"
+            if span.printed_page_label:
+                location = f"{location}, page {span.printed_page_label}"
+            elif span.page_index is not None:
+                location = f"{location}, PDF index {span.page_index}"
+            visual["source_locator"] = f"{location} · {span.evidence_id}"
         scenes.append(item)
     captions = [asdict(cue) for cue in cues_from_script(script, target_duration=target_duration)]
     payload: dict[str, object] = {
@@ -169,22 +196,35 @@ def render_video(store: ProjectStore, preview: bool) -> Path:
             derivative_names = _generate_derivatives(
                 staged_video, output_stage, metadata.duration if metadata else expected_duration
             )
-            os.replace(staged_video, output)
             output_paths = [output.relative_to(store.root).as_posix()]
+            staged_outputs = {output_paths[0]: staged_video}
             for name in derivative_names:
                 destination = output.parent / name
-                os.replace(output_stage / name, destination)
-                output_paths.append(destination.relative_to(store.root).as_posix())
+                relative = destination.relative_to(store.root).as_posix()
+                output_paths.append(relative)
+                staged_outputs[relative] = output_stage / name
 
-    _write_render_manifest(
-        store,
-        output,
-        payload,
-        preview=preview,
-        expected_duration=expected_duration,
-        narration=narration,
-        output_paths=output_paths,
-    )
+            manifest = _build_render_manifest(
+                store,
+                staged_video,
+                payload,
+                preview=preview,
+                expected_duration=expected_duration,
+                narration=narration,
+                staged_outputs=staged_outputs,
+            )
+            staged_manifest = output_stage / "render-manifest.json"
+            atomic_write_model(staged_manifest, manifest)
+
+            # No active file is replaced until the complete new bundle and its
+            # validated manifest exist. Preserve the prior exact bundle first.
+            _archive_active_render(store, preview=preview)
+            for relative, staged_path in staged_outputs.items():
+                destination = store.path(relative)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(staged_path, destination)
+            os.replace(staged_manifest, _render_manifest_path(store, preview))
+            _activate_render(store, preview=preview, manifest=manifest)
     return output
 
 
@@ -234,7 +274,7 @@ def probe_render_metadata(path: Path) -> MediaMetadata | None:
     return metadata
 
 
-def _write_render_manifest(
+def _build_render_manifest(
     store: ProjectStore,
     output: Path,
     payload: dict[str, object],
@@ -242,8 +282,8 @@ def _write_render_manifest(
     preview: bool,
     expected_duration: float,
     narration: Path | None,
-    output_paths: list[str],
-) -> None:
+    staged_outputs: dict[str, Path],
+) -> RenderManifest:
     project = store.project()
     script = load_model(store.path("script/script.json"), ScriptManifest)
     storyboard = load_model(store.path("storyboard/storyboard.json"), StoryboardManifest)
@@ -257,19 +297,22 @@ def _write_render_manifest(
     metadata = probe_render_metadata(output)
     fallback_width = PREVIEW_WIDTH if preview else project.width
     fallback_height = PREVIEW_HEIGHT if preview else project.height
+    output_hashes = {relative: sha256_file(path) for relative, path in staged_outputs.items()}
     identity = {
         "script": stable_hash(script),
         "storyboard": stable_hash(storyboard),
         "watermarked": payload["watermarked"],
         "audio": sha256_file(narration) if narration else None,
         "dimensions": [fallback_width, fallback_height],
+        "fps": metadata.fps if metadata else project.fps,
+        "renderer": _renderer_version(),
+        "outputs": output_hashes,
     }
     watermarked = payload.get("watermarked")
     if not isinstance(watermarked, bool):
         raise ValueError("renderer payload is missing its watermark state")
-    output_hashes = {relative: sha256_file(store.path(relative)) for relative in output_paths}
     manifest = RenderManifest(
-        render_id=f"render-{stable_hash(identity)[:12]}",
+        render_id=f"render-{stable_hash(identity)[:16]}",
         width=metadata.width if metadata else fallback_width,
         height=metadata.height if metadata else fallback_height,
         fps=metadata.fps if metadata else project.fps,
@@ -283,18 +326,92 @@ def _write_render_manifest(
         renderer_version=_renderer_version(),
         prompt_versions=_generation_prompt_versions(store),
         source_hashes={source.source_id: source.content_hash for source in sources.sources},
-        output_paths=output_paths,
+        output_paths=list(staged_outputs),
         output_hashes=output_hashes,
         watermarked=watermarked,
     )
-    atomic_write_model(
-        store.path(
-            "renders/previews/render-manifest.json"
-            if preview
-            else "renders/final/render-manifest.json"
-        ),
-        manifest,
+    return manifest
+
+
+def _render_manifest_path(store: ProjectStore, preview: bool) -> Path:
+    return store.path(
+        "renders/previews/render-manifest.json" if preview else "renders/final/render-manifest.json"
     )
+
+
+def _archive_active_render(store: ProjectStore, *, preview: bool) -> None:
+    """Copy the exact active render bundle into immutable version history."""
+
+    manifest_path = _render_manifest_path(store, preview)
+    render_directory = manifest_path.parent.resolve()
+    primary_name = "preview.mp4" if preview else "final.mp4"
+    known_outputs = {primary_name, "cover.png", "contact-sheet.png"}
+    if not manifest_path.is_file():
+        if any((render_directory / name).exists() for name in known_outputs):
+            raise ValueError("existing render has no valid manifest and cannot be replaced safely")
+        return
+
+    manifest = load_model(manifest_path, RenderManifest)
+    if not SAFE_RENDER_ID.fullmatch(manifest.render_id):
+        raise ValueError("existing render manifest has an unsafe render_id")
+    project = store.project()
+    active_key = "preview_render" if preview else "final_render"
+    active_id = project.active_versions.get(active_key)
+    if active_id is not None and active_id != manifest.render_id:
+        raise ValueError("active render version does not match its manifest")
+    if set(manifest.output_paths) != set(manifest.output_hashes):
+        raise ValueError("existing render manifest has incomplete output hashes")
+    declared_names = {Path(relative).name for relative in manifest.output_paths}
+    if any(
+        (render_directory / name).exists() and name not in declared_names for name in known_outputs
+    ):
+        raise ValueError("existing render has an untracked output and cannot be replaced safely")
+
+    archive = render_directory / "versions" / manifest.render_id
+    for relative, expected_hash in manifest.output_hashes.items():
+        source = store.path(relative)
+        if source.parent.resolve() != render_directory:
+            raise ValueError(
+                "existing render manifest references an output outside its render directory"
+            )
+        if source.resolve() == manifest_path.resolve():
+            raise ValueError("render manifest cannot declare itself as a media output")
+        if not source.is_file() or sha256_file(source) != expected_hash:
+            raise ValueError("existing render output does not match its manifest")
+        _archive_render_file(source, archive / source.name)
+    _archive_render_file(manifest_path, archive / manifest_path.name)
+
+
+def _archive_render_file(source: Path, destination: Path) -> None:
+    if destination.is_file():
+        if sha256_file(destination) != sha256_file(source):
+            raise ValueError("render history contains a conflicting archived file")
+        return
+    atomic_copy_file(source, destination)
+
+
+def _activate_render(store: ProjectStore, *, preview: bool, manifest: RenderManifest) -> None:
+    """Record the exact active output and all inputs that determine it."""
+
+    kind = "preview" if preview else "final"
+    project = store.project()
+    project.active_versions[f"{kind}_render"] = manifest.render_id
+    project.dependency_hashes[f"{kind}_render_output"] = stable_hash(manifest.output_hashes)
+    project.dependency_hashes[f"{kind}_render_dependencies"] = stable_hash(
+        {
+            "script": manifest.script_hash,
+            "storyboard": manifest.storyboard_hash,
+            "scenes": manifest.scene_versions,
+            "assets": manifest.asset_hashes,
+            "audio": manifest.audio_hash,
+            "renderer": manifest.renderer_version,
+            "prompts": manifest.prompt_versions,
+            "sources": manifest.source_hashes,
+            "dimensions": [manifest.width, manifest.height, manifest.fps],
+            "watermarked": manifest.watermarked,
+        }
+    )
+    store.save_project(project)
 
 
 def _generation_prompt_versions(store: ProjectStore) -> dict[str, str]:
