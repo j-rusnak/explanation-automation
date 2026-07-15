@@ -285,3 +285,24 @@ def test_final_review_digest_is_revalidatable_and_bound_to_qa_snapshot(
     source_index.write_text(source_index.read_text(encoding="utf-8") + " ", encoding="utf-8")
     with pytest.raises(ValueError, match="QA report does not match current artifact"):
         final_review_hash(store)
+
+
+def test_final_approval_refuses_a_failed_qa_report(tmp_path: Path) -> None:
+    store = _storyboard_store(tmp_path, "failed-final-qa")
+    approve_storyboard(store, "reviewer")
+    approve_rights(store, "reviewer")
+    preview = store.path("renders/previews/preview.mp4")
+    preview.write_bytes(b"reviewed preview bytes")
+    report = QAReport(
+        project_id=store.project().project_id,
+        checks=[],
+        export_blockers=["Caption safe-zone failure"],
+        artifact_hashes=current_artifact_hashes(store),
+        media_path=preview.relative_to(store.root).as_posix(),
+        media_hash=sha256_file(preview),
+    )
+    atomic_write_model(store.path("renders/previews/qa-report.json"), report)
+
+    with pytest.raises(ValueError, match="QA report contains export blockers"):
+        approve_final(store, "reviewer")
+    assert store.project().approvals.final != ReviewStatus.APPROVED

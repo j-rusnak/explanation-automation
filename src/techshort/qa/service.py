@@ -1,26 +1,55 @@
 from __future__ import annotations
 
 import json
-import shutil
+import math
 import subprocess
+import tempfile
+from fractions import Fraction
 from pathlib import Path
+from typing import Any
 
-from techshort.alignment import caption_warnings, cues_from_script
+from PIL import Image, ImageStat
+
+from techshort.alignment import as_srt, as_vtt, caption_warnings, cues_from_script
+from techshort.assets import BUILTIN_FONT_ASSET_IDS
+from techshort.audio import active_audio, probe_duration
+from techshort.domain.hashing import sha256_file, stable_hash
 from techshort.domain.models import (
     AssetManifest,
     ClaimsManifest,
     EvidenceManifest,
     QACheck,
     QAReport,
+    RenderManifest,
     ReviewStatus,
     ScriptManifest,
+    SourceIndex,
     StoryboardManifest,
 )
 from techshort.domain.storage import ProjectStore, atomic_write_model, load_model
-from techshort.ingestion import resolve_evidence_text
+from techshort.ingestion import resolve_evidence_text, verify_source_integrity
+from techshort.rendering.tools import media_tool
+from techshort.review import (
+    current_artifact_hashes,
+    has_current_approval,
+    scene_dependency_hash,
+)
+
+PREVIEW_WIDTH = 360
+PREVIEW_HEIGHT = 640
+CAPTION_BOTTOM_INSET = 145
+CAPTION_MIN_HEIGHT = 170
+FULL_HEIGHT = 1920
 
 
-def _check(check_id: str, passed: bool, success: str, failure: str, hard: bool = True) -> QACheck:
+def _check(
+    check_id: str,
+    passed: bool,
+    success: str,
+    failure: str,
+    *,
+    hard: bool = True,
+) -> QACheck:
     return QACheck(
         check_id=check_id,
         status="pass" if passed else "failure",
@@ -29,84 +58,255 @@ def _check(check_id: str, passed: bool, success: str, failure: str, hard: bool =
     )
 
 
-def run_qa(store: ProjectStore, media_path: Path | None = None) -> QAReport:
-    checks: list[QACheck] = []
-    blockers: list[str] = []
-    evidence = load_model(store.path("evidence/evidence.json"), EvidenceManifest)
-    claims = load_model(store.path("claims/claims.json"), ClaimsManifest)
-    script = load_model(store.path("script/script.json"), ScriptManifest)
-    storyboard = load_model(store.path("storyboard/storyboard.json"), StoryboardManifest)
-    assets_path = store.path("assets/asset-manifest.json")
-    assets = (
-        load_model(assets_path, AssetManifest)
-        if assets_path.exists()
-        else AssetManifest(version_id="assets-empty")
+def _warning(check_id: str, message: str) -> QACheck:
+    return QACheck(check_id=check_id, status="warning", message=message, hard_blocker=False)
+
+
+def _approval_is_current(store: ProjectStore, object_type: str, object_id: str) -> bool:
+    try:
+        return has_current_approval(store, object_type, object_id)
+    except (OSError, ValueError):
+        return False
+
+
+def _write_report(
+    store: ProjectStore,
+    checks: list[QACheck],
+    artifact_hashes: dict[str, str],
+    media_path: Path | None,
+    destination: str,
+) -> QAReport:
+    blockers = [item.message for item in checks if item.status == "failure" and item.hard_blocker]
+    report = QAReport(
+        project_id=store.project().project_id,
+        checks=checks,
+        export_blockers=blockers,
+        artifact_hashes=artifact_hashes,
+        media_path=(media_path.relative_to(store.root).as_posix() if media_path else None),
+        media_hash=(sha256_file(media_path) if media_path and media_path.is_file() else None),
     )
-    evidence_map = {item.evidence_id: item for item in evidence.evidence}
-    evidence_valid = True
-    for span in evidence.evidence:
+    atomic_write_model(store.path(destination), report)
+    return report
+
+
+def run_qa(
+    store: ProjectStore,
+    media_path: Path | None = None,
+    *,
+    require_media: bool = True,
+    destination: str | None = None,
+) -> QAReport:
+    """Run deterministic provenance, rights, caption, and media checks.
+
+    Preview and final reports are written separately. A report without an exact
+    media hash can be useful during authoring, but can never satisfy final review.
+    """
+
+    checks: list[QACheck] = []
+    is_preview = media_path is None or "previews" in media_path.parts
+    destination = destination or (
+        "renders/previews/qa-report.json" if is_preview else "renders/final/qa-report.json"
+    )
+    if media_path is not None:
         try:
-            evidence_valid &= (
-                resolve_evidence_text(store, span.source_id, span.char_start, span.char_end)
-                == span.excerpt
+            media_path.resolve().relative_to(store.root.resolve())
+        except ValueError:
+            checks.append(
+                _check(
+                    "renderer-failure",
+                    False,
+                    "Rendered media stays inside the project",
+                    "QA refuses media outside the active project",
+                )
             )
+            return _write_report(store, checks, {}, None, destination)
+    try:
+        sources = load_model(store.path("sources/source-index.json"), SourceIndex)
+        evidence = load_model(store.path("evidence/evidence.json"), EvidenceManifest)
+        claims = load_model(store.path("claims/claims.json"), ClaimsManifest)
+        script = load_model(store.path("script/script.json"), ScriptManifest)
+        storyboard = load_model(store.path("storyboard/storyboard.json"), StoryboardManifest)
+        assets = load_model(store.path("assets/asset-manifest.json"), AssetManifest)
+    except (OSError, ValueError) as exc:
+        checks.append(
+            _check(
+                "manifest-validation",
+                False,
+                "All required manifests are schema-valid",
+                f"Required manifest is missing or invalid: {exc}",
+            )
+        )
+        return _write_report(store, checks, {}, media_path, destination)
+
+    artifact_hashes: dict[str, str] = {}
+    try:
+        artifact_hashes = current_artifact_hashes(store)
+        checks.append(
+            _check(
+                "manifest-validation",
+                True,
+                "All required manifests and active source bytes are schema-valid",
+                "Required artifact is missing or invalid",
+            )
+        )
+    except (OSError, ValueError) as exc:
+        checks.append(
+            _check(
+                "manifest-validation",
+                False,
+                "All required manifests and active source bytes are schema-valid",
+                f"Required artifact is missing, stale, or invalid: {exc}",
+            )
+        )
+
+    source_by_id = {source.source_id: source for source in sources.sources}
+    evidence_by_id = {span.evidence_id: span for span in evidence.evidence}
+    evidence_valid = bool(evidence.evidence)
+    for span in evidence.evidence:
+        document = source_by_id.get(span.source_id)
+        if document is None or span.source_hash != document.content_hash:
+            evidence_valid = False
+            continue
+        try:
+            verify_source_integrity(store, document)
+            actual = resolve_evidence_text(
+                store,
+                span.source_id,
+                span.char_start,
+                span.char_end,
+                expected_source_hash=span.source_hash,
+                expected_extracted_hash=document.extracted_text_hash,
+            )
+            evidence_valid = evidence_valid and actual == span.excerpt
         except (OSError, ValueError):
             evidence_valid = False
-    claims_complete = all(
-        c.evidence_span_ids and set(c.evidence_span_ids).issubset(evidence_map)
-        for c in claims.claims
+    claims_have_evidence = bool(claims.claims) and all(
+        claim.evidence_span_ids and set(claim.evidence_span_ids).issubset(evidence_by_id)
+        for claim in claims.claims
     )
     checks.append(
         _check(
             "evidence-completeness",
-            evidence_valid and claims_complete,
-            "All claim evidence resolves exactly",
-            "Evidence is missing or no longer resolves",
+            evidence_valid and claims_have_evidence,
+            "Every claim has exact evidence that resolves in unchanged source bytes",
+            "Evidence is missing, fabricated, stale, or no longer resolves exactly",
         )
     )
-    approved_claims = {
-        c.claim_id
-        for c in claims.claims
-        if c.review_status == ReviewStatus.APPROVED and c.approval_hash
+
+    project = store.project()
+    version_chain_valid = (
+        claims.evidence_version_id == evidence.version_id
+        and script.claims_version_id == claims.version_id
+        and storyboard.script_version_id == script.version_id
+        and project.active_versions.get("evidence") == evidence.version_id
+        and project.active_versions.get("claims") == claims.version_id
+        and project.active_versions.get("script") == script.version_id
+        and project.active_versions.get("storyboard") == storyboard.version_id
+        and project.active_versions.get("assets") == assets.version_id
+    )
+    try:
+        scene_dependencies_valid = all(
+            scene.dependency_hash == scene_dependency_hash(scene, script)
+            for scene in storyboard.scenes
+        )
+    except ValueError:
+        scene_dependencies_valid = False
+    checks.append(
+        _check(
+            "dependency-chain",
+            version_chain_valid and scene_dependencies_valid,
+            "Artifact versions and scene dependencies form one current chain",
+            "An artifact version or scene dependency points to stale upstream state",
+        )
+    )
+
+    approved_claim_ids = {
+        claim.claim_id
+        for claim in claims.claims
+        if claim.review_status == ReviewStatus.APPROVED
+        and _approval_is_current(store, "claim", claim.claim_id)
     }
-    approval_valid = all(
-        s.review_status == ReviewStatus.APPROVED
-        and (not s.claim_ids or set(s.claim_ids).issubset(approved_claims))
-        for s in script.segments
+    segments_current = all(
+        segment.review_status == ReviewStatus.APPROVED
+        and _approval_is_current(store, "script-segment", segment.segment_id)
+        and (not segment.claim_ids or set(segment.claim_ids).issubset(approved_claim_ids))
+        for segment in script.segments
+    )
+    scenes_current = all(
+        scene.review_status == ReviewStatus.APPROVED
+        and _approval_is_current(store, "scene", scene.scene_id)
+        for scene in storyboard.scenes
+    )
+    assets_current = all(
+        asset.review_status == ReviewStatus.APPROVED
+        and _approval_is_current(store, "asset-rights", asset.asset_id)
+        for asset in assets.assets
+    )
+    gates_current = all(
+        getattr(project.approvals, gate) == ReviewStatus.APPROVED
+        for gate in ("claims", "script", "storyboard", "rights")
+    )
+    approvals_valid = (
+        len(approved_claim_ids) == len(claims.claims)
+        and segments_current
+        and scenes_current
+        and assets_current
+        and _approval_is_current(store, "rights", assets.version_id)
+        and gates_current
     )
     checks.append(
         _check(
             "approval-validity",
-            approval_valid,
-            "Script and claim approvals are valid",
-            "Unapproved or stale claim/script dependency",
+            approvals_valid,
+            "All claim, script, storyboard, and rights approvals match exact current hashes",
+            "An approval is missing, rejected, edited, stale, or hash-mismatched",
         )
     )
-    limitation = any(s.segment_type == "limitation" and s.claim_ids for s in script.segments)
+
+    limitation_segments = [
+        segment
+        for segment in script.segments
+        if segment.segment_type == "limitation"
+        and len(segment.text.split()) >= 8
+        and segment.claim_ids
+        and set(segment.claim_ids).issubset(approved_claim_ids)
+    ]
     checks.append(
         _check(
             "required-limitation",
-            limitation,
-            "A cited limitation is present",
-            "A cited meaningful limitation is required",
+            bool(limitation_segments),
+            "A meaningful evidence-linked limitation is present",
+            "A meaningful evidence-linked limitation is required",
         )
     )
-    rights = all(
-        a.rights_status in {"original", "user-owned", "permissively-licensed"}
-        and a.embedding_allowed
-        and a.review_status == ReviewStatus.APPROVED
-        for a in assets.assets
-    )
+
+    scene_ids = {scene.scene_id for scene in storyboard.scenes}
+    asset_ids = {asset.asset_id for asset in assets.assets}
+    referenced_asset_ids = {asset_id for scene in storyboard.scenes for asset_id in scene.asset_ids}
+    rights_valid = bool(BUILTIN_FONT_ASSET_IDS.issubset(asset_ids))
+    for asset in assets.assets:
+        path = store.path(asset.local_path)
+        rights_valid = rights_valid and (
+            asset.rights_status in {"original", "user-owned", "permissively-licensed"}
+            and asset.embedding_allowed
+            and asset.review_status == ReviewStatus.APPROVED
+            and path.is_file()
+            and sha256_file(path) == asset.sha256
+            and set(asset.scene_usage).issubset(scene_ids)
+        )
+    rights_valid = rights_valid and referenced_asset_ids.issubset(asset_ids)
     checks.append(
         _check(
             "rights-completeness",
-            rights,
-            "All embedded assets have approved rights",
-            "Unknown, restricted, citation-only, or unapproved asset rights",
+            rights_valid,
+            "Every embedded asset, narration, and renderer font has approved reusable rights",
+            "An embedded asset is missing, modified, unapproved, unknown, restricted, or citation-only",
         )
     )
-    project = store.project()
-    stale = any(
+
+    stale = bool(
+        set(project.stale_artifacts).intersection({"claims", "script", "storyboard", "rights"})
+    ) or any(
         getattr(project.approvals, gate) == ReviewStatus.STALE
         for gate in ("claims", "script", "storyboard", "rights")
     )
@@ -114,116 +314,438 @@ def run_qa(store: ProjectStore, media_path: Path | None = None) -> QAReport:
         _check(
             "stale-dependencies",
             not stale,
-            "No stale dependencies",
-            "An upstream change invalidated downstream work",
+            "No approved upstream dependency is stale",
+            "An upstream change invalidated approved downstream work",
         )
     )
-    duration = sum(scene.duration for scene in storyboard.scenes)
+
+    segment_by_id = {segment.segment_id: segment for segment in script.segments}
+    citation_valid = True
+    for scene in storyboard.scenes:
+        linked = [segment_by_id[item] for item in scene.script_segment_ids if item in segment_by_id]
+        factual = any(
+            segment.segment_type in {"factual", "hook", "analogy", "caveat", "limitation"}
+            for segment in linked
+        )
+        implied_claims = {claim_id for segment in linked for claim_id in segment.claim_ids}
+        if factual:
+            citation_valid = citation_valid and bool(scene.claim_ids)
+            citation_valid = citation_valid and implied_claims.issubset(scene.claim_ids)
+            citation_valid = citation_valid and set(scene.claim_ids).issubset(approved_claim_ids)
+    checks.append(
+        _check(
+            "missing-citations",
+            citation_valid,
+            "Every factual narration clause and scene carries approved claim IDs",
+            "A factual narration clause or scene is missing its approved claim citation",
+        )
+    )
+
+    ordered_scenes = sorted(storyboard.scenes, key=lambda scene: scene.order)
+    timeline_valid = bool(ordered_scenes) and [scene.order for scene in ordered_scenes] == list(
+        range(len(ordered_scenes))
+    )
+    previous_end = 0.0
+    for scene in ordered_scenes:
+        timeline_valid = timeline_valid and scene.start_time + 0.01 >= previous_end
+        previous_end = max(previous_end, scene.start_time + scene.duration)
+    storyboard_duration = max(
+        (scene.start_time + scene.duration for scene in storyboard.scenes), default=0.0
+    )
+    checks.append(
+        _check(
+            "timeline-structure",
+            timeline_valid,
+            "Scene order and timing are monotonic and non-overlapping",
+            "Storyboard scene order or timing overlaps unexpectedly",
+        )
+    )
+
+    narration: Path | None = None
+    narration_duration: float | None = None
+    try:
+        narration = active_audio(store)
+        narration_duration = probe_duration(narration) if narration else None
+    except (OSError, ValueError):
+        narration = None
+        narration_duration = None
+        if "audio_asset" in project.active_versions:
+            checks.append(
+                _check(
+                    "audio-validity",
+                    False,
+                    "Imported narration is valid",
+                    "The active narration asset is missing, stale, or invalid",
+                )
+            )
+    if narration:
+        checks.append(
+            _check(
+                "audio-validity",
+                narration_duration is not None and narration_duration > 0,
+                f"Imported narration is valid ({narration_duration:.1f}s)"
+                if narration_duration
+                else "Imported narration is valid",
+                "Imported narration duration could not be verified",
+            )
+        )
+        checks.append(
+            _warning(
+                "narration-script-comparison",
+                "No verified local transcription tool was used; compare narration with the approved script during final review",
+            )
+        )
+
+    expected_duration = narration_duration or storyboard_duration
+    duration_valid = 45 <= expected_duration <= 75
     checks.append(
         _check(
             "duration",
-            45 <= duration <= 75,
-            f"Duration is {duration:.1f}s",
-            f"Duration {duration:.1f}s is outside 45-75s",
-            hard=False,
+            duration_valid,
+            f"Target duration is {expected_duration:.1f}s",
+            f"Duration {expected_duration:.1f}s is outside the required 45-75s range",
         )
     )
-    caption_issues = caption_warnings(cues_from_script(script))
+
+    cues = cues_from_script(script, target_duration=narration_duration)
+    caption_issues = caption_warnings(cues)
+    srt_path = store.path("captions/captions.srt")
+    vtt_path = store.path("captions/captions.vtt")
+    caption_files_match = (
+        srt_path.is_file()
+        and vtt_path.is_file()
+        and srt_path.read_text(encoding="utf-8") == as_srt(cues)
+        and vtt_path.read_text(encoding="utf-8") == as_vtt(cues)
+    )
+    checks.append(
+        _check(
+            "caption-integrity",
+            caption_files_match,
+            "SRT, VTT, and burned-caption cues share deterministic timing and text",
+            "Caption sidecars are missing or differ from the current approved script/audio timing",
+        )
+    )
     checks.append(
         QACheck(
             check_id="caption-overflow",
             status="warning" if caption_issues else "pass",
             message="; ".join(caption_issues)
             if caption_issues
-            else "Caption lines fit the 42-character limit",
+            else "Every rendered caption cue fits the 42-character content bound",
             hard_blocker=False,
         )
     )
-    citations = all(scene.claim_ids for scene in storyboard.scenes if scene.evidence_label)
+    inset_ratio = CAPTION_BOTTOM_INSET / FULL_HEIGHT
+    caption_height_ratio = CAPTION_MIN_HEIGHT / FULL_HEIGHT
+    safe_zone_valid = inset_ratio >= 0.05 and caption_height_ratio <= 0.12 and not caption_issues
     checks.append(
         _check(
-            "missing-citations",
-            citations,
-            "Evidence-labeled scenes cite claims",
-            "An evidence-labeled scene lacks claim IDs",
+            "caption-safe-zone",
+            safe_zone_valid,
+            "Caption geometry remains inside the configured mobile safe zone",
+            "Caption geometry or cue length can leave the configured mobile safe zone",
         )
     )
-    storyboard_approved = all(
-        scene.review_status == ReviewStatus.APPROVED for scene in storyboard.scenes
+
+    word_count = sum(len(segment.text.split()) for segment in script.segments)
+    checks.append(
+        QACheck(
+            check_id="script-word-count",
+            status="pass" if 130 <= word_count <= 170 else "warning",
+            message=f"Script contains {word_count} spoken words (target 130-170)",
+            hard_blocker=False,
+        )
     )
+
+    contrast_ratio = _contrast_ratio("#f7f9ff", "#020817")
     checks.append(
         _check(
-            "storyboard-approval",
-            storyboard_approved,
-            "All scenes are approved",
-            "Storyboard contains unapproved scenes",
+            "low-text-contrast",
+            contrast_ratio >= 7,
+            f"Caption contrast ratio is {contrast_ratio:.1f}:1",
+            f"Caption contrast ratio {contrast_ratio:.1f}:1 is below the AAA target",
         )
     )
-    if media_path:
+
+    if media_path is None:
+        checks.append(
+            _check(
+                "renderer-failure",
+                not require_media,
+                "Media check was explicitly deferred during authoring",
+                "A rendered media file is required for hard QA",
+            )
+        )
+    else:
         checks.extend(
-            _media_checks(media_path, project.width, project.height, project.fps, duration)
+            _media_checks(
+                store,
+                media_path,
+                PREVIEW_WIDTH if is_preview else project.width,
+                PREVIEW_HEIGHT if is_preview else project.height,
+                project.fps,
+                expected_duration,
+                narration is not None,
+                script,
+                storyboard,
+                assets,
+                sources,
+                is_preview,
+            )
         )
-    blockers = [item.message for item in checks if item.status == "failure" and item.hard_blocker]
-    report = QAReport(project_id=project.project_id, checks=checks, export_blockers=blockers)
-    atomic_write_model(store.path("renders/previews/qa-report.json"), report)
-    return report
+
+    return _write_report(store, checks, artifact_hashes, media_path, destination)
 
 
 def _media_checks(
-    path: Path, width: int, height: int, fps: int, expected_duration: float
+    store: ProjectStore,
+    path: Path,
+    width: int,
+    height: int,
+    fps: int,
+    expected_duration: float,
+    audio_required: bool,
+    script: ScriptManifest,
+    storyboard: StoryboardManifest,
+    assets: AssetManifest,
+    sources: SourceIndex,
+    is_preview: bool,
 ) -> list[QACheck]:
-    if not path.exists() or path.stat().st_size == 0:
+    checks: list[QACheck] = []
+    if not path.is_file() or path.stat().st_size == 0:
         return [_check("renderer-failure", False, "", "Rendered video is missing or empty")]
-    ffprobe = shutil.which("ffprobe")
+    ffprobe = media_tool("ffprobe")
     if not ffprobe:
         return [
-            QACheck(
-                check_id="media-probe",
-                status="warning",
-                message="ffprobe is unavailable; media metadata was not independently verified",
-                hard_blocker=False,
+            _check(
+                "media-probe",
+                False,
+                "ffprobe is available",
+                "ffprobe is required for hard media QA",
             )
         ]
     result = subprocess.run(
-        [ffprobe, "-v", "error", "-show_streams", "-show_format", "-of", "json", str(path)],
+        [
+            ffprobe,
+            "-v",
+            "error",
+            "-count_frames",
+            "-show_streams",
+            "-show_format",
+            "-of",
+            "json",
+            str(path),
+        ],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=60,
         check=False,
     )
     if result.returncode:
         return [_check("renderer-failure", False, "", f"ffprobe failed: {result.stderr.strip()}")]
-    data: dict[str, object] = json.loads(result.stdout)
-    streams = data.get("streams", [])
-    typed_streams = streams if isinstance(streams, list) else []
-    video: dict[str, object] = next(
+    try:
+        data: dict[str, Any] = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        return [_check("media-probe", False, "", f"ffprobe returned invalid JSON: {exc}")]
+    raw_streams = data.get("streams")
+    streams: list[Any] = raw_streams if isinstance(raw_streams, list) else []
+    video = next(
         (
             stream
-            for stream in typed_streams
+            for stream in streams
             if isinstance(stream, dict) and stream.get("codec_type") == "video"
         ),
         {},
     )
-    format_data = data.get("format", {})
-    typed_format = format_data if isinstance(format_data, dict) else {}
-    actual_duration = float(typed_format.get("duration", 0))
-    return [
-        _check(
-            "resolution",
-            video.get("width") == width and video.get("height") == height,
-            "Resolution is correct",
-            "Rendered resolution is incorrect",
+    audio = next(
+        (
+            stream
+            for stream in streams
+            if isinstance(stream, dict) and stream.get("codec_type") == "audio"
         ),
+        None,
+    )
+    raw_format = data.get("format")
+    format_data: dict[str, Any] = raw_format if isinstance(raw_format, dict) else {}
+    try:
+        actual_duration = float(format_data.get("duration", 0))
+    except (TypeError, ValueError):
+        actual_duration = 0.0
+    try:
+        actual_fps = float(Fraction(str(video.get("r_frame_rate", "0/1"))))
+    except (ValueError, ZeroDivisionError):
+        actual_fps = 0.0
+    checks.extend(
+        [
+            _check(
+                "resolution",
+                video.get("width") == width and video.get("height") == height,
+                f"Resolution is {width}x{height}",
+                "Rendered resolution is incorrect",
+            ),
+            _check(
+                "frame-rate",
+                math.isclose(actual_fps, fps, abs_tol=0.01),
+                f"Frame rate is {actual_fps:.2f} fps",
+                f"Rendered frame rate {actual_fps:.2f} does not match {fps} fps",
+            ),
+            _check(
+                "codec",
+                video.get("codec_name") == "h264"
+                and video.get("pix_fmt") in {"yuv420p", "yuvj420p"},
+                "Video is H.264 with a broadly compatible 4:2:0 pixel format",
+                "Video codec or pixel format is not the required H.264 4:2:0 output",
+            ),
+            _check(
+                "media-duration",
+                abs(actual_duration - expected_duration) < 1.5,
+                f"Media duration {actual_duration:.2f}s matches the approved timing",
+                f"Media duration {actual_duration:.2f}s differs from approved timing {expected_duration:.2f}s",
+            ),
+            _check(
+                "audio-stream",
+                not audio_required or audio is not None,
+                "Required narration audio stream is present"
+                if audio_required
+                else "No narration audio stream is required",
+                "Imported narration is missing from the rendered media",
+            ),
+        ]
+    )
+    expected_frames = round(actual_duration * fps)
+    frame_text = video.get("nb_read_frames") or video.get("nb_frames")
+    try:
+        actual_frames = int(str(frame_text))
+    except (TypeError, ValueError):
+        actual_frames = 0
+    checks.append(
         _check(
-            "frame-rate",
-            video.get("r_frame_rate") in {f"{fps}/1", str(fps)},
-            "Frame rate is correct",
-            "Rendered frame rate is incorrect",
-        ),
+            "missing-frames",
+            actual_frames > 0 and abs(actual_frames - expected_frames) <= max(2, fps),
+            f"Decoded {actual_frames} frames without a material gap",
+            f"Decoded frame count {actual_frames} differs from expected {expected_frames}",
+        )
+    )
+
+    manifest_path = path.parent / "render-manifest.json"
+    manifest_valid = False
+    if manifest_path.is_file():
+        try:
+            manifest = load_model(manifest_path, RenderManifest)
+            relative_output = path.relative_to(store.root).as_posix()
+            narration = active_audio(store)
+            expected_audio_hash = sha256_file(narration) if narration else None
+            manifest_valid = (
+                manifest.width == width
+                and manifest.height == height
+                and math.isclose(manifest.fps, fps, abs_tol=0.01)
+                and abs(manifest.duration - expected_duration) < 1.5
+                and manifest.codec == "h264"
+                and manifest.script_hash == stable_hash(script)
+                and manifest.storyboard_hash == stable_hash(storyboard)
+                and manifest.asset_hashes
+                == {asset.asset_id: asset.sha256 for asset in assets.assets}
+                and manifest.audio_hash == expected_audio_hash
+                and manifest.source_hashes
+                == {source.source_id: source.content_hash for source in sources.sources}
+                and relative_output in manifest.output_paths
+                and manifest.output_hashes.get(relative_output) == sha256_file(path)
+                and manifest.watermarked is is_preview
+                and manifest.renderer_version not in {"", "pending-lock"}
+            )
+        except (OSError, ValueError):
+            manifest_valid = False
+    checks.append(
         _check(
-            "media-duration",
-            abs(actual_duration - expected_duration) < 1.5,
-            "Media duration matches storyboard",
-            "Media duration differs from storyboard",
-        ),
-    ]
+            "render-manifest",
+            manifest_valid,
+            "Render manifest matches the exact media and approved dependencies",
+            "Render manifest is missing, stale, incomplete, or hash-mismatched",
+        )
+    )
+
+    ffmpeg = media_tool("ffmpeg")
+    if not ffmpeg:
+        checks.append(
+            _check(
+                "blank-frames",
+                False,
+                "Representative frames are nonblank",
+                "ffmpeg is required for blank-frame inspection",
+            )
+        )
+        return checks
+    frame_samples_ok = _representative_frames_are_nonblank(ffmpeg, path, actual_duration)
+    checks.append(
+        _check(
+            "blank-frames",
+            frame_samples_ok,
+            "Representative frames contain visible nonblank content",
+            "A representative frame is blank or could not be decoded",
+        )
+    )
+    contact_sheet = path.parent / "contact-sheet.png"
+    checks.append(
+        _check(
+            "contact-sheet",
+            contact_sheet.is_file() and contact_sheet.stat().st_size > 1000,
+            "Representative contact sheet is available for human review",
+            "Renderer did not produce a representative contact sheet",
+        )
+    )
+    return checks
+
+
+def _representative_frames_are_nonblank(ffmpeg: str, path: Path, duration: float) -> bool:
+    if duration <= 0:
+        return False
+    sample_times = [max(0.1, duration * ratio) for ratio in (0.15, 0.5, 0.85)]
+    with tempfile.TemporaryDirectory(prefix="techshort-qa-frames-") as directory:
+        root = Path(directory)
+        for index, timestamp in enumerate(sample_times):
+            target = root / f"frame-{index}.png"
+            result = subprocess.run(
+                [
+                    ffmpeg,
+                    "-y",
+                    "-ss",
+                    f"{timestamp:.3f}",
+                    "-i",
+                    str(path),
+                    "-frames:v",
+                    "1",
+                    str(target),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+            if result.returncode or not target.is_file():
+                return False
+            with Image.open(target) as image:
+                grayscale = image.convert("L")
+                statistics = ImageStat.Stat(grayscale)
+                extrema = grayscale.getextrema()
+                if extrema is None:
+                    return False
+                if not isinstance(extrema[0], int) or not isinstance(extrema[1], int):
+                    return False
+                low, high = extrema
+                if high - low < 12 or statistics.stddev[0] < 3:
+                    return False
+    return True
+
+
+def _contrast_ratio(foreground: str, background: str) -> float:
+    def luminance(value: str) -> float:
+        channels = [int(value[index : index + 2], 16) / 255 for index in (1, 3, 5)]
+        linear = [
+            channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4
+            for channel in channels
+        ]
+        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+    first, second = luminance(foreground), luminance(background)
+    lighter, darker = max(first, second), min(first, second)
+    return (lighter + 0.05) / (darker + 0.05)
