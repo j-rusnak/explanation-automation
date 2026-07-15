@@ -154,6 +154,8 @@ def render_video(store: ProjectStore, preview: bool) -> Path:
                 cwd=repository,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=900,
                 check=False,
             )
@@ -194,6 +196,8 @@ def probe_render_metadata(path: Path) -> MediaMetadata | None:
         [ffprobe, "-v", "error", "-show_streams", "-show_format", "-of", "json", str(path)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=30,
         check=False,
     )
@@ -339,6 +343,8 @@ def _generate_derivatives(video: Path, directory: Path, duration: float) -> list
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=60,
         check=False,
     )
@@ -389,6 +395,8 @@ def _generate_contact_sheet(
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=60,
             check=False,
         )
