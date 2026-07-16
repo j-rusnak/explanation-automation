@@ -72,7 +72,8 @@ class ProjectManifest(StrictModel):
     width: int = 1080
     height: int = 1920
     fps: int = 30
-    theme: str = "midnight"
+    theme: Literal["midnight", "blueprint", "signal-lab", "technical-editorial"] = "blueprint"
+    narration_mode: Literal["narrated", "silent-reviewed"] = "narrated"
     source_ids: list[str] = Field(default_factory=list)
     active_source_id: str | None = None
     active_versions: dict[str, str] = Field(default_factory=dict)
@@ -409,6 +410,475 @@ class VisualSpec(BaseModel):
         return self
 
 
+ThemeName = Literal["blueprint", "signal-lab", "technical-editorial"]
+LayoutPreset = Literal["hero", "full-diagram", "split", "evidence", "numeric", "limitation"]
+MotionPreset = Literal["calm", "precise", "energetic"]
+
+
+class KineticTextVisual(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    kind: Literal["kinetic-text"]
+    emphasis: list[str] = Field(min_length=1, max_length=4)
+    supporting_text: str | None = None
+
+    @field_validator("emphasis")
+    @classmethod
+    def inert_emphasis(cls, value: list[str]) -> list[str]:
+        return [validate_inert_text(item) for item in value]
+
+    @field_validator("supporting_text")
+    @classmethod
+    def inert_supporting_text(cls, value: str | None) -> str | None:
+        return validate_inert_text(value) if value is not None else None
+
+
+class SourceReceiptVisual(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    kind: Literal["source-receipt"]
+    source_title: str
+    excerpt: str = Field(min_length=1, max_length=500)
+    locator: str
+    evidence_id: str
+    highlight: str | None = None
+
+    @field_validator("source_title", "excerpt", "locator", "evidence_id", "highlight")
+    @classmethod
+    def inert_receipt_text(cls, value: str | None) -> str | None:
+        return validate_inert_text(value) if value is not None else None
+
+
+class MechanismDiagramVisual(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    kind: Literal["mechanism-diagram"]
+    nodes: list[NodeSpec] = Field(min_length=2, max_length=12)
+    edges: list[EdgeSpec] = Field(default_factory=list, max_length=18)
+    active_step_id: str | None = None
+
+    @model_validator(mode="after")
+    def valid_diagram(self) -> MechanismDiagramVisual:
+        node_ids = {node.id for node in self.nodes}
+        if len(node_ids) != len(self.nodes):
+            raise ValueError("diagram node IDs must be unique")
+        if self.active_step_id is not None and self.active_step_id not in node_ids:
+            raise ValueError("active diagram step must reference a declared node")
+        for edge in self.edges:
+            if edge.source not in node_ids or edge.target not in node_ids:
+                raise ValueError("diagram edges must reference declared nodes")
+        return self
+
+
+class ChartAxis(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    label: str
+    unit: str | None = None
+
+    @field_validator("label", "unit")
+    @classmethod
+    def inert_axis_text(cls, value: str | None) -> str | None:
+        return validate_inert_text(value) if value is not None else None
+
+
+class ChartPoint(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    x: float
+    y: float
+
+
+class ChartSeries(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    label: str
+    color: Literal["accent", "warning", "citation", "danger", "muted"]
+    points: list[ChartPoint] = Field(min_length=1, max_length=30)
+
+    @field_validator("label")
+    @classmethod
+    def inert_series_label(cls, value: str) -> str:
+        return validate_inert_text(value)
+
+
+class ChartAnnotation(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    x: float
+    y: float
+    label: str
+
+    @field_validator("label")
+    @classmethod
+    def inert_annotation(cls, value: str) -> str:
+        return validate_inert_text(value)
+
+
+class AnnotatedChartVisual(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    kind: Literal["annotated-chart"]
+    chart_type: Literal["bar", "line", "dot"]
+    x_axis: ChartAxis
+    y_axis: ChartAxis
+    series: list[ChartSeries] = Field(min_length=1, max_length=4)
+    annotations: list[ChartAnnotation] = Field(default_factory=list, max_length=6)
+
+    @model_validator(mode="after")
+    def annotations_fit_series_range(self) -> AnnotatedChartVisual:
+        points = [point for series in self.series for point in series.points]
+        minimum_x = min(point.x for point in points)
+        maximum_x = max(point.x for point in points)
+        minimum_y = min(point.y for point in points)
+        maximum_y = max(point.y for point in points)
+        if any(
+            not minimum_x <= item.x <= maximum_x or not minimum_y <= item.y <= maximum_y
+            for item in self.annotations
+        ):
+            raise ValueError("chart annotations must fall inside the plotted data range")
+        return self
+
+
+class ParameterSimulationVisual(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    kind: Literal["parameter-simulation"]
+    parameter_label: str
+    unit: str | None = None
+    minimum: float
+    maximum: float
+    value: float
+    left_label: str
+    right_label: str
+
+    @field_validator("parameter_label", "unit", "left_label", "right_label")
+    @classmethod
+    def inert_parameter_text(cls, value: str | None) -> str | None:
+        return validate_inert_text(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def parameter_is_bounded(self) -> ParameterSimulationVisual:
+        if self.maximum <= self.minimum or not self.minimum <= self.value <= self.maximum:
+            raise ValueError("simulation parameter must lie inside an ordered range")
+        return self
+
+
+ComparisonFeature = Literal["straight-edge", "grid", "rotor", "signal", "generic"]
+
+
+class ComparisonSide(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    label: str
+    value: str
+    detail: str | None = None
+
+    @field_validator("label", "value", "detail")
+    @classmethod
+    def inert_comparison_text(cls, value: str | None) -> str | None:
+        return validate_inert_text(value) if value is not None else None
+
+
+class ComparisonVisual(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    kind: Literal["comparison"]
+    feature: ComparisonFeature
+    left: ComparisonSide
+    right: ComparisonSide
+
+
+class LimitationVisual(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    kind: Literal["limitation"]
+    limitation: str
+    applies_when: str | None = None
+
+    @field_validator("limitation", "applies_when")
+    @classmethod
+    def inert_limitation_text(cls, value: str | None) -> str | None:
+        return validate_inert_text(value) if value is not None else None
+
+
+ScanSubject = Literal["blade", "pole", "grid", "rotor"]
+
+
+class RasterScanVisual(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    kind: Literal["raster-scan"]
+    direction: Literal["top-to-bottom", "bottom-to-top", "left-to-right"]
+    rows: int = Field(ge=6, le=32)
+    subject: ScanSubject
+    distortion: float = Field(ge=-1, le=1)
+    scan_label: str
+    before_label: str
+    after_label: str
+
+    @field_validator("scan_label", "before_label", "after_label")
+    @classmethod
+    def inert_scan_text(cls, value: str) -> str:
+        return validate_inert_text(value)
+
+
+class TimeSlice(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    time: float = Field(ge=0)
+    label: str
+    offset: float = Field(ge=-1, le=1)
+
+    @field_validator("label")
+    @classmethod
+    def inert_time_label(cls, value: str) -> str:
+        return validate_inert_text(value)
+
+
+class TimeSliceVisual(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    kind: Literal["time-slice"]
+    unit: str
+    slices: list[TimeSlice] = Field(min_length=2, max_length=12)
+
+    @field_validator("unit")
+    @classmethod
+    def inert_time_unit(cls, value: str) -> str:
+        return validate_inert_text(value)
+
+    @model_validator(mode="after")
+    def time_slices_increase(self) -> TimeSliceVisual:
+        if any(
+            current.time >= following.time
+            for current, following in zip(self.slices, self.slices[1:], strict=False)
+        ):
+            raise ValueError("time slices must have strictly increasing times")
+        return self
+
+
+class GridWarpVisual(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    kind: Literal["grid-warp"]
+    rows: int = Field(ge=3, le=20)
+    columns: int = Field(ge=3, le=20)
+    skew: float = Field(ge=-1, le=1)
+    curvature: float = Field(ge=-1, le=1)
+    before_label: str
+    after_label: str
+
+    @field_validator("before_label", "after_label")
+    @classmethod
+    def inert_grid_labels(cls, value: str) -> str:
+        return validate_inert_text(value)
+
+
+class BeforeAfterOverlayVisual(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    kind: Literal["before-after-overlay"]
+    feature: Literal["straight-edge", "grid", "rotor", "signal"]
+    before_label: str
+    after_label: str
+    divider: float = Field(ge=0.2, le=0.8)
+
+    @field_validator("before_label", "after_label")
+    @classmethod
+    def inert_overlay_labels(cls, value: str) -> str:
+        return validate_inert_text(value)
+
+
+class HighlightRange(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    start: int = Field(ge=0)
+    end: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def ordered_range(self) -> HighlightRange:
+        if self.end <= self.start:
+            raise ValueError("highlight offsets must be ordered")
+        return self
+
+
+class EvidenceHighlightVisual(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    kind: Literal["evidence-highlight"]
+    source_title: str
+    excerpt: str = Field(min_length=1, max_length=500)
+    locator: str
+    evidence_id: str
+    highlights: list[HighlightRange] = Field(min_length=1, max_length=6)
+
+    @field_validator("source_title", "excerpt", "locator", "evidence_id")
+    @classmethod
+    def inert_evidence_text(cls, value: str) -> str:
+        return validate_inert_text(value)
+
+    @model_validator(mode="after")
+    def highlights_fit_excerpt(self) -> EvidenceHighlightVisual:
+        if any(item.end > len(self.excerpt) for item in self.highlights):
+            raise ValueError("evidence highlights must fit inside the excerpt")
+        ordered = sorted(self.highlights, key=lambda item: (item.start, item.end))
+        if any(
+            current.end > following.start
+            for current, following in zip(ordered, ordered[1:], strict=False)
+        ):
+            raise ValueError("evidence highlights may not overlap")
+        return self
+
+
+class ProcessFlowVisual(MechanismDiagramVisual):
+    kind: Literal["process-flow"]  # type: ignore[assignment]
+
+
+class TimelineEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    time: float
+    label: str
+    detail: str | None = None
+
+    @field_validator("label", "detail")
+    @classmethod
+    def inert_event_text(cls, value: str | None) -> str | None:
+        return validate_inert_text(value) if value is not None else None
+
+
+class TimelineVisual(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    kind: Literal["timeline"]
+    unit: str
+    events: list[TimelineEvent] = Field(min_length=2, max_length=10)
+
+    @field_validator("unit")
+    @classmethod
+    def inert_timeline_unit(cls, value: str) -> str:
+        return validate_inert_text(value)
+
+    @model_validator(mode="after")
+    def timeline_events_increase(self) -> TimelineVisual:
+        if any(
+            current.time >= following.time
+            for current, following in zip(self.events, self.events[1:], strict=False)
+        ):
+            raise ValueError("timeline events must have strictly increasing times")
+        return self
+
+
+TypedVisualSpec = Annotated[
+    KineticTextVisual
+    | SourceReceiptVisual
+    | MechanismDiagramVisual
+    | AnnotatedChartVisual
+    | ParameterSimulationVisual
+    | ComparisonVisual
+    | LimitationVisual
+    | RasterScanVisual
+    | TimeSliceVisual
+    | GridWarpVisual
+    | BeforeAfterOverlayVisual
+    | EvidenceHighlightVisual
+    | ProcessFlowVisual
+    | TimelineVisual,
+    Field(discriminator="kind"),
+]
+
+
+class CoverComparisonHero(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    kind: Literal["comparison"]
+    feature: Literal["straight-edge", "grid", "rotor", "signal"]
+    before_label: str
+    after_label: str
+
+    @field_validator("before_label", "after_label")
+    @classmethod
+    def inert_cover_labels(cls, value: str) -> str:
+        return validate_inert_text(value)
+
+
+class CoverScanlineHero(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    kind: Literal["scanline"]
+    subject: ScanSubject
+    distortion: float = Field(ge=-1, le=1)
+
+
+class CoverDiagramHero(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    kind: Literal["diagram"]
+    nodes: list[NodeSpec] = Field(min_length=2, max_length=12)
+    edges: list[EdgeSpec] = Field(default_factory=list, max_length=18)
+
+
+CoverHero = Annotated[
+    CoverComparisonHero | CoverScanlineHero | CoverDiagramHero,
+    Field(discriminator="kind"),
+]
+
+
+class CoverCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    candidate_id: str
+    headline: str = Field(min_length=3, max_length=72)
+    subheadline: str | None = Field(default=None, max_length=110)
+    layout: Literal["split-hero", "diagram-hero", "editorial"]
+    palette: ThemeName
+    hero: CoverHero
+    claim_ids: list[str] = Field(min_length=1, max_length=6)
+    evidence_ids: list[str] = Field(min_length=1, max_length=6)
+    accessibility_description: str
+
+    @field_validator("candidate_id", "headline", "subheadline", "accessibility_description")
+    @classmethod
+    def inert_cover_text(cls, value: str | None) -> str | None:
+        return validate_inert_text(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def unique_cover_links(self) -> CoverCandidate:
+        if len(self.claim_ids) != len(set(self.claim_ids)):
+            raise ValueError("cover claim IDs must be unique")
+        if len(self.evidence_ids) != len(set(self.evidence_ids)):
+            raise ValueError("cover evidence IDs must be unique")
+        return self
+
+
+class CoverManifest(StrictModel):
+    version_id: str
+    storyboard_version_id: str
+    candidates: list[CoverCandidate] = Field(min_length=3, max_length=3)
+
+    @model_validator(mode="after")
+    def unique_cover_candidates(self) -> CoverManifest:
+        ids = {item.candidate_id for item in self.candidates}
+        if len(ids) != len(self.candidates):
+            raise ValueError("cover candidate IDs must be unique")
+        return self
+
+
+class CoverSelection(StrictModel):
+    selection_id: str
+    cover_version_id: str
+    selected_candidate_id: str
+    selected_candidate_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    selected_at: datetime = Field(default_factory=now_utc)
+
+    @model_validator(mode="after")
+    def valid_cover_selection_id(self) -> CoverSelection:
+        expected = derive_cover_selection_id(
+            self.cover_version_id,
+            self.selected_candidate_id,
+            self.selected_candidate_hash,
+        )
+        if self.selection_id != expected:
+            raise ValueError("cover selection ID does not match its candidate")
+        return self
+
+
+def derive_cover_manifest_id(storyboard_version_id: str, candidates: list[CoverCandidate]) -> str:
+    return (
+        "covers-"
+        + stable_hash({"storyboard": storyboard_version_id, "candidates": candidates})[:16]
+    )
+
+
+def derive_cover_selection_id(
+    cover_version_id: str,
+    candidate_id: str,
+    candidate_hash: str,
+) -> str:
+    return (
+        "cover-selection-"
+        + stable_hash(
+            {"covers": cover_version_id, "candidate": candidate_id, "hash": candidate_hash}
+        )[:16]
+    )
+
+
 ScenePrimitive = Literal[
     "KineticText",
     "SourceReceipt",
@@ -417,6 +887,14 @@ ScenePrimitive = Literal[
     "ParameterSimulation",
     "Comparison",
     "LimitationCard",
+    "RasterScan",
+    "TimeSlice",
+    "GridWarp",
+    "BeforeAfterOverlay",
+    "AnnotatedChart",
+    "EvidenceHighlight",
+    "ProcessFlow",
+    "Timeline",
 ]
 
 
@@ -427,13 +905,16 @@ class Scene(StrictModel):
     duration: float = Field(gt=0)
     transition: Literal["cut", "fade", "slide"] = "fade"
     primitive: ScenePrimitive
+    layout: LayoutPreset = "hero"
+    motion: MotionPreset = "precise"
     script_segment_ids: list[str] = Field(min_length=1)
     claim_ids: list[str] = Field(default_factory=list)
     on_screen_text: str
-    visual: VisualSpec
+    visual: VisualSpec | TypedVisualSpec
     asset_ids: list[str] = Field(default_factory=list)
     accessibility_description: str
     evidence_label: Literal["DOCUMENTED", "MEASURED", "SIMULATED", "INFERRED"] | None = None
+    citation_label: str | None = None
     theme_overrides: dict[str, str] = Field(default_factory=dict)
     review_status: ReviewStatus = ReviewStatus.PENDING
     dependency_hash: str
@@ -443,10 +924,47 @@ class Scene(StrictModel):
         "on_screen_text",
         "accessibility_description",
         "evidence_label",
+        "citation_label",
     )
     @classmethod
     def inert_scene_text(cls, value: str | None) -> str | None:
         return validate_inert_text(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def primitive_matches_typed_visual(self) -> Scene:
+        if isinstance(self.visual, VisualSpec):
+            if self.primitive in {
+                "RasterScan",
+                "TimeSlice",
+                "GridWarp",
+                "BeforeAfterOverlay",
+                "AnnotatedChart",
+                "EvidenceHighlight",
+                "ProcessFlow",
+                "Timeline",
+            }:
+                raise ValueError("new scene primitives require a typed visual specification")
+            return self
+        expected = {
+            "KineticText": "kinetic-text",
+            "SourceReceipt": "source-receipt",
+            "MechanismDiagram": "mechanism-diagram",
+            "ChartReveal": "annotated-chart",
+            "AnnotatedChart": "annotated-chart",
+            "ParameterSimulation": "parameter-simulation",
+            "Comparison": "comparison",
+            "LimitationCard": "limitation",
+            "RasterScan": "raster-scan",
+            "TimeSlice": "time-slice",
+            "GridWarp": "grid-warp",
+            "BeforeAfterOverlay": "before-after-overlay",
+            "EvidenceHighlight": "evidence-highlight",
+            "ProcessFlow": "process-flow",
+            "Timeline": "timeline",
+        }
+        if self.visual.kind != expected[self.primitive]:
+            raise ValueError("scene primitive does not match its typed visual kind")
+        return self
 
     @field_validator("script_segment_ids", "claim_ids", "asset_ids")
     @classmethod
