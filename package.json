@@ -13,7 +13,8 @@
     "demo": "powershell -ExecutionPolicy Bypass -File scripts/demo.ps1",
     "render-sample": "powershell -ExecutionPolicy Bypass -File scripts/demo.ps1",
     "render:preview": "node renderer/scripts/render.mjs preview",
-    "render:final": "node renderer/scripts/render.mjs final"
+    "render:final": "node renderer/scripts/render.mjs final",
+    "render:cover": "node renderer/scripts/render.mjs cover"
   },
   "dependencies": {
     "@fontsource/atkinson-hyperlegible": "5.2.8",

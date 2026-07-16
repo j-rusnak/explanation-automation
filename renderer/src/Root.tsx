@@ -1,5 +1,6 @@
 import React from "react";
-import { Composition, getInputProps } from "remotion";
+import { Composition, Still, getInputProps } from "remotion";
+import { Cover } from "./compositions/Cover";
 import { Explainer } from "./compositions/Explainer";
 import { projectSchema, type ProjectData } from "./schemas/project";
 
@@ -10,14 +11,23 @@ export const Root: React.FC = () => {
     0,
   );
   return (
-    <Composition
-      id="TechShort"
-      component={Explainer}
-      width={data.width}
-      height={data.height}
-      fps={data.fps}
-      durationInFrames={Math.ceil(duration * data.fps)}
-      defaultProps={data}
-    />
+    <>
+      <Composition
+        id="TechShort"
+        component={Explainer}
+        width={data.width}
+        height={data.height}
+        fps={data.fps}
+        durationInFrames={Math.ceil(duration * data.fps)}
+        defaultProps={data}
+      />
+      <Still
+        id="TechShortCover"
+        component={Cover}
+        width={data.width}
+        height={data.height}
+        defaultProps={data}
+      />
+    </>
   );
 };
