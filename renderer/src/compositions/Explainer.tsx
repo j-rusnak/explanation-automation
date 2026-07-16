@@ -10,7 +10,7 @@ import {
 } from "remotion";
 import type { ProjectData, SceneData } from "../schemas/project";
 import { Primitive } from "../scenes/primitives";
-import { theme } from "../themes/tokens";
+import { getTheme } from "../themes/tokens";
 
 const SceneTransition: React.FC<{
   scene: SceneData;
@@ -21,7 +21,17 @@ const SceneTransition: React.FC<{
   const duration = Math.max(1, Math.round(scene.duration * fps));
   const transitionFrames = Math.max(
     1,
-    Math.min(Math.round(fps * 0.3), Math.floor(duration / 2)),
+    Math.min(
+      Math.round(
+        fps *
+          (scene.motion === "calm"
+            ? 0.48
+            : scene.motion === "energetic"
+              ? 0.2
+              : 0.3),
+      ),
+      Math.floor(duration / 2),
+    ),
   );
   if (scene.transition === "cut") return <>{children}</>;
   const opacity = interpolate(
@@ -51,12 +61,13 @@ export const Explainer: React.FC<ProjectData> = (data) => {
   const activeCue = data.captions.find(
     (cue) => currentTime >= cue.start && currentTime < cue.end,
   );
+  const tokens = getTheme(data.theme);
   return (
     <AbsoluteFill
       style={{
-        background: `radial-gradient(circle at 80% 12%, #183866 0, ${theme.background} 48%)`,
-        color: theme.text,
-        fontFamily: theme.font,
+        background: tokens.backgroundCss,
+        color: tokens.text,
+        fontFamily: tokens.font,
       }}
     >
       {data.audioPath ? <Audio src={staticFile(data.audioPath)} /> : null}
@@ -68,7 +79,7 @@ export const Explainer: React.FC<ProjectData> = (data) => {
           premountFor={data.fps}
         >
           <SceneTransition scene={scene}>
-            <Primitive scene={scene} />
+            <Primitive scene={scene} themeName={data.theme} />
           </SceneTransition>
         </Sequence>
       ))}
@@ -87,7 +98,12 @@ export const Explainer: React.FC<ProjectData> = (data) => {
             textAlign: "center",
             padding: "22px 34px",
             borderRadius: 24,
-            background: "#020817ed",
+            border: `2px solid ${tokens.panelBorder}`,
+            background:
+              data.theme === "technical-editorial"
+                ? "#172033f2"
+                : `${tokens.background}f2`,
+            color: "#f7f9ff",
             fontSize: 42,
             fontWeight: 700,
             lineHeight: 1.22,
