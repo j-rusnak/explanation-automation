@@ -2,13 +2,37 @@ import { z } from "zod";
 
 const activeContent =
   /<\s*\/?\s*[a-z!][^>]*>|\b(?:java|vb)script\s*:|\bdata\s*:\s*(?:text\/html|image\/svg\+xml)|\bon[a-z]{3,}\s*=|\b(?:eval|exec|__import__)\s*\(|\bnew\s+function\s*\(/i;
-const inertText = z
+export const inertText = z
   .string()
+  .max(2_000)
   .refine((value) => !value.includes("\0") && !activeContent.test(value), {
     message: "active content is forbidden",
   });
+const shortText = inertText.max(180);
 const stableId = inertText.regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/);
 const color = z.string().regex(/^#[0-9A-Fa-f]{6}$/);
+const paletteRole = z.enum([
+  "accent",
+  "warning",
+  "citation",
+  "danger",
+  "muted",
+]);
+export const themeNameSchema = z.enum([
+  "blueprint",
+  "signal-lab",
+  "technical-editorial",
+]);
+export const layoutSchema = z.enum([
+  "hero",
+  "full-diagram",
+  "split",
+  "evidence",
+  "numeric",
+  "limitation",
+]);
+export const motionSchema = z.enum(["calm", "precise", "energetic"]);
+
 const themeKeys = new Set([
   "background",
   "panel",
@@ -19,37 +43,66 @@ const themeKeys = new Set([
   "danger",
   "citation",
 ]);
-const node = z
+
+export const nodeSchema = z
   .object({
     id: stableId,
-    label: inertText,
+    label: shortText,
     x: z.number().min(0).max(1),
     y: z.number().min(0).max(1),
     state: z.enum(["normal", "active", "muted"]).default("normal"),
   })
   .strict();
-const edge = z
+export const edgeSchema = z
   .object({
     source: stableId,
     target: stableId,
-    label: inertText.nullable().optional(),
+    label: shortText.nullable().optional(),
   })
   .strict();
-const visual = z
+const graphShape = {
+  nodes: z.array(nodeSchema).min(2).max(12),
+  edges: z.array(edgeSchema).max(18),
+};
+type GraphValue = {
+  nodes: Array<z.infer<typeof nodeSchema>>;
+  edges: Array<z.infer<typeof edgeSchema>>;
+};
+const validateGraph = (value: GraphValue, context: z.RefinementCtx): void => {
+  const ids = new Set(value.nodes.map((item) => item.id));
+  if (ids.size !== value.nodes.length) {
+    context.addIssue({
+      code: "custom",
+      message: "visual node IDs must be unique",
+    });
+  }
+  for (const edge of value.edges) {
+    if (!ids.has(edge.source) || !ids.has(edge.target)) {
+      context.addIssue({
+        code: "custom",
+        message: "visual edges must reference declared nodes",
+      });
+    }
+  }
+};
+
+// Kept only so archived v1 storyboards remain renderable. New storyboards use a
+// discriminated visual below and cannot smuggle fields from another primitive.
+const legacyVisualSchema = z
   .object({
-    title: inertText,
+    title: shortText,
     body: inertText.nullable().optional(),
-    nodes: z.array(node).default([]),
-    edges: z.array(edge).default([]),
-    series: z.array(z.number()).max(30).default([]),
-    labels: z.array(inertText).max(30).default([]),
+    nodes: z.array(nodeSchema).default([]),
+    edges: z.array(edgeSchema).default([]),
+    series: z.array(z.number().finite()).max(30).default([]),
+    labels: z.array(shortText).max(30).default([]),
     parameter: z.number().min(0).max(1).nullable().optional(),
-    left: inertText.nullable().optional(),
-    right: inertText.nullable().optional(),
+    left: shortText.nullable().optional(),
+    right: shortText.nullable().optional(),
     citation: stableId.nullable().optional(),
     evidence_id: stableId.nullable().optional(),
     evidence_excerpt: inertText.nullable().optional(),
-    source_locator: inertText.nullable().optional(),
+    source_locator: shortText.nullable().optional(),
   })
   .strict()
   .superRefine((value, context) => {
@@ -60,8 +113,8 @@ const visual = z
         message: "visual node IDs must be unique",
       });
     }
-    for (const item of value.edges) {
-      if (!ids.has(item.source) || !ids.has(item.target)) {
+    for (const edge of value.edges) {
+      if (!ids.has(edge.source) || !ids.has(edge.target)) {
         context.addIssue({
           code: "custom",
           message: "visual edges must reference declared nodes",
@@ -69,6 +122,295 @@ const visual = z
       }
     }
   });
+
+const kineticVisual = z
+  .object({
+    kind: z.literal("kinetic-text"),
+    emphasis: z.array(shortText).max(4).default([]),
+    supporting_text: shortText.nullable().optional(),
+  })
+  .strict();
+const sourceReceiptVisual = z
+  .object({
+    kind: z.literal("source-receipt"),
+    source_title: shortText,
+    excerpt: inertText.min(1).max(500),
+    locator: shortText,
+    evidence_id: stableId,
+    highlight: shortText.nullable().optional(),
+  })
+  .strict()
+  .refine(
+    (receipt) =>
+      receipt.highlight == null || receipt.excerpt.includes(receipt.highlight),
+    "source receipt highlight must occur in its excerpt",
+  );
+const mechanismVisual = z
+  .object({
+    ...graphShape,
+    kind: z.literal("mechanism-diagram"),
+    active_step_id: stableId.nullable().optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    validateGraph(value, context);
+    if (
+      value.active_step_id != null &&
+      !value.nodes.some((node) => node.id === value.active_step_id)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "active mechanism step must reference a declared node",
+      });
+    }
+  });
+const chartPoint = z
+  .object({ x: z.number().finite(), y: z.number().finite() })
+  .strict();
+const chartSeries = z
+  .object({
+    label: shortText,
+    color: paletteRole.default("accent"),
+    points: z.array(chartPoint).min(1).max(30),
+  })
+  .strict();
+const chartAnnotation = z
+  .object({
+    x: z.number().finite(),
+    y: z.number().finite(),
+    label: shortText,
+  })
+  .strict();
+const annotatedChartVisual = z
+  .object({
+    kind: z.literal("annotated-chart"),
+    chart_type: z.enum(["bar", "line", "dot"]),
+    x_axis: z
+      .object({ label: shortText, unit: shortText.nullable().optional() })
+      .strict(),
+    y_axis: z
+      .object({ label: shortText, unit: shortText.nullable().optional() })
+      .strict(),
+    series: z.array(chartSeries).min(1).max(4),
+    annotations: z.array(chartAnnotation).max(6).default([]),
+  })
+  .strict()
+  .superRefine((chart, context) => {
+    const points = chart.series.flatMap((series) => series.points);
+    const minX = Math.min(...points.map((point) => point.x));
+    const maxX = Math.max(...points.map((point) => point.x));
+    const minY = Math.min(...points.map((point) => point.y));
+    const maxY = Math.max(...points.map((point) => point.y));
+    for (const annotation of chart.annotations) {
+      if (
+        annotation.x < minX ||
+        annotation.x > maxX ||
+        annotation.y < minY ||
+        annotation.y > maxY
+      ) {
+        context.addIssue({
+          code: "custom",
+          message:
+            "chart annotations must identify a point inside the data range",
+        });
+      }
+    }
+  });
+const parameterVisual = z
+  .object({
+    kind: z.literal("parameter-simulation"),
+    parameter_label: shortText,
+    unit: shortText.nullable().optional(),
+    minimum: z.number().finite(),
+    maximum: z.number().finite(),
+    value: z.number().finite(),
+    left_label: shortText,
+    right_label: shortText,
+  })
+  .strict()
+  .refine(
+    (value) => value.maximum > value.minimum,
+    "maximum must exceed minimum",
+  )
+  .refine(
+    (value) => value.value >= value.minimum && value.value <= value.maximum,
+    "value must fall inside the parameter bounds",
+  );
+const comparisonSide = z
+  .object({
+    label: shortText,
+    value: shortText,
+    detail: shortText.nullable().optional(),
+  })
+  .strict();
+const comparisonVisual = z
+  .object({
+    kind: z.literal("comparison"),
+    feature: z.enum(["straight-edge", "grid", "rotor", "signal", "generic"]),
+    left: comparisonSide,
+    right: comparisonSide,
+  })
+  .strict();
+const limitationVisual = z
+  .object({
+    kind: z.literal("limitation"),
+    limitation: inertText.min(1).max(360),
+    applies_when: shortText.nullable().optional(),
+  })
+  .strict();
+const rasterScanVisual = z
+  .object({
+    kind: z.literal("raster-scan"),
+    direction: z.enum(["top-to-bottom", "bottom-to-top", "left-to-right"]),
+    rows: z.number().int().min(6).max(32),
+    subject: z.enum(["blade", "pole", "grid", "rotor"]),
+    distortion: z.number().min(-1).max(1),
+    scan_label: shortText,
+    before_label: shortText,
+    after_label: shortText,
+  })
+  .strict();
+const timeSlice = z
+  .object({
+    time: z.number().nonnegative(),
+    label: shortText,
+    offset: z.number().min(-1).max(1),
+  })
+  .strict();
+const timeSliceVisual = z
+  .object({
+    kind: z.literal("time-slice"),
+    unit: shortText,
+    slices: z.array(timeSlice).min(2).max(12),
+  })
+  .strict()
+  .refine(
+    (visual) =>
+      visual.slices.every(
+        (slice, index) =>
+          index === 0 || slice.time > visual.slices[index - 1]!.time,
+      ),
+    "time slices must be strictly increasing",
+  );
+const gridWarpVisual = z
+  .object({
+    kind: z.literal("grid-warp"),
+    rows: z.number().int().min(3).max(20),
+    columns: z.number().int().min(3).max(20),
+    skew: z.number().min(-1).max(1),
+    curvature: z.number().min(-1).max(1),
+    before_label: shortText,
+    after_label: shortText,
+  })
+  .strict();
+const beforeAfterVisual = z
+  .object({
+    kind: z.literal("before-after-overlay"),
+    feature: z.enum(["straight-edge", "grid", "rotor", "signal"]),
+    before_label: shortText,
+    after_label: shortText,
+    divider: z.number().min(0.2).max(0.8).default(0.5),
+  })
+  .strict();
+const evidenceHighlightVisual = z
+  .object({
+    kind: z.literal("evidence-highlight"),
+    source_title: shortText,
+    excerpt: inertText.min(1).max(500),
+    locator: shortText,
+    evidence_id: stableId,
+    highlights: z
+      .array(
+        z
+          .object({
+            start: z.number().int().nonnegative(),
+            end: z.number().int().positive(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(6),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const sorted = [...value.highlights].sort(
+      (left, right) => left.start - right.start,
+    );
+    for (const [index, range] of sorted.entries()) {
+      if (range.end <= range.start || range.end > value.excerpt.length) {
+        context.addIssue({
+          code: "custom",
+          message: "highlight range must be inside excerpt",
+        });
+      }
+      if (index > 0 && range.start < sorted[index - 1]!.end) {
+        context.addIssue({
+          code: "custom",
+          message: "highlight ranges cannot overlap",
+        });
+      }
+    }
+  });
+const processFlowVisual = z
+  .object({
+    ...graphShape,
+    kind: z.literal("process-flow"),
+    active_step_id: stableId.nullable().optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    validateGraph(value, context);
+    if (
+      value.active_step_id != null &&
+      !value.nodes.some((node) => node.id === value.active_step_id)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "active process step must reference a declared node",
+      });
+    }
+  });
+const timelineEvent = z
+  .object({
+    time: z.number().finite(),
+    label: shortText,
+    detail: shortText.nullable().optional(),
+  })
+  .strict();
+const timelineVisual = z
+  .object({
+    kind: z.literal("timeline"),
+    unit: shortText,
+    events: z.array(timelineEvent).min(2).max(10),
+  })
+  .strict()
+  .refine(
+    (visual) =>
+      visual.events.every(
+        (event, index) =>
+          index === 0 || event.time > visual.events[index - 1]!.time,
+      ),
+    "timeline events must be strictly increasing",
+  );
+
+export const typedVisualSchema = z.discriminatedUnion("kind", [
+  kineticVisual,
+  sourceReceiptVisual,
+  mechanismVisual,
+  annotatedChartVisual,
+  parameterVisual,
+  comparisonVisual,
+  limitationVisual,
+  rasterScanVisual,
+  timeSliceVisual,
+  gridWarpVisual,
+  beforeAfterVisual,
+  evidenceHighlightVisual,
+  processFlowVisual,
+  timelineVisual,
+]);
+export const visualSchema = z.union([legacyVisualSchema, typedVisualSchema]);
+
 export const captionSchema = z
   .object({
     index: z.number().int().positive(),
@@ -80,6 +422,47 @@ export const captionSchema = z
   .refine((cue) => cue.end > cue.start, {
     message: "caption end must be after its start",
   });
+
+const primitiveSchema = z.enum([
+  "KineticText",
+  "SourceReceipt",
+  "MechanismDiagram",
+  "ChartReveal",
+  "ParameterSimulation",
+  "Comparison",
+  "LimitationCard",
+  "RasterScan",
+  "TimeSlice",
+  "GridWarp",
+  "BeforeAfterOverlay",
+  "AnnotatedChart",
+  "EvidenceHighlight",
+  "ProcessFlow",
+  "Timeline",
+]);
+const expectedKind: Partial<
+  Record<
+    z.infer<typeof primitiveSchema>,
+    z.infer<typeof typedVisualSchema>["kind"]
+  >
+> = {
+  KineticText: "kinetic-text",
+  SourceReceipt: "source-receipt",
+  MechanismDiagram: "mechanism-diagram",
+  ChartReveal: "annotated-chart",
+  ParameterSimulation: "parameter-simulation",
+  Comparison: "comparison",
+  LimitationCard: "limitation",
+  RasterScan: "raster-scan",
+  TimeSlice: "time-slice",
+  GridWarp: "grid-warp",
+  BeforeAfterOverlay: "before-after-overlay",
+  AnnotatedChart: "annotated-chart",
+  EvidenceHighlight: "evidence-highlight",
+  ProcessFlow: "process-flow",
+  Timeline: "timeline",
+};
+
 export const sceneSchema = z
   .object({
     schema_version: z.literal("1.0.0"),
@@ -88,25 +471,20 @@ export const sceneSchema = z
     start_time: z.number().nonnegative(),
     duration: z.number().positive(),
     transition: z.enum(["cut", "fade", "slide"]),
-    primitive: z.enum([
-      "KineticText",
-      "SourceReceipt",
-      "MechanismDiagram",
-      "ChartReveal",
-      "ParameterSimulation",
-      "Comparison",
-      "LimitationCard",
-    ]),
+    primitive: primitiveSchema,
+    layout: layoutSchema.default("hero"),
+    motion: motionSchema.default("precise"),
     script_segment_ids: z.array(stableId).min(1),
     claim_ids: z.array(stableId).min(1),
-    on_screen_text: inertText,
-    visual,
+    on_screen_text: shortText.min(1),
+    visual: visualSchema,
     asset_ids: z.array(stableId),
     accessibility_description: inertText,
     evidence_label: z
       .enum(["DOCUMENTED", "MEASURED", "SIMULATED", "INFERRED"])
       .nullable()
       .optional(),
+    citation_label: shortText.nullable().optional(),
     theme_overrides: z
       .record(z.string(), color)
       .refine(
@@ -118,7 +496,19 @@ export const sceneSchema = z
     review_status: z.enum(["pending", "approved", "rejected", "stale"]),
     dependency_hash: z.string().regex(/^[0-9a-f]{64}$/),
   })
-  .strict();
+  .strict()
+  .superRefine((scene, context) => {
+    if (!("kind" in scene.visual)) return;
+    const expected = expectedKind[scene.primitive];
+    if (expected && scene.visual.kind !== expected) {
+      context.addIssue({
+        code: "custom",
+        path: ["visual", "kind"],
+        message: `${scene.primitive} requires visual kind ${expected}`,
+      });
+    }
+  });
+
 export const segmentSchema = z
   .object({
     schema_version: z.literal("1.0.0"),
@@ -140,6 +530,67 @@ export const segmentSchema = z
     approval_hash: z.string().nullable().optional(),
   })
   .strict();
+
+const comparisonHero = z
+  .object({
+    kind: z.literal("comparison"),
+    feature: z.enum(["straight-edge", "grid", "rotor", "signal"]),
+    before_label: shortText,
+    after_label: shortText,
+  })
+  .strict();
+const scanlineHero = z
+  .object({
+    kind: z.literal("scanline"),
+    subject: z.enum(["blade", "pole", "grid", "rotor"]),
+    distortion: z.number().min(-1).max(1),
+  })
+  .strict();
+const diagramHero = z
+  .object({ ...graphShape, kind: z.literal("diagram") })
+  .strict()
+  .superRefine(validateGraph);
+export const coverHeroSchema = z.discriminatedUnion("kind", [
+  comparisonHero,
+  scanlineHero,
+  diagramHero,
+]);
+export const coverCandidateSchema = z
+  .object({
+    candidate_id: stableId,
+    headline: inertText.min(1).max(72),
+    subheadline: inertText.max(110).nullable().optional(),
+    layout: z.enum(["split-hero", "diagram-hero", "editorial"]),
+    palette: themeNameSchema,
+    hero: coverHeroSchema,
+    claim_ids: z.array(stableId).min(1).max(6),
+    evidence_ids: z.array(stableId).min(1).max(6),
+    accessibility_description: inertText.min(1).max(500),
+  })
+  .strict();
+export const coverSpecSchema = z
+  .object({
+    schema_version: z.literal("1.0.0"),
+    selected_candidate_id: stableId,
+    candidates: z.array(coverCandidateSchema).min(1).max(3),
+  })
+  .strict()
+  .superRefine((cover, context) => {
+    const ids = cover.candidates.map((candidate) => candidate.candidate_id);
+    if (new Set(ids).size !== ids.length) {
+      context.addIssue({
+        code: "custom",
+        message: "cover candidate IDs must be unique",
+      });
+    }
+    if (!ids.includes(cover.selected_candidate_id)) {
+      context.addIssue({
+        code: "custom",
+        message: "selected cover candidate must exist",
+      });
+    }
+  });
+
 export const projectSchema = z
   .object({
     schemaVersion: z.literal("1.0.0"),
@@ -148,9 +599,11 @@ export const projectSchema = z
     height: z.number().int().positive(),
     fps: z.number().int().positive(),
     watermarked: z.boolean(),
+    theme: themeNameSchema.default("blueprint"),
     segments: z.array(segmentSchema),
     scenes: z.array(sceneSchema).min(1),
     captions: z.array(captionSchema),
+    cover: coverSpecSchema.optional(),
     audioPath: z
       .string()
       .regex(/^[A-Za-z0-9][A-Za-z0-9._/-]*$/)
@@ -160,5 +613,8 @@ export const projectSchema = z
       .optional(),
   })
   .strict();
+
 export type ProjectData = z.infer<typeof projectSchema>;
 export type SceneData = z.infer<typeof sceneSchema>;
+export type TypedVisual = z.infer<typeof typedVisualSchema>;
+export type CoverCandidate = z.infer<typeof coverCandidateSchema>;

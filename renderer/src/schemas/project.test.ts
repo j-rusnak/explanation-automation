@@ -87,4 +87,205 @@ describe("renderer schema", () => {
         },
       }),
     ).toThrow());
+
+  it("accepts allowlisted visual quality presets and typed raster scans", () => {
+    const parsed = sceneSchema.parse({
+      ...scene,
+      primitive: "RasterScan",
+      layout: "split",
+      motion: "calm",
+      citation_label: "Section 2",
+      visual: {
+        kind: "raster-scan",
+        direction: "top-to-bottom",
+        rows: 18,
+        subject: "blade",
+        distortion: 0.62,
+        scan_label: "Rows expose in sequence",
+        before_label: "Geometry",
+        after_label: "Captured frame",
+      },
+    });
+    expect(parsed.visual).toMatchObject({ kind: "raster-scan", rows: 18 });
+    expect(parsed.layout).toBe("split");
+  });
+
+  it("rejects mismatched primitive and typed visual kinds", () =>
+    expect(() =>
+      sceneSchema.parse({
+        ...scene,
+        primitive: "Timeline",
+        visual: {
+          kind: "raster-scan",
+          direction: "top-to-bottom",
+          rows: 18,
+          subject: "blade",
+          distortion: 0.5,
+          scan_label: "Readout",
+          before_label: "Before",
+          after_label: "After",
+        },
+      }),
+    ).toThrow(/requires visual kind timeline/));
+
+  it("rejects out-of-bounds evidence highlights", () =>
+    expect(() =>
+      sceneSchema.parse({
+        ...scene,
+        primitive: "EvidenceHighlight",
+        visual: {
+          kind: "evidence-highlight",
+          source_title: "Original note",
+          excerpt: "Rows expose at different times.",
+          locator: "Mechanism section",
+          evidence_id: "evidence-1",
+          highlights: [{ start: 4, end: 100 }],
+        },
+      }),
+    ).toThrow(/highlight range/));
+
+  it("accepts a selected, evidence-linked cover candidate", () => {
+    const parsed = projectSchema.parse({
+      ...base,
+      scenes: [scene],
+      theme: "technical-editorial",
+      cover: {
+        schema_version: "1.0.0",
+        selected_candidate_id: "cover-1",
+        candidates: [
+          {
+            candidate_id: "cover-1",
+            headline: "Why Straight Blades Look Bent",
+            subheadline: "A sensor reads the frame one row at a time.",
+            layout: "split-hero",
+            palette: "signal-lab",
+            hero: {
+              kind: "comparison",
+              feature: "straight-edge",
+              before_label: "Object",
+              after_label: "Image",
+            },
+            claim_ids: ["claim-1"],
+            evidence_ids: ["evidence-1"],
+            accessibility_description:
+              "A straight blade beside a skewed blade.",
+          },
+        ],
+      },
+    });
+    expect(parsed.cover?.selected_candidate_id).toBe("cover-1");
+    expect(parsed.theme).toBe("technical-editorial");
+  });
+
+  it("rejects a cover selection that does not identify a candidate", () =>
+    expect(() =>
+      projectSchema.parse({
+        ...base,
+        scenes: [scene],
+        cover: {
+          schema_version: "1.0.0",
+          selected_candidate_id: "cover-missing",
+          candidates: [
+            {
+              candidate_id: "cover-1",
+              headline: "A reviewed cover",
+              layout: "editorial",
+              palette: "blueprint",
+              hero: { kind: "scanline", subject: "blade", distortion: 0.5 },
+              claim_ids: ["claim-1"],
+              evidence_ids: ["evidence-1"],
+              accessibility_description: "A scanning line crosses a blade.",
+            },
+          ],
+        },
+      }),
+    ).toThrow(/selected cover candidate/));
+
+  it("rejects executable content nested in typed visuals", () =>
+    expect(() =>
+      sceneSchema.parse({
+        ...scene,
+        primitive: "Timeline",
+        visual: {
+          kind: "timeline",
+          unit: "ms",
+          events: [
+            { time: 0, label: "First row" },
+            { time: 2, label: "<svg onload=steal>" },
+          ],
+        },
+      }),
+    ).toThrow(/active content/));
+
+  it("requires source-receipt highlights to be exact excerpt text", () =>
+    expect(() =>
+      sceneSchema.parse({
+        ...scene,
+        primitive: "SourceReceipt",
+        visual: {
+          kind: "source-receipt",
+          source_title: "Original note",
+          excerpt: "Rows expose at different moments.",
+          locator: "Mechanism section",
+          evidence_id: "evidence-1",
+          highlight: "all at once",
+        },
+      }),
+    ).toThrow(/highlight must occur/));
+
+  it("requires time-based visual events to be strictly increasing", () => {
+    expect(() =>
+      sceneSchema.parse({
+        ...scene,
+        primitive: "Timeline",
+        visual: {
+          kind: "timeline",
+          unit: "ms",
+          events: [
+            { time: 20, label: "Bottom row" },
+            { time: 0, label: "Top row" },
+          ],
+        },
+      }),
+    ).toThrow(/strictly increasing/);
+    expect(() =>
+      sceneSchema.parse({
+        ...scene,
+        primitive: "TimeSlice",
+        visual: {
+          kind: "time-slice",
+          unit: "ms",
+          slices: [
+            { time: 0, label: "First", offset: 0 },
+            { time: 0, label: "Duplicate", offset: 0.2 },
+          ],
+        },
+      }),
+    ).toThrow(/strictly increasing/);
+  });
+
+  it("requires chart annotations to fall inside the plotted range", () =>
+    expect(() =>
+      sceneSchema.parse({
+        ...scene,
+        primitive: "AnnotatedChart",
+        visual: {
+          kind: "annotated-chart",
+          chart_type: "line",
+          x_axis: { label: "time", unit: "ms" },
+          y_axis: { label: "offset", unit: "%" },
+          series: [
+            {
+              label: "example",
+              color: "accent",
+              points: [
+                { x: 0, y: 0 },
+                { x: 20, y: 2 },
+              ],
+            },
+          ],
+          annotations: [{ x: 50, y: 2, label: "outside" }],
+        },
+      }),
+    ).toThrow(/inside the data range/));
 });
