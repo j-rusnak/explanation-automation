@@ -6,11 +6,15 @@ techshort is a local compiler with a hard trust boundary between untrusted sourc
 
 The dependency graph is:
 
-`source → evidence → claims + independent critique → candidate angles + selection → script → storyboard + assets + narration → preview → QA → final approval → final render → export`
+`source → evidence → claims + independent critique → candidate angles + selection → narrative brief + factual locks + beat plan → script + editorial critique → storyboard guidance + typed storyboard + visual critique → cover candidates + selection + assets + narration mode → preview + scene stills → technical and creative QA → final approval → final render → export`
 
 Every content edit receives a content-derived manifest version, archives the previous valid manifest, and invalidates dependent approvals. Angle generation always yields the three typed candidates, and script generation requires a separate hash-bound human selection whose central claims must appear in the script. Render bundles are also immutable by render ID. Approval hashes bind the exact reviewed object to its evidence; final approval additionally binds project configuration, captions, narration and any transcript, provenance receipts, the preview render manifest, QA report, and preview bytes.
 
-The renderer accepts seven primitives: `KineticText`, `SourceReceipt`, `MechanismDiagram`, `ChartReveal`, `ParameterSimulation`, `Comparison`, and `LimitationCard`. `SourceReceipt` content is injected from a resolvable `EvidenceSpan`, not arbitrary scene prose. Preview is 360×640 with an `UNREVIEWED` watermark. Final output is 1080×1920 at 30 fps; the renderer itself refuses an unwatermarked render unless every current gate and final-review hash passes.
+The renderer accepts fifteen allowlisted primitives: `KineticText`, `SourceReceipt`, `MechanismDiagram`, `ChartReveal`, `ParameterSimulation`, `Comparison`, `LimitationCard`, `RasterScan`, `TimeSlice`, `GridWarp`, `BeforeAfterOverlay`, `AnnotatedChart`, `EvidenceHighlight`, `ProcessFlow`, and `Timeline`. Each primitive has a strict typed visual contract; project data cannot carry executable markup or code. Evidence visuals are checked against resolvable `EvidenceSpan` bytes rather than trusted as scene prose.
+
+Three centralized themes, six layout presets, and three motion presets parameterize those primitives without generating runtime code. The selected evidence-linked cover is rendered by its own composition. Preview video and cover are 360×640 with an `UNREVIEWED` watermark. Each render also produces a contact sheet and one hash-tracked still per scene. Final output and cover are 1080×1920 at 30 fps; an unwatermarked render remains impossible until every current gate and final-review hash passes.
+
+Creative QA is a deterministic advisory layer over the hard provenance, rights, staleness, and media gates. It evaluates a five-case golden corpus plus the active cover, storyboard, script, and captions. Structural cover selection, evidence links, human-readable citations, and scene-still completeness are hard checks; subjective polish still requires the final human watch-through.
 
 Persistence is deliberately filesystem-only. There is no database, authentication, cloud service, queue, analytics, social publishing, or custom-scene-code runtime.
 

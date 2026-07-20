@@ -8,6 +8,8 @@
 - Upstream changes invalidate dependent approvals and renders. Review history is append-only.
 - Writes to manifests are schema-validated and atomic. Project paths must remain under `projects/<slug>`.
 - Preview video is watermarked until the final gate passes. Final export is never watermarked.
+- Cover selection is part of storyboard review. A current cover, contact sheet, and representative still for every scene are required for final media QA.
+- Narration is required by default. Silent output is valid only through the explicit `silent-reviewed` mode and final human review.
 - Normal tests are offline; model calls are opt-in only.
 
 ## Commands
@@ -19,4 +21,3 @@
 - Reviewer: `.venv\\Scripts\\streamlit.exe run reviewer/streamlit_app.py`
 
 Do not commit private sources, narration, renders, exports, secrets, dependency directories, or generated project data.
-

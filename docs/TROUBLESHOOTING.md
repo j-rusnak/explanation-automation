@@ -8,6 +8,9 @@
 - **Codex provider unavailable:** install/authenticate the current Codex CLI or use `--provider fixture` / `--provider manual`. No API key is required for the offline workflow.
 - **Codex returns schema errors:** update the CLI, run `codex login status`, and retry once. techshort permits only one bounded schema-repair attempt.
 - **Narration import is rejected:** confirm FFmpeg/FFprobe is installed and the file contains a valid positive-duration audio stream; a renamed or malformed file is not accepted.
+- **Preview says narration is required:** import reviewed narration, or explicitly choose caption-led output with `techshort audio mode <slug> silent-reviewed`. Missing audio never switches modes automatically.
+- **Storyboard approval says a cover is missing:** run `techshort cover generate <slug>`, inspect all three directions, then run `techshort cover select <slug> <candidate-id>` before approving the storyboard.
+- **Creative QA reports a warning:** inspect `renders/<preview-or-final>/creative-quality.json` and the scene stills beside each storyboard scene. Creative QA is advisory, but hard cover/provenance/media failures still block export.
 - **Permissively licensed narration is rejected:** provide concrete creator and license metadata (plus URL/attribution when required), or correct the asset in the rights reviewer before approval.
 - **Export blocked:** run `techshort status <slug> --json`, repair stale/failed artifacts, rerun QA, watch the preview, then approve the final gate.
 - **Narration differs from captions:** correct the approved script or re-record narration, import it, regenerate captions, and review again. Audio changes invalidate final approval.
