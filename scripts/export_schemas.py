@@ -2,12 +2,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from techshort.domain.creative import (
+    BeatPlan,
+    EditorialCritique,
+    NarrativeBrief,
+    StoryboardGuidance,
+    VisualCritique,
+)
 from techshort.domain.models import (
     AngleSelection,
     AnglesManifest,
     AssetManifest,
     ClaimCritiqueReport,
     ClaimsManifest,
+    CoverManifest,
+    CoverSelection,
     EvidenceManifest,
     ProjectManifest,
     QAReport,
@@ -19,6 +28,7 @@ from techshort.domain.models import (
     StoryboardManifest,
 )
 from techshort.domain.storage import atomic_write_json
+from techshort.qa.creative import CreativeQualityInput, CreativeQualityResult
 
 MODELS = (
     ProjectManifest,
@@ -31,6 +41,15 @@ MODELS = (
     AngleSelection,
     ScriptManifest,
     StoryboardManifest,
+    CoverManifest,
+    CoverSelection,
+    NarrativeBrief,
+    BeatPlan,
+    EditorialCritique,
+    StoryboardGuidance,
+    VisualCritique,
+    CreativeQualityInput,
+    CreativeQualityResult,
     AssetManifest,
     ReviewLog,
     RenderManifest,
