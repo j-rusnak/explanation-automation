@@ -9,6 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from techshort.alignment.captions import CaptionCue
+from techshort.domain.creative import RetentionPlan
 from techshort.domain.models import (
     AnnotatedChartVisual,
     ScriptManifest,
@@ -17,6 +18,26 @@ from techshort.domain.models import (
 )
 
 CREATIVE_QA_SCHEMA_VERSION: Literal["1.0.0"] = "1.0.0"
+
+PacingProfile = Literal["measured", "brisk", "high-retention"]
+EngagementRole = Literal[
+    "cold-open",
+    "setup",
+    "mechanism",
+    "evidence",
+    "rehook",
+    "payoff",
+    "limitation",
+    "resolution",
+]
+MotionIntensity = Literal["calm", "precise", "energetic"]
+RetentionEventKind = Literal[
+    "re-hook",
+    "pattern-interrupt",
+    "evidence-payoff",
+    "limitation-reframe",
+    "final-payoff",
+]
 
 _INTERNAL_ID = re.compile(
     r"\b(?:claim|scene|segment|asset|render|review|script|storyboard)"
@@ -36,6 +57,29 @@ _PLACEHOLDER_FOCALS = {
     "placeholder",
     "text",
     "text-only",
+}
+_MANIPULATIVE_HOOK_PATTERNS = (
+    re.compile(r"\byou (?:will not|won't) believe\b", re.IGNORECASE),
+    re.compile(r"\b(?:wait|watch) (?:until|for|to) (?:the )?end\b", re.IGNORECASE),
+    re.compile(r"\bwhat happens next\b", re.IGNORECASE),
+    re.compile(r"\bthey do(?: not|n't) want you to know\b", re.IGNORECASE),
+    re.compile(r"\bthis proves?(?: that)?\b", re.IGNORECASE),
+    re.compile(r"\bguaranteed(?: to)?\b", re.IGNORECASE),
+    re.compile(r"\b(?:shocking|mind[- ]blowing) secret\b", re.IGNORECASE),
+)
+_FLASH_CUE = re.compile(r"\b(?:flash|strobe|blink|flicker)\b", re.IGNORECASE)
+_CADENCE_ROLE_TO_ENGAGEMENT: dict[str, EngagementRole] = {
+    "open": "cold-open",
+    "develop": "mechanism",
+    "re-hook": "rehook",
+    "evidence-payoff": "payoff",
+    "limitation": "limitation",
+    "resolve": "resolution",
+}
+_CADENCE_ENERGY_TO_MOTION: dict[str, MotionIntensity] = {
+    "low": "calm",
+    "medium": "precise",
+    "high": "energetic",
 }
 
 
@@ -71,6 +115,9 @@ class CreativeSceneInput(_StrictQualityModel):
     y_axis_label: str | None = Field(default=None, max_length=120)
     units: str | None = Field(default=None, max_length=60)
     motion_beats: list[str] = Field(default_factory=list, max_length=20)
+    engagement_role: EngagementRole | None = None
+    motion_intensity: MotionIntensity = "precise"
+    flash_events_per_second: float = Field(default=0, ge=0, le=30)
     color_encodings: dict[str, str] = Field(default_factory=dict)
     non_color_cues: list[str] = Field(default_factory=list, max_length=20)
 
@@ -95,15 +142,47 @@ class CreativeCaptionInput(_StrictQualityModel):
         return self
 
 
+class CreativeRetentionEventInput(_StrictQualityModel):
+    event_id: str
+    beat_id: str
+    scheduled_at_seconds: float = Field(ge=0, le=300)
+    event_kind: RetentionEventKind
+
+
+class CreativeRetentionInput(_StrictQualityModel):
+    plan_version_id: str
+    timing_scale: float = Field(default=1, gt=0, le=10)
+    cold_open_duration_seconds: float = Field(gt=0, le=30)
+    cold_open_text: str = Field(min_length=1, max_length=1000)
+    truth_up_front: bool
+    deceptive_withholding: bool
+    total_duration_seconds: float = Field(gt=0, le=300)
+    max_attention_gap_seconds: float = Field(gt=0, le=30)
+    events: list[CreativeRetentionEventInput] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def events_are_ordered_and_bounded(self) -> CreativeRetentionInput:
+        times = [event.scheduled_at_seconds for event in self.events]
+        if times != sorted(times):
+            raise ValueError("creative retention events must be ordered")
+        if times[-1] > self.total_duration_seconds:
+            raise ValueError("creative retention events must fit inside runtime")
+        if len({event.event_id for event in self.events}) != len(self.events):
+            raise ValueError("creative retention event IDs must be unique")
+        return self
+
+
 class CreativeQualityInput(_StrictQualityModel):
     schema_version: Literal["1.0.0"] = CREATIVE_QA_SCHEMA_VERSION
     case_id: str
     topic_kind: Literal["mechanism", "chart", "comparison", "timeline", "architecture", "other"]
     storyboard_version_id: str
     script_version_id: str
+    pacing: PacingProfile = "brisk"
     cover: CreativeCoverInput
     scenes: list[CreativeSceneInput] = Field(min_length=1, max_length=120)
     captions: list[CreativeCaptionInput] = Field(default_factory=list, max_length=500)
+    retention: CreativeRetentionInput | None = None
 
     @model_validator(mode="after")
     def object_ids_are_unique(self) -> CreativeQualityInput:
@@ -113,6 +192,10 @@ class CreativeQualityInput(_StrictQualityModel):
             raise ValueError("creative QA scene IDs must be unique")
         if len(cue_ids) != len(set(cue_ids)):
             raise ValueError("creative QA caption cue IDs must be unique")
+        singular_roles = ("cold-open", "payoff")
+        for role in singular_roles:
+            if sum(scene.engagement_role == role for scene in self.scenes) > 1:
+                raise ValueError(f"creative QA may declare at most one {role} scene")
         return self
 
 
@@ -126,6 +209,7 @@ QualityCategory = Literal[
     "provenance",
     "captions",
     "accessibility",
+    "engagement",
 ]
 
 
@@ -475,6 +559,506 @@ def _motion_check(snapshot: CreativeQualityInput) -> CreativeQualityCheck:
     )
 
 
+def _scene_starts(snapshot: CreativeQualityInput) -> list[float]:
+    starts: list[float] = []
+    elapsed = 0.0
+    for scene in snapshot.scenes:
+        starts.append(elapsed)
+        elapsed += scene.duration_seconds
+    return starts
+
+
+def _cold_open_check(snapshot: CreativeQualityInput) -> CreativeQualityCheck:
+    scene = snapshot.scenes[0]
+    beat_count = len(set(scene.motion_beats))
+    planned_duration = (
+        snapshot.retention.cold_open_duration_seconds
+        if snapshot.retention is not None
+        else scene.duration_seconds
+    )
+    duration = max(scene.duration_seconds, planned_duration)
+    first_beat = (
+        snapshot.retention.events[0].scheduled_at_seconds
+        if snapshot.retention is not None
+        else duration / max(1, beat_count)
+    )
+    if duration > 7 or first_beat > 3.5:
+        status: QualityStatus = "failure"
+    elif duration > 5 or first_beat > 2:
+        status = "warning"
+    else:
+        status = "pass"
+    return _check(
+        "cold-open-timing",
+        "engagement",
+        status,
+        (
+            f"Cold open plan/scene duration is {planned_duration:g}/{scene.duration_seconds:g}s; "
+            "its first declared visual beat is "
+            f"{'scheduled' if snapshot.retention is not None else 'estimated'} at "
+            f"{first_beat:.1f}s"
+        ),
+        remediation=(
+            "Trim the cold open to five seconds or less and schedule a concrete typed visual "
+            "event within the first two seconds."
+            if status != "pass"
+            else None
+        ),
+        object_ids=[scene.scene_id] if status != "pass" else [],
+        details={
+            "duration_seconds": f"{duration:.2f}",
+            "planned_duration_seconds": f"{planned_duration:.2f}",
+            "scene_duration_seconds": f"{scene.duration_seconds:.2f}",
+            "declared_motion_beats": str(beat_count),
+            "first_visual_beat_seconds": f"{first_beat:.2f}",
+            "timing_source": "retention-plan" if snapshot.retention is not None else "derived",
+            "timing_scale": (
+                f"{snapshot.retention.timing_scale:.3f}"
+                if snapshot.retention is not None
+                else "1.000"
+            ),
+        },
+    )
+
+
+def _beat_cadence_check(snapshot: CreativeQualityInput) -> CreativeQualityCheck:
+    warning_limit, failure_limit = {
+        "measured": (5.0, 7.0),
+        "brisk": (4.0, 6.0),
+        "high-retention": (5.0, 5.0),
+    }[snapshot.pacing]
+    warnings: list[str] = []
+    failures: list[str] = []
+    maximum_interval = 0.0
+    runtime_delta = 0.0
+    if snapshot.retention is not None:
+        scene_runtime = sum(scene.duration_seconds for scene in snapshot.scenes)
+        runtime_delta = abs(snapshot.retention.total_duration_seconds - scene_runtime)
+        if runtime_delta > 1:
+            failures.append(snapshot.retention.plan_version_id)
+        elif runtime_delta > 0.25:
+            warnings.append(snapshot.retention.plan_version_id)
+        failure_limit = min(failure_limit, snapshot.retention.max_attention_gap_seconds)
+        previous_time = 0.0
+        for event in snapshot.retention.events:
+            interval = event.scheduled_at_seconds - previous_time
+            maximum_interval = max(maximum_interval, interval)
+            if interval > failure_limit:
+                failures.append(event.event_id)
+            elif interval > warning_limit:
+                warnings.append(event.event_id)
+            previous_time = event.scheduled_at_seconds
+        final_interval = snapshot.retention.total_duration_seconds - previous_time
+        maximum_interval = max(maximum_interval, final_interval)
+        if final_interval > failure_limit:
+            failures.append(snapshot.scenes[-1].scene_id)
+        elif final_interval > warning_limit:
+            warnings.append(snapshot.scenes[-1].scene_id)
+    else:
+        for scene in snapshot.scenes[1:]:
+            interval = scene.duration_seconds / max(1, len(set(scene.motion_beats)))
+            maximum_interval = max(maximum_interval, interval)
+            if interval > failure_limit:
+                failures.append(scene.scene_id)
+            elif interval > warning_limit:
+                warnings.append(scene.scene_id)
+    status: QualityStatus = "failure" if failures else "warning" if warnings else "pass"
+    offenders = failures + warnings
+    return _check(
+        "visual-beat-cadence",
+        "engagement",
+        status,
+        (
+            f"Maximum estimated interval between declared visual beats is "
+            f"{maximum_interval:.1f}s for {snapshot.pacing} pacing"
+        ),
+        remediation=(
+            "Add a purposeful reveal, transform, comparison, or emphasis beat; do not add "
+            "motion that competes with comprehension."
+            if offenders
+            else None
+        ),
+        object_ids=offenders,
+        details={
+            "warning_limit_seconds": f"{warning_limit:.1f}",
+            "failure_limit_seconds": f"{failure_limit:.1f}",
+            "maximum_interval_seconds": f"{maximum_interval:.2f}",
+            "plan_scene_runtime_delta_seconds": f"{runtime_delta:.2f}",
+            "timing_source": "retention-plan" if snapshot.retention is not None else "derived",
+            "timing_scale": (
+                f"{snapshot.retention.timing_scale:.3f}"
+                if snapshot.retention is not None
+                else "1.000"
+            ),
+        },
+    )
+
+
+def _dead_air_static_check(snapshot: CreativeQualityInput) -> CreativeQualityCheck:
+    warning_ids: list[str] = []
+    failure_ids: list[str] = []
+    longest_caption_gap = 0.0
+    previous_end = 0.0
+    for cue in sorted(snapshot.captions, key=lambda item: (item.start_seconds, item.end_seconds)):
+        gap = max(0.0, cue.start_seconds - previous_end)
+        longest_caption_gap = max(longest_caption_gap, gap)
+        if gap > 3:
+            failure_ids.append(cue.cue_id)
+        elif gap > 1.5:
+            warning_ids.append(cue.cue_id)
+        previous_end = max(previous_end, cue.end_seconds)
+    starts = _scene_starts(snapshot)
+    for scene, start in zip(snapshot.scenes, starts, strict=True):
+        beat_count = len(set(scene.motion_beats))
+        if beat_count < 2 and scene.duration_seconds > 7:
+            failure_ids.append(scene.scene_id)
+        elif beat_count < 2 and scene.duration_seconds > 4:
+            warning_ids.append(scene.scene_id)
+        end = start + scene.duration_seconds
+        caption_overlap = any(
+            cue.start_seconds < end and cue.end_seconds > start for cue in snapshot.captions
+        )
+        if (
+            not scene.narration.strip()
+            and not caption_overlap
+            and beat_count < 2
+            and scene.duration_seconds >= 3
+        ):
+            failure_ids.append(scene.scene_id)
+
+    failure_ids = list(dict.fromkeys(failure_ids))
+    warning_ids = [item for item in dict.fromkeys(warning_ids) if item not in failure_ids]
+    status: QualityStatus = "failure" if failure_ids else "warning" if warning_ids else "pass"
+    offenders = failure_ids + warning_ids
+    return _check(
+        "dead-air-static-stretches",
+        "engagement",
+        status,
+        (
+            f"Longest internal caption gap is {longest_caption_gap:.1f}s; "
+            f"{len(offenders)} static or silent stretch(es) need attention"
+            if offenders
+            else "No long caption gaps or under-directed static stretches were detected"
+        ),
+        remediation=(
+            "Close unexplained caption gaps or add a purposeful visual beat. Preserve quiet "
+            "holds when they support comprehension."
+            if offenders
+            else None
+        ),
+        object_ids=offenders,
+        details={"longest_internal_caption_gap_seconds": f"{longest_caption_gap:.2f}"},
+    )
+
+
+def _rehook_payoff_check(snapshot: CreativeQualityInput) -> CreativeQualityCheck:
+    if snapshot.retention is not None:
+        total_duration = snapshot.retention.total_duration_seconds
+        rehooks = [
+            event for event in snapshot.retention.events if event.event_kind == "re-hook"
+        ]
+        final_payoffs = [
+            event for event in snapshot.retention.events if event.event_kind == "final-payoff"
+        ]
+        evidence_payoffs = [
+            event for event in snapshot.retention.events if event.event_kind == "evidence-payoff"
+        ]
+        valid_plan_rehook = next(
+            (
+                event
+                for event in rehooks
+                if 0.35 <= event.scheduled_at_seconds / total_duration <= 0.65
+            ),
+            None,
+        )
+        final_payoff = final_payoffs[-1] if final_payoffs else None
+        final_position = (
+            final_payoff.scheduled_at_seconds / total_duration if final_payoff else None
+        )
+        valid_final = final_position is not None and 0.75 <= final_position <= 1.0
+        plan_status: QualityStatus = (
+            "pass"
+            if valid_plan_rehook is not None and valid_final and evidence_payoffs
+            else "warning"
+        )
+        plan_offenders: list[str] = []
+        if valid_plan_rehook is None:
+            plan_offenders.extend(event.event_id for event in rehooks)
+        if not valid_final:
+            plan_offenders.extend(event.event_id for event in final_payoffs)
+        if not evidence_payoffs or not plan_offenders and plan_status != "pass":
+            plan_offenders.append(snapshot.retention.plan_version_id)
+        plan_offenders = list(dict.fromkeys(plan_offenders))
+        return _check(
+            "rehook-payoff-placement",
+            "engagement",
+            plan_status,
+            (
+                "Retention plan schedules a midpoint re-hook plus evidence and final payoffs"
+                if plan_status == "pass"
+                else "Retention plan is missing a midpoint re-hook, evidence payoff, or final payoff"
+            ),
+            remediation=(
+                "Schedule a truthful re-hook at 35–65%, an evidence payoff, and the promised "
+                "final payoff after 75% without withholding essential context."
+                if plan_status != "pass"
+                else None
+            ),
+            object_ids=plan_offenders,
+            details={
+                "rehook_runtime_position": (
+                    f"{valid_plan_rehook.scheduled_at_seconds / total_duration:.3f}"
+                    if valid_plan_rehook is not None
+                    else "missing"
+                ),
+                "final_payoff_runtime_position": (
+                    f"{final_position:.3f}" if final_position is not None else "missing"
+                ),
+                "evidence_payoff_count": str(len(evidence_payoffs)),
+                "timing_source": "retention-plan",
+            },
+        )
+
+    total_duration = sum(scene.duration_seconds for scene in snapshot.scenes)
+    starts = _scene_starts(snapshot)
+
+    def find_role(role: EngagementRole) -> tuple[CreativeSceneInput, float] | None:
+        explicit = [
+            (scene, start)
+            for scene, start in zip(snapshot.scenes, starts, strict=True)
+            if scene.engagement_role == role
+        ]
+        if explicit:
+            return explicit[0]
+        tokens = (
+            ("question", "contrast", "switch", "surprise", "highlight", "reveal")
+            if role == "rehook"
+            else ("payoff", "result", "resolve", "assemble", "complete", "reveal")
+        )
+        minimum = 0.20 if role == "rehook" else 0.45
+        for scene, start in zip(snapshot.scenes[1:], starts[1:], strict=True):
+            position = start / total_duration if total_duration else 0.0
+            beats = " ".join(scene.motion_beats).casefold()
+            if position >= minimum and any(token in beats for token in tokens):
+                return scene, start
+        return None
+
+    rehook = find_role("rehook")
+    payoff = find_role("payoff")
+    rehook_position = rehook[1] / total_duration if rehook and total_duration else None
+    payoff_position = payoff[1] / total_duration if payoff and total_duration else None
+    valid_rehook = rehook_position is not None and 0.20 <= rehook_position <= 0.65
+    valid_payoff = payoff_position is not None and 0.45 <= payoff_position <= 0.90
+    status: QualityStatus = "pass" if valid_rehook and valid_payoff else "warning"
+    offenders = [
+        item[0].scene_id
+        for item, valid in ((rehook, valid_rehook), (payoff, valid_payoff))
+        if item is not None and not valid
+    ]
+    return _check(
+        "rehook-payoff-placement",
+        "engagement",
+        status,
+        (
+            "Re-hook and payoff land inside the advisory runtime windows"
+            if status == "pass"
+            else "Re-hook or payoff is missing or outside its advisory runtime window"
+        ),
+        remediation=(
+            "Place one truthful visual re-hook at 20–65% of runtime and resolve the central "
+            "promise at 45–90%; do not withhold essential context as bait."
+            if status != "pass"
+            else None
+        ),
+        object_ids=offenders,
+        details={
+            "rehook_runtime_position": (
+                f"{rehook_position:.3f}" if rehook_position is not None else "missing"
+            ),
+            "payoff_runtime_position": (
+                f"{payoff_position:.3f}" if payoff_position is not None else "missing"
+            ),
+        },
+    )
+
+
+def _hook_integrity_check(snapshot: CreativeQualityInput) -> CreativeQualityCheck:
+    first = snapshot.scenes[0]
+    retention_hook = snapshot.retention.cold_open_text if snapshot.retention is not None else ""
+    hook_text = " ".join(
+        filter(
+            None,
+            (
+                snapshot.cover.headline,
+                snapshot.cover.subtitle or "",
+                retention_hook,
+                first.title,
+                first.on_screen_text,
+                first.narration,
+            ),
+        )
+    )
+    matched = [
+        pattern.pattern for pattern in _MANIPULATIVE_HOOK_PATTERNS if pattern.search(hook_text)
+    ]
+    concrete_words = len(_words(f"{first.on_screen_text} {first.narration}"))
+    missing_provenance = first.factual and (not first.citation or not first.evidence_label)
+    dishonest_plan = bool(
+        snapshot.retention is not None
+        and (
+            not snapshot.retention.truth_up_front
+            or snapshot.retention.deceptive_withholding
+        )
+    )
+    if matched or dishonest_plan:
+        status: QualityStatus = "failure"
+    elif concrete_words < 6 or missing_provenance:
+        status = "warning"
+    else:
+        status = "pass"
+    return _check(
+        "hook-integrity",
+        "engagement",
+        status,
+        (
+            f"Hook contains {len(matched)} manipulative or proof-overclaim pattern(s)"
+            if matched
+            else "Retention plan declares deceptive withholding or hides the truth up front"
+            if dishonest_plan
+            else "Hook makes a concrete, evidence-labeled promise without engagement bait"
+            if status == "pass"
+            else "Hook needs a more concrete or visibly sourced promise"
+        ),
+        remediation=(
+            "State the real mechanism or result immediately, remove bait and proof language, "
+            "and preserve uncertainty and scope."
+            if status != "pass"
+            else None
+        ),
+        object_ids=[snapshot.cover.cover_id, first.scene_id] if status != "pass" else [],
+        details={
+            "matched_pattern_count": str(len(matched)),
+            "hook_words": str(concrete_words),
+            "factual_hook_missing_provenance": str(missing_provenance).lower(),
+            "truth_up_front": (
+                str(snapshot.retention.truth_up_front).lower()
+                if snapshot.retention is not None
+                else "not-declared"
+            ),
+            "deceptive_withholding": (
+                str(snapshot.retention.deceptive_withholding).lower()
+                if snapshot.retention is not None
+                else "not-declared"
+            ),
+        },
+    )
+
+
+def _caption_timing_accessibility_check(
+    snapshot: CreativeQualityInput,
+) -> CreativeQualityCheck:
+    if not snapshot.captions:
+        return _check(
+            "caption-timing-accessibility",
+            "captions",
+            "warning",
+            "No caption cues are available for timing review",
+            remediation="Generate reviewed caption cues before preview approval.",
+        )
+    warnings: list[str] = []
+    failures: list[str] = []
+    shortest = math.inf
+    longest = 0.0
+    previous: CreativeCaptionInput | None = None
+    for cue in sorted(snapshot.captions, key=lambda item: (item.start_seconds, item.end_seconds)):
+        duration = cue.end_seconds - cue.start_seconds
+        shortest = min(shortest, duration)
+        longest = max(longest, duration)
+        if duration < 0.5 or duration > 10:
+            failures.append(cue.cue_id)
+        elif duration < 0.8 or duration > 7:
+            warnings.append(cue.cue_id)
+        if previous is not None and cue.start_seconds < previous.end_seconds:
+            failures.extend([previous.cue_id, cue.cue_id])
+        if previous is None or cue.end_seconds > previous.end_seconds:
+            previous = cue
+    failures = list(dict.fromkeys(failures))
+    warnings = [item for item in dict.fromkeys(warnings) if item not in failures]
+    status: QualityStatus = "failure" if failures else "warning" if warnings else "pass"
+    offenders = failures + warnings
+    return _check(
+        "caption-timing-accessibility",
+        "captions",
+        status,
+        (
+            f"Caption cues range from {shortest:.1f}s to {longest:.1f}s"
+            if status == "pass"
+            else f"{len(offenders)} caption cue(s) are too brief, too long, or overlap"
+        ),
+        remediation=(
+            "Keep cues between 0.8 and 7 seconds, remove overlaps, then recheck reading speed "
+            "and line breaks."
+            if offenders
+            else None
+        ),
+        object_ids=offenders,
+        details={
+            "shortest_cue_seconds": f"{shortest:.2f}",
+            "longest_cue_seconds": f"{longest:.2f}",
+        },
+    )
+
+
+def _motion_intensity_flashing_check(snapshot: CreativeQualityInput) -> CreativeQualityCheck:
+    warnings: list[str] = []
+    failures: list[str] = []
+    maximum_flash_rate = 0.0
+    intensities = [scene.motion_intensity for scene in snapshot.scenes]
+    energetic_run = _longest_run(intensities)
+    for scene in snapshot.scenes:
+        unique_beats = set(scene.motion_beats)
+        cue_count = sum(bool(_FLASH_CUE.search(beat)) for beat in unique_beats)
+        inferred_rate = cue_count / scene.duration_seconds
+        flash_rate = max(scene.flash_events_per_second, inferred_rate)
+        maximum_flash_rate = max(maximum_flash_rate, flash_rate)
+        beat_interval = scene.duration_seconds / max(1, len(unique_beats))
+        explicit_strobe = any("strobe" in beat.casefold() for beat in scene.motion_beats)
+        if flash_rate > 3:
+            failures.append(scene.scene_id)
+        elif flash_rate > 1 or explicit_strobe:
+            warnings.append(scene.scene_id)
+        elif scene.motion_intensity == "energetic" and beat_interval < 1:
+            warnings.append(scene.scene_id)
+    if energetic_run >= 3:
+        warnings.extend(
+            scene.scene_id for scene in snapshot.scenes if scene.motion_intensity == "energetic"
+        )
+    failures = list(dict.fromkeys(failures))
+    warnings = [item for item in dict.fromkeys(warnings) if item not in failures]
+    status: QualityStatus = "failure" if failures else "warning" if warnings else "pass"
+    offenders = failures + warnings
+    return _check(
+        "motion-intensity-flashing",
+        "accessibility",
+        status,
+        (
+            f"Maximum declared or inferred flashing rate is {maximum_flash_rate:.2f}/s; "
+            f"longest energetic run is {energetic_run} scene(s)"
+        ),
+        remediation=(
+            "Remove strobe or rapid flash cues, break up sustained energetic motion, and "
+            "verify rendered luminance changes before approval."
+            if offenders
+            else None
+        ),
+        object_ids=offenders,
+        details={
+            "maximum_flash_events_per_second": f"{maximum_flash_rate:.3f}",
+            "longest_energetic_scene_run": str(energetic_run),
+        },
+    )
+
+
 def _chart_check(snapshot: CreativeQualityInput) -> CreativeQualityCheck:
     charts = [scene for scene in snapshot.scenes if "chart" in scene.primitive.casefold()]
     offenders: list[str] = []
@@ -689,6 +1273,12 @@ def evaluate_creative_quality(snapshot: CreativeQualityInput) -> CreativeQuality
 
     checks = [
         *_cover_checks(snapshot),
+        _hook_integrity_check(snapshot),
+        _cold_open_check(snapshot),
+        _rehook_payoff_check(snapshot),
+        _beat_cadence_check(snapshot),
+        _dead_air_static_check(snapshot),
+        _motion_intensity_flashing_check(snapshot),
         _internal_id_check(snapshot),
         _duplication_check(snapshot),
         _text_density_check(snapshot),
@@ -698,6 +1288,7 @@ def evaluate_creative_quality(snapshot: CreativeQualityInput) -> CreativeQuality
         _chart_check(snapshot),
         _citation_check(snapshot),
         _caption_speed_check(snapshot),
+        _caption_timing_accessibility_check(snapshot),
         _caption_line_check(snapshot),
         _caption_orphan_check(snapshot),
         _color_differentiation_check(snapshot),
@@ -727,6 +1318,8 @@ def creative_input_from_manifests(
     topic_kind: Literal[
         "mechanism", "chart", "comparison", "timeline", "architecture", "other"
     ] = "other",
+    pacing: PacingProfile = "brisk",
+    retention_plan: RetentionPlan | None = None,
 ) -> CreativeQualityInput:
     """Normalize the current manifests into the creative-QA contract.
 
@@ -736,13 +1329,98 @@ def creative_input_from_manifests(
     """
 
     segments = {segment.segment_id: segment for segment in script.segments}
+    total_duration = max(
+        (scene.start_time + scene.duration for scene in storyboard.scenes), default=0.0
+    )
+    caption_duration = max((cue.end for cue in captions), default=0.0)
+    render_duration = caption_duration or total_duration
+    scene_timing_scale = render_duration / total_duration if total_duration else 1.0
+    retention: CreativeRetentionInput | None = None
+    if retention_plan is not None:
+        if retention_plan.script_version_id != script.version_id:
+            raise ValueError("retention plan does not bind the current script")
+        retention_timing_scale = (
+            render_duration / retention_plan.cadence.total_duration_seconds
+            if render_duration
+            else 1.0
+        )
+        retention = CreativeRetentionInput(
+            plan_version_id=retention_plan.version_id,
+            timing_scale=retention_timing_scale,
+            cold_open_duration_seconds=(
+                retention_plan.cold_open.duration_seconds * retention_timing_scale
+            ),
+            cold_open_text=retention_plan.cold_open.text,
+            truth_up_front=retention_plan.cold_open.truth_up_front,
+            deceptive_withholding=retention_plan.cold_open.deceptive_withholding,
+            total_duration_seconds=(
+                retention_plan.cadence.total_duration_seconds * retention_timing_scale
+            ),
+            max_attention_gap_seconds=retention_plan.cadence.max_attention_gap_seconds,
+            events=[
+                CreativeRetentionEventInput(
+                    event_id=event.event_id,
+                    beat_id=event.beat_id,
+                    scheduled_at_seconds=event.scheduled_at_seconds * retention_timing_scale,
+                    event_kind=event.event_kind,
+                )
+                for event in retention_plan.attention_events
+            ],
+        )
+    cadence_beats = (
+        retention_plan.cadence.beats
+        if retention_plan is not None
+        and len(retention_plan.cadence.beats) == len(storyboard.scenes)
+        else []
+    )
+    retention_events_by_beat: dict[str, list[str]] = {}
+    if retention_plan is not None:
+        for event in retention_plan.attention_events:
+            retention_events_by_beat.setdefault(event.beat_id, []).append(
+                f"{event.event_kind}:{event.device}"
+            )
+    rehook_index = next(
+        (
+            index
+            for index, scene in enumerate(storyboard.scenes[1:], start=1)
+            if total_duration and scene.start_time / total_duration >= 0.20
+        ),
+        None,
+    )
+    payoff_index = next(
+        (
+            index
+            for index, scene in enumerate(storyboard.scenes[1:], start=1)
+            if total_duration and scene.start_time / total_duration >= 0.55
+        ),
+        None,
+    )
     scenes: list[CreativeSceneInput] = []
-    for scene in storyboard.scenes:
-        narration = " ".join(
-            segments[segment_id].text
+    for index, scene in enumerate(storyboard.scenes):
+        linked_segments = [
+            segments[segment_id]
             for segment_id in scene.script_segment_ids
             if segment_id in segments
-        )
+        ]
+        narration = " ".join(segment.text for segment in linked_segments)
+        cadence_beat = cadence_beats[index] if cadence_beats else None
+        engagement_role: EngagementRole
+        if cadence_beat is not None:
+            engagement_role = _CADENCE_ROLE_TO_ENGAGEMENT[cadence_beat.cadence_role]
+        elif index == 0:
+            engagement_role = "cold-open"
+        elif any(segment.segment_type == "limitation" for segment in linked_segments):
+            engagement_role = "limitation"
+        elif index == rehook_index:
+            engagement_role = "rehook"
+        elif index == payoff_index:
+            engagement_role = "payoff"
+        elif scene.primitive in {"SourceReceipt", "EvidenceHighlight", "AnnotatedChart"}:
+            engagement_role = "evidence"
+        elif index == len(storyboard.scenes) - 1:
+            engagement_role = "resolution"
+        else:
+            engagement_role = "mechanism"
         visual = scene.visual
         if isinstance(visual, VisualSpec):
             title = visual.title
@@ -784,12 +1462,21 @@ def creative_input_from_manifests(
         non_color_cues = ["direct-labels"] if labels else []
         if isinstance(visual, AnnotatedChartVisual) and visual.series:
             non_color_cues.append("series-labels")
+        motion_beats = ["scene-enter"]
+        if cadence_beat is not None:
+            motion_beats.extend(retention_events_by_beat.get(cadence_beat.beat_id, []))
+        motion_beats.append(f"{scene.motion}-content-reveal")
+        motion_intensity = (
+            _CADENCE_ENERGY_TO_MOTION[cadence_beat.energy]
+            if cadence_beat is not None
+            else scene.motion
+        )
         scenes.append(
             CreativeSceneInput(
                 scene_id=scene.scene_id,
                 primitive=scene.primitive,
                 layout=scene.layout,
-                duration_seconds=scene.duration,
+                duration_seconds=scene.duration * scene_timing_scale,
                 title=title,
                 on_screen_text=scene.on_screen_text,
                 body=body,
@@ -802,7 +1489,9 @@ def creative_input_from_manifests(
                 x_axis_label=x_axis_label,
                 y_axis_label=y_axis_label,
                 units=units,
-                motion_beats=["scene-enter", f"{scene.motion}-content-reveal"],
+                motion_beats=list(dict.fromkeys(motion_beats)),
+                engagement_role=engagement_role,
+                motion_intensity=motion_intensity,
                 color_encodings=color_encodings,
                 non_color_cues=non_color_cues,
             )
@@ -821,15 +1510,19 @@ def creative_input_from_manifests(
         topic_kind=topic_kind,
         storyboard_version_id=storyboard.version_id,
         script_version_id=script.version_id,
+        pacing=pacing,
         cover=cover,
         scenes=scenes,
         captions=normalized_captions,
+        retention=retention,
     )
 
 
 __all__ = [
     "CreativeCaptionInput",
     "CreativeCoverInput",
+    "CreativeRetentionEventInput",
+    "CreativeRetentionInput",
     "CreativeQualityCheck",
     "CreativeQualityInput",
     "CreativeQualityResult",

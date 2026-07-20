@@ -4,6 +4,7 @@
   "topic_kind": "architecture",
   "storyboard_version_id": "storyboard-golden-architecture",
   "script_version_id": "script-golden-architecture",
+  "pacing": "brisk",
   "cover": {
     "cover_id": "cover-golden-architecture", "headline": "A Queue Separates Two Failure Domains",
     "focal_visual": "producer queue consumer layer stack", "layout": "architecture-hero",
@@ -12,12 +13,14 @@
   },
   "scenes": [
     {
-      "scene_id": "s1", "primitive": "LayerStack", "layout": "architecture-hero", "duration_seconds": 6,
+      "scene_id": "s1", "primitive": "LayerStack", "layout": "architecture-hero", "duration_seconds": 5,
       "title": "The queue sits between services", "on_screen_text": "Producer → Queue → Consumer", "body": null,
       "narration": "The producer writes messages without waiting for the consumer to finish each job.",
       "factual": true, "citation": "Original architecture note · Queue boundary", "evidence_label": "DOCUMENTED",
       "series": [], "labels": [], "x_axis_label": null, "y_axis_label": null, "units": null,
-      "motion_beats": ["producer-sends", "queue-holds", "consumer-receives"], "color_encodings": {}, "non_color_cues": []
+      "motion_beats": ["producer-sends", "queue-holds", "consumer-receives"],
+      "engagement_role": "cold-open", "motion_intensity": "precise", "flash_events_per_second": 0,
+      "color_encodings": {}, "non_color_cues": []
     },
     {
       "scene_id": "s2", "primitive": "ProcessFlow", "layout": "full-diagram", "duration_seconds": 6,
@@ -25,7 +28,9 @@
       "narration": "During a burst, pending messages accumulate until consumers catch up.",
       "factual": true, "citation": "Original architecture note · Burst handling", "evidence_label": "DOCUMENTED",
       "series": [], "labels": [], "x_axis_label": null, "y_axis_label": null, "units": null,
-      "motion_beats": ["burst-arrives", "backlog-grows", "drain-begins"], "color_encodings": {}, "non_color_cues": []
+      "motion_beats": ["burst-arrives", "backlog-grows", "drain-begins"],
+      "engagement_role": "rehook", "motion_intensity": "precise", "flash_events_per_second": 0,
+      "color_encodings": {}, "non_color_cues": []
     },
     {
       "scene_id": "s3", "primitive": "StateMachine", "layout": "state-focus", "duration_seconds": 6,
@@ -33,7 +38,9 @@
       "narration": "Failed work needs retry, timeout, and dead-letter handling rather than silent loss.",
       "factual": true, "citation": "Original architecture note · Failure handling", "evidence_label": "DOCUMENTED",
       "series": [], "labels": [], "x_axis_label": null, "y_axis_label": null, "units": null,
-      "motion_beats": ["processing-state", "failure-state", "retry-state"], "color_encodings": {}, "non_color_cues": []
+      "motion_beats": ["processing-state", "failure-state", "retry-state"],
+      "engagement_role": "payoff", "motion_intensity": "precise", "flash_events_per_second": 0,
+      "color_encodings": {}, "non_color_cues": []
     },
     {
       "scene_id": "s4", "primitive": "LimitationCard", "layout": "editorial-card", "duration_seconds": 5,
@@ -41,7 +48,9 @@
       "narration": "The boundary improves isolation but adds storage, monitoring, and delivery complexity.",
       "factual": true, "citation": "Original architecture note · Tradeoff", "evidence_label": "DOCUMENTED",
       "series": [], "labels": [], "x_axis_label": null, "y_axis_label": null, "units": null,
-      "motion_beats": ["benefit-side", "cost-side"], "color_encodings": {}, "non_color_cues": []
+      "motion_beats": ["benefit-side", "cost-side"],
+      "engagement_role": "limitation", "motion_intensity": "calm", "flash_events_per_second": 0,
+      "color_encodings": {}, "non_color_cues": []
     }
   ],
   "captions": [

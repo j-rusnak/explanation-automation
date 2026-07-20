@@ -4,6 +4,7 @@
   "topic_kind": "mechanism",
   "storyboard_version_id": "storyboard-golden-mechanism",
   "script_version_id": "script-golden-mechanism",
+  "pacing": "brisk",
   "cover": {
     "cover_id": "cover-golden-mechanism",
     "headline": "Why Straight Blades Look Bent",
@@ -22,7 +23,9 @@
       "factual": true, "citation": "Camera timing note · Sensor readout",
       "evidence_label": "DOCUMENTED", "series": [], "labels": [],
       "x_axis_label": null, "y_axis_label": null, "units": null,
-      "motion_beats": ["headline-in", "row-scan"], "color_encodings": {},
+      "motion_beats": ["headline-in", "row-scan"],
+      "engagement_role": "cold-open", "motion_intensity": "precise", "flash_events_per_second": 0,
+      "color_encodings": {},
       "non_color_cues": []
     },
     {
@@ -34,6 +37,7 @@
       "evidence_label": "DOCUMENTED", "series": [], "labels": [],
       "x_axis_label": null, "y_axis_label": null, "units": null,
       "motion_beats": ["edge-moves", "scanline-follows", "samples-hold"],
+      "engagement_role": "rehook", "motion_intensity": "precise", "flash_events_per_second": 0,
       "color_encodings": {}, "non_color_cues": []
     },
     {
@@ -44,18 +48,22 @@
       "factual": true, "citation": "Camera timing note · Distortion mechanism",
       "evidence_label": "DOCUMENTED", "series": [], "labels": [],
       "x_axis_label": null, "y_axis_label": null, "units": null,
-      "motion_beats": ["rows-stack", "outline-reveals"], "color_encodings": {},
+      "motion_beats": ["rows-stack", "outline-reveals"],
+      "engagement_role": "payoff", "motion_intensity": "precise", "flash_events_per_second": 0,
+      "color_encodings": {},
       "non_color_cues": []
     },
     {
       "scene_id": "s4", "primitive": "LimitationCard", "layout": "editorial-card",
-      "duration_seconds": 5, "title": "Motion and timing both matter",
+      "duration_seconds": 4, "title": "Motion and timing both matter",
       "on_screen_text": "Static scenes stay straight", "body": null,
       "narration": "The effect depends on motion during readout, so it is not present in every frame.",
       "factual": true, "citation": "Camera timing note · Limitation",
       "evidence_label": "DOCUMENTED", "series": [], "labels": [],
       "x_axis_label": null, "y_axis_label": null, "units": null,
-      "motion_beats": ["condition-in", "limitation-hold"], "color_encodings": {},
+      "motion_beats": ["condition-in", "limitation-hold"],
+      "engagement_role": "limitation", "motion_intensity": "calm", "flash_events_per_second": 0,
+      "color_encodings": {},
       "non_color_cues": []
     }
   ],

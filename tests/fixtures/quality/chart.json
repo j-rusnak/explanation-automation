@@ -4,6 +4,7 @@
   "topic_kind": "chart",
   "storyboard_version_id": "storyboard-golden-chart",
   "script_version_id": "script-golden-chart",
+  "pacing": "brisk",
   "cover": {
     "cover_id": "cover-golden-chart", "headline": "Latency Falls as Batches Grow",
     "focal_visual": "annotated latency curve", "layout": "numeric-hero",
@@ -17,34 +18,41 @@
       "body": null, "narration": "The benchmark shows the largest latency drop at small batch sizes.",
       "factual": true, "citation": "Local benchmark · Results table", "evidence_label": "MEASURED",
       "series": [], "labels": [], "x_axis_label": null, "y_axis_label": null, "units": null,
-      "motion_beats": ["number-count", "qualifier-in"], "color_encodings": {}, "non_color_cues": []
+      "motion_beats": ["number-count", "qualifier-in"],
+      "engagement_role": "cold-open", "motion_intensity": "precise", "flash_events_per_second": 0,
+      "color_encodings": {}, "non_color_cues": []
     },
     {
       "scene_id": "s2", "primitive": "AnnotatedChart", "layout": "full-chart",
-      "duration_seconds": 8, "title": "The curve approaches a plateau", "on_screen_text": "Diminishing returns after 16",
+      "duration_seconds": 7, "title": "The curve approaches a plateau", "on_screen_text": "Diminishing returns after 16",
       "body": null, "narration": "Beyond sixteen items, each larger batch saves less additional time.",
       "factual": true, "citation": "Local benchmark · Median latency", "evidence_label": "MEASURED",
       "series": [18.0, 13.0, 10.4, 9.8], "labels": ["4", "8", "16", "32"],
       "x_axis_label": "Batch size", "y_axis_label": "Median latency", "units": "milliseconds",
       "motion_beats": ["axes-in", "line-draw", "plateau-annotate"],
+      "engagement_role": "rehook", "motion_intensity": "precise", "flash_events_per_second": 0,
       "color_encodings": {"latency": "#0072B2", "plateau": "#D55E00"},
       "non_color_cues": ["direct-labels", "dashed-annotation"]
     },
     {
       "scene_id": "s3", "primitive": "ParameterSimulation", "layout": "split-control",
-      "duration_seconds": 6, "title": "Larger batches use more memory", "on_screen_text": "Speed trades against memory",
+      "duration_seconds": 5, "title": "Larger batches use more memory", "on_screen_text": "Speed trades against memory",
       "body": null, "narration": "The faster setting also raises the peak memory requirement.",
       "factual": true, "citation": "Local benchmark · Memory table", "evidence_label": "MEASURED",
       "series": [], "labels": [], "x_axis_label": null, "y_axis_label": null, "units": null,
-      "motion_beats": ["slider-moves", "memory-meter-rises"], "color_encodings": {}, "non_color_cues": []
+      "motion_beats": ["slider-moves", "memory-meter-rises"],
+      "engagement_role": "payoff", "motion_intensity": "precise", "flash_events_per_second": 0,
+      "color_encodings": {}, "non_color_cues": []
     },
     {
       "scene_id": "s4", "primitive": "LimitationCard", "layout": "editorial-card",
-      "duration_seconds": 5, "title": "One machine is not every workload", "on_screen_text": "Measure your own system",
+      "duration_seconds": 4, "title": "One machine is not every workload", "on_screen_text": "Measure your own system",
       "body": null, "narration": "These local results do not predict every model, device, or workload.",
       "factual": true, "citation": "Local benchmark · Scope", "evidence_label": "MEASURED",
       "series": [], "labels": [], "x_axis_label": null, "y_axis_label": null, "units": null,
-      "motion_beats": ["scope-in", "recommendation-hold"], "color_encodings": {}, "non_color_cues": []
+      "motion_beats": ["scope-in", "recommendation-hold"],
+      "engagement_role": "limitation", "motion_intensity": "calm", "flash_events_per_second": 0,
+      "color_encodings": {}, "non_color_cues": []
     }
   ],
   "captions": [
