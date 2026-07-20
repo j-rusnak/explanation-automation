@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from techshort.domain.creative import BeatPlan, NarrativeBrief, RetentionPlan
 from techshort.domain.hashing import stable_hash
 from techshort.domain.models import (
     AngleCandidate,
@@ -12,6 +13,9 @@ from techshort.domain.models import (
     ChartSeries,
     Claim,
     ClaimsManifest,
+    ComparisonSide,
+    ComparisonVisual,
+    EdgeSpec,
     EvidenceHighlightVisual,
     EvidenceManifest,
     EvidenceSpan,
@@ -19,14 +23,19 @@ from techshort.domain.models import (
     HighlightRange,
     KineticTextVisual,
     LimitationVisual,
+    MechanismDiagramVisual,
+    NodeSpec,
+    ParameterSimulationVisual,
     RasterScanVisual,
     Scene,
     ScriptManifest,
-    ScriptSegment,
+    SourceReceiptVisual,
     StoryboardManifest,
-    TimelineEvent,
-    TimelineVisual,
+    TypedVisualSpec,
 )
+from techshort.generation.editorial.beats import rolling_shutter_beats
+from techshort.generation.editorial.retention import build_rolling_shutter_retention_plan
+from techshort.generation.editorial.script import rolling_shutter_script_segments
 
 
 class FixtureProvider:
@@ -229,172 +238,7 @@ class FixtureProvider:
         angles_version_id: str | None = None,
         angle_selection_id: str | None = None,
     ) -> ScriptManifest:
-        copy_by_angle = {
-            "surprising-result": [
-                "Why can a straight rotating blade appear curved? The source explains a timing effect.",
-                (
-                    "A rolling-shutter sensor records image rows in sequence across a frame-"
-                    "readout interval. That means not every row represents the same instant."
-                ),
-                (
-                    "If the camera or subject moves during that interval, each row records a "
-                    "different moment. Once assembled, a straight moving edge can look slanted, "
-                    "and a rotating blade can look curved."
-                ),
-                (
-                    "Think of scanning a page line by line while the paper slides sideways. "
-                    "Each line can be faithful, while the assembled page appears skewed."
-                ),
-                (
-                    "Faster motion or a longer frame readout increases the visible skew. "
-                    "In the source's simple 20 ms example, the bottom-row offset is about 2%."
-                ),
-                "A global shutter exposes all rows together, so it avoids this row-timing skew.",
-                (
-                    "But that does not promise a perfect image. Motion blur, lens distortion, "
-                    "stabilization, and image processing can still change the recorded geometry."
-                ),
-                (
-                    "So a curved-looking blade can reveal row timing plus motion; it is not, by "
-                    "itself, proof that the blade physically bent."
-                ),
-            ],
-            "everyday-mechanism": [
-                (
-                    "A phone camera can read one picture like a scanner reads a page: line by "
-                    "line, across time."
-                ),
-                (
-                    "A rolling-shutter sensor records image rows in sequence across a frame-"
-                    "readout interval, so different rows can represent different instants."
-                ),
-                (
-                    "Motion continues while those rows are captured. Each row records a new "
-                    "moment, and the assembled image can turn a straight moving edge into a "
-                    "slant or curve."
-                ),
-                (
-                    "Imagine scanning a page while the paper slides sideways. Every scanned "
-                    "line can be faithful even though the assembled page looks skewed."
-                ),
-                (
-                    "Faster motion or a longer frame readout increases the visible skew. In the "
-                    "source's 20 ms example, the bottom-row offset is about 2%."
-                ),
-                "A global shutter exposes all rows together, avoiding this row-timing skew.",
-                (
-                    "That still does not guarantee perfect geometry. Motion blur, lens "
-                    "distortion, stabilization, resampling, and image processing can alter the "
-                    "recorded image."
-                ),
-                (
-                    "Treat the frame as a timing map: curved-looking motion can reveal how the "
-                    "sensor scanned, not prove the subject physically bent."
-                ),
-            ],
-            "engineering-tradeoff": [
-                (
-                    "Camera engineers can expose every row together or scan rows in sequence. "
-                    "That timing choice changes how motion appears."
-                ),
-                (
-                    "A rolling shutter scans image rows across a frame-readout interval. It is "
-                    "efficient, but the rows do not all represent one instant."
-                ),
-                (
-                    "If the camera or subject moves during readout, successive rows capture "
-                    "different moments. Assembly can turn a straight edge into a slant or a "
-                    "curved blade."
-                ),
-                (
-                    "The mechanism resembles scanning a moving page line by line: local samples "
-                    "can be faithful while their combined geometry is skewed."
-                ),
-                (
-                    "The distortion grows with motion and readout time. In the source's 20 ms "
-                    "example, the bottom row is offset by about 2%."
-                ),
-                (
-                    "A global shutter exposes all rows together and avoids this specific "
-                    "row-timing skew."
-                ),
-                (
-                    "That tradeoff is narrower than image quality overall. Blur, lens "
-                    "distortion, stabilization, resampling, and processing can still change "
-                    "recorded geometry."
-                ),
-                (
-                    "So choose shutter timing for the motion you need to preserve, while "
-                    "reviewing the other causes of distortion separately."
-                ),
-            ],
-        }
-        if angle not in copy_by_angle:
-            raise ValueError(f"unsupported fixture angle: {angle}")
-        copy = copy_by_angle[angle]
-        hook_claims = (
-            ["claim-global", "claim-row-timing"]
-            if angle == "engineering-tradeoff"
-            else ["claim-motion-skew"]
-        )
-        segments = [
-            ScriptSegment(
-                segment_id="segment-01",
-                text=copy[0],
-                segment_type="hook",
-                claim_ids=hook_claims,
-                approximate_duration=7,
-            ),
-            ScriptSegment(
-                segment_id="segment-02",
-                text=copy[1],
-                segment_type="factual",
-                claim_ids=["claim-row-timing"],
-                approximate_duration=10,
-            ),
-            ScriptSegment(
-                segment_id="segment-03",
-                text=copy[2],
-                segment_type="factual",
-                claim_ids=["claim-motion-skew"],
-                approximate_duration=11,
-            ),
-            ScriptSegment(
-                segment_id="segment-04",
-                text=copy[3],
-                segment_type="analogy",
-                claim_ids=["claim-scan-analogy"],
-                approximate_duration=10,
-            ),
-            ScriptSegment(
-                segment_id="segment-05",
-                text=copy[4],
-                segment_type="factual",
-                claim_ids=["claim-parameters", "claim-numeric-demo"],
-                approximate_duration=9,
-            ),
-            ScriptSegment(
-                segment_id="segment-06",
-                text=copy[5],
-                segment_type="factual",
-                claim_ids=["claim-global"],
-                approximate_duration=7,
-            ),
-            ScriptSegment(
-                segment_id="segment-07",
-                text=copy[6],
-                segment_type="limitation",
-                claim_ids=["claim-limitation"],
-                approximate_duration=9,
-            ),
-            ScriptSegment(
-                segment_id="segment-08",
-                text=copy[7],
-                segment_type="cta",
-                claim_ids=["claim-timing-interpretation", "claim-numeric-demo"],
-                approximate_duration=8,
-            ),
-        ]
+        segments = rolling_shutter_script_segments(angle)
         return ScriptManifest(
             version_id=f"script-{stable_hash(segments)[:12]}",
             claims_version_id=claims.version_id,
@@ -406,70 +250,51 @@ class FixtureProvider:
             segments=segments,
         )
 
-    def generate_storyboard(self, script: ScriptManifest) -> StoryboardManifest:
-        primitives = [
-            "KineticText",
-            "EvidenceHighlight",
-            "RasterScan",
-            "GridWarp",
-            "AnnotatedChart",
-            "BeforeAfterOverlay",
-            "LimitationCard",
-            "Timeline",
-        ]
-        titles = [
-            "Why does it bend?",
-            "Rows capture different moments",
-            "Motion becomes skew",
-            "Scan while sliding",
-            "More time, more skew",
-            "Global vs rolling",
-            "Important limitation",
-            "A timing map",
-        ]
-        layouts = [
-            "hero",
-            "evidence",
-            "full-diagram",
-            "split",
-            "numeric",
-            "split",
-            "limitation",
-            "full-diagram",
-        ]
-        motions = [
-            "energetic",
-            "calm",
-            "precise",
-            "precise",
-            "energetic",
-            "precise",
-            "calm",
-            "precise",
-        ]
-        claim_map = [list(segment.claim_ids) for segment in script.segments]
-        highlight_text = "starts or reads rows in sequence"
-        highlight_start = self.phrases[0].index(highlight_text)
-        visuals = [
-            KineticTextVisual(
+    def generate_retention_plan(
+        self,
+        brief: NarrativeBrief,
+        beat_plan: BeatPlan,
+        script: ScriptManifest,
+    ) -> RetentionPlan:
+        return build_rolling_shutter_retention_plan(brief, beat_plan, script)
+
+    def _storyboard_visual(self, angle: str, order: int, primitive: str) -> TypedVisualSpec:
+        if primitive == "KineticText":
+            return KineticTextVisual(
                 kind="kinetic-text",
-                emphasis=["straight", "curved"],
-                supporting_text="The shape can come from capture timing, not bending.",
-            ),
-            EvidenceHighlightVisual(
-                kind="evidence-highlight",
-                source_title="Rolling shutter and motion",
-                excerpt=self.phrases[0],
-                locator="Rolling shutter and motion",
-                evidence_id="evidence-01",
-                highlights=[
-                    HighlightRange(
-                        start=highlight_start,
-                        end=highlight_start + len(highlight_text),
-                    )
-                ],
-            ),
-            RasterScanVisual(
+                emphasis=["rows", "successive moments"],
+                supporting_text="Rolling shutter records rows in sequence.",
+            )
+        if primitive == "BeforeAfterOverlay":
+            if angle == "engineering-tradeoff":
+                before_label = "rolling: successive row times"
+                after_label = "global: one shared time"
+            elif order == 0:
+                before_label = "physical straight blade"
+                after_label = "captured curved silhouette"
+            else:
+                before_label = "moving straight blade"
+                after_label = "assembled timing map"
+            return BeforeAfterOverlayVisual(
+                kind="before-after-overlay",
+                feature="straight-edge",
+                before_label=before_label,
+                after_label=after_label,
+                divider=0.52,
+            )
+        if primitive == "RasterScan":
+            if angle == "everyday-mechanism":
+                return RasterScanVisual(
+                    kind="raster-scan",
+                    direction="top-to-bottom",
+                    rows=18,
+                    subject="grid",
+                    distortion=0.62,
+                    scan_label="scanner moves line by line",
+                    before_label="page moving sideways",
+                    after_label="assembled skewed page",
+                )
+            return RasterScanVisual(
                 kind="raster-scan",
                 direction="top-to-bottom",
                 rows=18,
@@ -478,17 +303,50 @@ class FixtureProvider:
                 scan_label="successive row times",
                 before_label="moving straight blade",
                 after_label="assembled curved image",
-            ),
-            GridWarpVisual(
+            )
+        if primitive == "GridWarp":
+            if angle == "surprising-result":
+                before_label = "straight moving blade"
+                after_label = "curved recorded silhouette"
+            else:
+                before_label = "faithful scanned lines"
+                after_label = "skewed assembled page"
+            return GridWarpVisual(
                 kind="grid-warp",
                 rows=8,
                 columns=7,
                 skew=0.58,
                 curvature=0.18,
-                before_label="page held still",
-                after_label="page slides during scan",
-            ),
-            AnnotatedChartVisual(
+                before_label=before_label,
+                after_label=after_label,
+            )
+        if primitive == "EvidenceHighlight":
+            highlight = "time 0 ms and row 1000 to time 20 ms"
+            highlight_start = self.phrases[5].index(highlight)
+            return EvidenceHighlightVisual(
+                kind="evidence-highlight",
+                source_title="Rolling shutter and motion",
+                excerpt=self.phrases[5],
+                locator="Rolling shutter and motion",
+                evidence_id="evidence-06",
+                highlights=[
+                    HighlightRange(
+                        start=highlight_start,
+                        end=highlight_start + len(highlight),
+                    )
+                ],
+            )
+        if primitive == "SourceReceipt":
+            return SourceReceiptVisual(
+                kind="source-receipt",
+                source_title="Rolling shutter and motion",
+                excerpt=self.phrases[5],
+                locator="Rolling shutter and motion",
+                evidence_id="evidence-06",
+                highlight="20 ms",
+            )
+        if primitive == "ChartReveal":
+            return AnnotatedChartVisual(
                 kind="annotated-chart",
                 chart_type="line",
                 x_axis=ChartAxis(label="row capture time", unit="ms"),
@@ -501,60 +359,143 @@ class FixtureProvider:
                     )
                 ],
                 annotations=[ChartAnnotation(x=20, y=2, label="bottom row: about 2%")],
-            ),
-            BeforeAfterOverlayVisual(
-                kind="before-after-overlay",
-                feature="straight-edge",
-                before_label="rolling: successive rows",
-                after_label="global: same instant",
-                divider=0.52,
-            ),
-            LimitationVisual(
+            )
+        if primitive == "MechanismDiagram":
+            if order == 7:
+                nodes = [
+                    NodeSpec(id="rows", label="successive rows", x=0.15, y=0.5),
+                    NodeSpec(id="moments", label="different moments", x=0.5, y=0.5),
+                    NodeSpec(id="frame", label="assembled frame", x=0.85, y=0.5),
+                ]
+                edges = [
+                    EdgeSpec(source="rows", target="moments", label="capture"),
+                    EdgeSpec(source="moments", target="frame", label="assemble"),
+                ]
+            else:
+                nodes = [
+                    NodeSpec(id="top", label="top sensor row", x=0.2, y=0.2),
+                    NodeSpec(id="middle", label="successive rows", x=0.5, y=0.5),
+                    NodeSpec(id="bottom", label="bottom sensor row", x=0.8, y=0.8),
+                ]
+                edges = [
+                    EdgeSpec(source="top", target="middle", label="then"),
+                    EdgeSpec(source="middle", target="bottom", label="then"),
+                ]
+            return MechanismDiagramVisual(
+                kind="mechanism-diagram",
+                nodes=nodes,
+                edges=edges,
+                active_step_id="moments" if order == 7 else "middle",
+            )
+        if primitive == "ParameterSimulation":
+            return ParameterSimulationVisual(
+                kind="parameter-simulation",
+                parameter_label="frame readout",
+                unit="ms",
+                minimum=0,
+                maximum=20,
+                value=20,
+                left_label="shorter readout",
+                right_label="longer readout",
+            )
+        if primitive == "Comparison":
+            if angle == "engineering-tradeoff" and order == 4:
+                left = ComparisonSide(
+                    label="Specific fix",
+                    value="avoids row-timing skew",
+                    detail="shared exposure timing",
+                )
+                right = ComparisonSide(
+                    label="Remaining limit",
+                    value="other distortions remain",
+                    detail="optics, blur, stabilization, processing",
+                )
+            else:
+                left = ComparisonSide(
+                    label="Rolling",
+                    value="successive row times",
+                    detail="motion can become skew",
+                )
+                right = ComparisonSide(
+                    label="Global",
+                    value="one shared exposure time",
+                    detail="avoids this row-timing skew",
+                )
+            return ComparisonVisual(
+                kind="comparison", feature="straight-edge", left=left, right=right
+            )
+        if primitive == "LimitationCard":
+            return LimitationVisual(
                 kind="limitation",
                 limitation=(
-                    "A faster or global shutter does not remove blur, lens distortion, "
-                    "stabilization, resampling, or processing artifacts."
+                    "Avoiding row-timing skew does not remove blur, lens distortion, "
+                    "stabilization, resampling, or processing effects."
                 ),
                 applies_when="Interpreting geometry in a captured image",
-            ),
-            TimelineVisual(
-                kind="timeline",
-                unit="ms",
-                events=[
-                    TimelineEvent(time=0, label="top row", detail="offset 0%"),
-                    TimelineEvent(time=20, label="bottom row", detail="offset about 2%"),
-                ],
-            ),
-        ]
-        citations = [
-            "Source-backed · motion during readout",
-            "Exact source excerpt",
-            "Source-backed · row timing",
-            "Inference · scanning analogy",
-            "Measured example · 20 ms",
-            "Engineering comparison",
-            "Important limitation",
-            "Inference · timing interpretation",
-        ]
+            )
+        raise ValueError(f"unsupported fixture storyboard primitive: {primitive}")
+
+    @staticmethod
+    def _storyboard_citation(claim_ids: list[str]) -> str:
+        claims = set(claim_ids)
+        if claims & {"claim-scan-analogy", "claim-timing-interpretation"}:
+            return "Inference · source-linked synthesis"
+        if "claim-numeric-demo" in claims:
+            return "Measured example · 20 ms readout"
+        if "claim-limitation" in claims:
+            return "Documented limitation · image geometry"
+        if "claim-global" in claims:
+            return "Documented · rolling and global timing"
+        if "claim-motion-skew" in claims:
+            return "Documented · motion during readout"
+        return "Documented · sequential row timing"
+
+    def generate_storyboard(self, script: ScriptManifest) -> StoryboardManifest:
+        beats = rolling_shutter_beats(script.angle)
+        if len(beats) != len(script.segments):
+            raise ValueError("fixture storyboard requires one beat per script segment")
+        layout_map = {
+            "hero": "hero",
+            "full-diagram": "full-diagram",
+            "split-comparison": "split",
+            "evidence-receipt": "evidence",
+            "numeric-result": "numeric",
+            "limitation": "limitation",
+        }
         scenes: list[Scene] = []
         time = 0.0
-        for index, segment in enumerate(script.segments):
+        inferred_claim_ids = {"claim-scan-analogy", "claim-timing-interpretation"}
+        for index, (beat, segment) in enumerate(zip(beats, script.segments, strict=True)):
+            if set(beat.claim_ids) != set(segment.claim_ids):
+                raise ValueError(
+                    f"fixture beat {beat.beat_id} claim links do not match {segment.segment_id}"
+                )
             duration = segment.approximate_duration
             scene = Scene(
                 scene_id=f"scene-{index + 1:02d}",
                 order=index,
                 start_time=time,
                 duration=duration,
-                primitive=primitives[index],
-                layout=layouts[index],
-                motion=motions[index],
+                primitive=beat.primitive_hint,
+                layout=layout_map[beat.layout_family],
+                motion=(
+                    "energetic"
+                    if beat.role in {"hook", "re-hook"}
+                    else "calm"
+                    if beat.role == "limitation"
+                    else "precise"
+                ),
                 script_segment_ids=[segment.segment_id],
-                claim_ids=claim_map[index],
-                on_screen_text=titles[index],
-                visual=visuals[index],
+                claim_ids=list(segment.claim_ids),
+                on_screen_text=beat.on_screen_text,
+                visual=self._storyboard_visual(script.angle, index, beat.primitive_hint),
                 accessibility_description=segment.text,
-                evidence_label=("INFERRED" if index in {3, 7} else "DOCUMENTED"),
-                citation_label=citations[index],
+                evidence_label=(
+                    "INFERRED"
+                    if inferred_claim_ids.intersection(segment.claim_ids)
+                    else "DOCUMENTED"
+                ),
+                citation_label=self._storyboard_citation(segment.claim_ids),
                 dependency_hash=stable_hash(segment),
             )
             scenes.append(scene)
