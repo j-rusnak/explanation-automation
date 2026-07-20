@@ -110,6 +110,15 @@
       "title": "Modified At",
       "type": "string"
     },
+    "narration_mode": {
+      "default": "narrated",
+      "enum": [
+        "narrated",
+        "silent-reviewed"
+      ],
+      "title": "Narration Mode",
+      "type": "string"
+    },
     "project_id": {
       "title": "Project Id",
       "type": "string"
@@ -149,7 +158,13 @@
       "type": "number"
     },
     "theme": {
-      "default": "midnight",
+      "default": "blueprint",
+      "enum": [
+        "midnight",
+        "blueprint",
+        "signal-lab",
+        "technical-editorial"
+      ],
       "title": "Theme",
       "type": "string"
     },

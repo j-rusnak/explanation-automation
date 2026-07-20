@@ -1,0 +1,41 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "cover_version_id": {
+      "title": "Cover Version Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "selected_at": {
+      "format": "date-time",
+      "title": "Selected At",
+      "type": "string"
+    },
+    "selected_candidate_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Selected Candidate Hash",
+      "type": "string"
+    },
+    "selected_candidate_id": {
+      "title": "Selected Candidate Id",
+      "type": "string"
+    },
+    "selection_id": {
+      "title": "Selection Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "selection_id",
+    "cover_version_id",
+    "selected_candidate_id",
+    "selected_candidate_hash"
+  ],
+  "title": "CoverSelection",
+  "type": "object"
+}

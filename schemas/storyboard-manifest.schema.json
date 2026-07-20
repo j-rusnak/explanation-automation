@@ -1,5 +1,270 @@
 {
   "$defs": {
+    "AnnotatedChartVisual": {
+      "additionalProperties": false,
+      "properties": {
+        "annotations": {
+          "items": {
+            "$ref": "#/$defs/ChartAnnotation"
+          },
+          "maxItems": 6,
+          "title": "Annotations",
+          "type": "array"
+        },
+        "chart_type": {
+          "enum": [
+            "bar",
+            "line",
+            "dot"
+          ],
+          "title": "Chart Type",
+          "type": "string"
+        },
+        "kind": {
+          "const": "annotated-chart",
+          "title": "Kind",
+          "type": "string"
+        },
+        "series": {
+          "items": {
+            "$ref": "#/$defs/ChartSeries"
+          },
+          "maxItems": 4,
+          "minItems": 1,
+          "title": "Series",
+          "type": "array"
+        },
+        "x_axis": {
+          "$ref": "#/$defs/ChartAxis"
+        },
+        "y_axis": {
+          "$ref": "#/$defs/ChartAxis"
+        }
+      },
+      "required": [
+        "kind",
+        "chart_type",
+        "x_axis",
+        "y_axis",
+        "series"
+      ],
+      "title": "AnnotatedChartVisual",
+      "type": "object"
+    },
+    "BeforeAfterOverlayVisual": {
+      "additionalProperties": false,
+      "properties": {
+        "after_label": {
+          "title": "After Label",
+          "type": "string"
+        },
+        "before_label": {
+          "title": "Before Label",
+          "type": "string"
+        },
+        "divider": {
+          "maximum": 0.8,
+          "minimum": 0.2,
+          "title": "Divider",
+          "type": "number"
+        },
+        "feature": {
+          "enum": [
+            "straight-edge",
+            "grid",
+            "rotor",
+            "signal"
+          ],
+          "title": "Feature",
+          "type": "string"
+        },
+        "kind": {
+          "const": "before-after-overlay",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "feature",
+        "before_label",
+        "after_label",
+        "divider"
+      ],
+      "title": "BeforeAfterOverlayVisual",
+      "type": "object"
+    },
+    "ChartAnnotation": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "x": {
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "label"
+      ],
+      "title": "ChartAnnotation",
+      "type": "object"
+    },
+    "ChartAxis": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "title": "ChartAxis",
+      "type": "object"
+    },
+    "ChartPoint": {
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "ChartPoint",
+      "type": "object"
+    },
+    "ChartSeries": {
+      "additionalProperties": false,
+      "properties": {
+        "color": {
+          "enum": [
+            "accent",
+            "warning",
+            "citation",
+            "danger",
+            "muted"
+          ],
+          "title": "Color",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "points": {
+          "items": {
+            "$ref": "#/$defs/ChartPoint"
+          },
+          "maxItems": 30,
+          "minItems": 1,
+          "title": "Points",
+          "type": "array"
+        }
+      },
+      "required": [
+        "label",
+        "color",
+        "points"
+      ],
+      "title": "ChartSeries",
+      "type": "object"
+    },
+    "ComparisonSide": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "value"
+      ],
+      "title": "ComparisonSide",
+      "type": "object"
+    },
+    "ComparisonVisual": {
+      "additionalProperties": false,
+      "properties": {
+        "feature": {
+          "enum": [
+            "straight-edge",
+            "grid",
+            "rotor",
+            "signal",
+            "generic"
+          ],
+          "title": "Feature",
+          "type": "string"
+        },
+        "kind": {
+          "const": "comparison",
+          "title": "Kind",
+          "type": "string"
+        },
+        "left": {
+          "$ref": "#/$defs/ComparisonSide"
+        },
+        "right": {
+          "$ref": "#/$defs/ComparisonSide"
+        }
+      },
+      "required": [
+        "kind",
+        "feature",
+        "left",
+        "right"
+      ],
+      "title": "ComparisonVisual",
+      "type": "object"
+    },
     "EdgeSpec": {
       "additionalProperties": false,
       "properties": {
@@ -29,6 +294,241 @@
         "target"
       ],
       "title": "EdgeSpec",
+      "type": "object"
+    },
+    "EvidenceHighlightVisual": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_id": {
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "excerpt": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Excerpt",
+          "type": "string"
+        },
+        "highlights": {
+          "items": {
+            "$ref": "#/$defs/HighlightRange"
+          },
+          "maxItems": 6,
+          "minItems": 1,
+          "title": "Highlights",
+          "type": "array"
+        },
+        "kind": {
+          "const": "evidence-highlight",
+          "title": "Kind",
+          "type": "string"
+        },
+        "locator": {
+          "title": "Locator",
+          "type": "string"
+        },
+        "source_title": {
+          "title": "Source Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "source_title",
+        "excerpt",
+        "locator",
+        "evidence_id",
+        "highlights"
+      ],
+      "title": "EvidenceHighlightVisual",
+      "type": "object"
+    },
+    "GridWarpVisual": {
+      "additionalProperties": false,
+      "properties": {
+        "after_label": {
+          "title": "After Label",
+          "type": "string"
+        },
+        "before_label": {
+          "title": "Before Label",
+          "type": "string"
+        },
+        "columns": {
+          "maximum": 20,
+          "minimum": 3,
+          "title": "Columns",
+          "type": "integer"
+        },
+        "curvature": {
+          "maximum": 1,
+          "minimum": -1,
+          "title": "Curvature",
+          "type": "number"
+        },
+        "kind": {
+          "const": "grid-warp",
+          "title": "Kind",
+          "type": "string"
+        },
+        "rows": {
+          "maximum": 20,
+          "minimum": 3,
+          "title": "Rows",
+          "type": "integer"
+        },
+        "skew": {
+          "maximum": 1,
+          "minimum": -1,
+          "title": "Skew",
+          "type": "number"
+        }
+      },
+      "required": [
+        "kind",
+        "rows",
+        "columns",
+        "skew",
+        "curvature",
+        "before_label",
+        "after_label"
+      ],
+      "title": "GridWarpVisual",
+      "type": "object"
+    },
+    "HighlightRange": {
+      "additionalProperties": false,
+      "properties": {
+        "end": {
+          "exclusiveMinimum": 0,
+          "title": "End",
+          "type": "integer"
+        },
+        "start": {
+          "minimum": 0,
+          "title": "Start",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "title": "HighlightRange",
+      "type": "object"
+    },
+    "KineticTextVisual": {
+      "additionalProperties": false,
+      "properties": {
+        "emphasis": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 4,
+          "minItems": 1,
+          "title": "Emphasis",
+          "type": "array"
+        },
+        "kind": {
+          "const": "kinetic-text",
+          "title": "Kind",
+          "type": "string"
+        },
+        "supporting_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Supporting Text"
+        }
+      },
+      "required": [
+        "kind",
+        "emphasis"
+      ],
+      "title": "KineticTextVisual",
+      "type": "object"
+    },
+    "LimitationVisual": {
+      "additionalProperties": false,
+      "properties": {
+        "applies_when": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Applies When"
+        },
+        "kind": {
+          "const": "limitation",
+          "title": "Kind",
+          "type": "string"
+        },
+        "limitation": {
+          "title": "Limitation",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "limitation"
+      ],
+      "title": "LimitationVisual",
+      "type": "object"
+    },
+    "MechanismDiagramVisual": {
+      "additionalProperties": false,
+      "properties": {
+        "active_step_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Active Step Id"
+        },
+        "edges": {
+          "items": {
+            "$ref": "#/$defs/EdgeSpec"
+          },
+          "maxItems": 18,
+          "title": "Edges",
+          "type": "array"
+        },
+        "kind": {
+          "const": "mechanism-diagram",
+          "title": "Kind",
+          "type": "string"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/NodeSpec"
+          },
+          "maxItems": 12,
+          "minItems": 2,
+          "title": "Nodes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "nodes"
+      ],
+      "title": "MechanismDiagramVisual",
       "type": "object"
     },
     "NodeSpec": {
@@ -74,6 +574,173 @@
       "title": "NodeSpec",
       "type": "object"
     },
+    "ParameterSimulationVisual": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "parameter-simulation",
+          "title": "Kind",
+          "type": "string"
+        },
+        "left_label": {
+          "title": "Left Label",
+          "type": "string"
+        },
+        "maximum": {
+          "title": "Maximum",
+          "type": "number"
+        },
+        "minimum": {
+          "title": "Minimum",
+          "type": "number"
+        },
+        "parameter_label": {
+          "title": "Parameter Label",
+          "type": "string"
+        },
+        "right_label": {
+          "title": "Right Label",
+          "type": "string"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        },
+        "value": {
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "kind",
+        "parameter_label",
+        "minimum",
+        "maximum",
+        "value",
+        "left_label",
+        "right_label"
+      ],
+      "title": "ParameterSimulationVisual",
+      "type": "object"
+    },
+    "ProcessFlowVisual": {
+      "additionalProperties": false,
+      "properties": {
+        "active_step_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Active Step Id"
+        },
+        "edges": {
+          "items": {
+            "$ref": "#/$defs/EdgeSpec"
+          },
+          "maxItems": 18,
+          "title": "Edges",
+          "type": "array"
+        },
+        "kind": {
+          "const": "process-flow",
+          "title": "Kind",
+          "type": "string"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/NodeSpec"
+          },
+          "maxItems": 12,
+          "minItems": 2,
+          "title": "Nodes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "nodes"
+      ],
+      "title": "ProcessFlowVisual",
+      "type": "object"
+    },
+    "RasterScanVisual": {
+      "additionalProperties": false,
+      "properties": {
+        "after_label": {
+          "title": "After Label",
+          "type": "string"
+        },
+        "before_label": {
+          "title": "Before Label",
+          "type": "string"
+        },
+        "direction": {
+          "enum": [
+            "top-to-bottom",
+            "bottom-to-top",
+            "left-to-right"
+          ],
+          "title": "Direction",
+          "type": "string"
+        },
+        "distortion": {
+          "maximum": 1,
+          "minimum": -1,
+          "title": "Distortion",
+          "type": "number"
+        },
+        "kind": {
+          "const": "raster-scan",
+          "title": "Kind",
+          "type": "string"
+        },
+        "rows": {
+          "maximum": 32,
+          "minimum": 6,
+          "title": "Rows",
+          "type": "integer"
+        },
+        "scan_label": {
+          "title": "Scan Label",
+          "type": "string"
+        },
+        "subject": {
+          "enum": [
+            "blade",
+            "pole",
+            "grid",
+            "rotor"
+          ],
+          "title": "Subject",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "direction",
+        "rows",
+        "subject",
+        "distortion",
+        "scan_label",
+        "before_label",
+        "after_label"
+      ],
+      "title": "RasterScanVisual",
+      "type": "object"
+    },
     "ReviewStatus": {
       "enum": [
         "pending",
@@ -97,6 +764,18 @@
           },
           "title": "Asset Ids",
           "type": "array"
+        },
+        "citation_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Citation Label"
         },
         "claim_ids": {
           "items": {
@@ -132,6 +811,29 @@
           "default": null,
           "title": "Evidence Label"
         },
+        "layout": {
+          "default": "hero",
+          "enum": [
+            "hero",
+            "full-diagram",
+            "split",
+            "evidence",
+            "numeric",
+            "limitation"
+          ],
+          "title": "Layout",
+          "type": "string"
+        },
+        "motion": {
+          "default": "precise",
+          "enum": [
+            "calm",
+            "precise",
+            "energetic"
+          ],
+          "title": "Motion",
+          "type": "string"
+        },
         "on_screen_text": {
           "title": "On Screen Text",
           "type": "string"
@@ -149,7 +851,15 @@
             "ChartReveal",
             "ParameterSimulation",
             "Comparison",
-            "LimitationCard"
+            "LimitationCard",
+            "RasterScan",
+            "TimeSlice",
+            "GridWarp",
+            "BeforeAfterOverlay",
+            "AnnotatedChart",
+            "EvidenceHighlight",
+            "ProcessFlow",
+            "Timeline"
           ],
           "title": "Primitive",
           "type": "string"
@@ -199,7 +909,77 @@
           "type": "string"
         },
         "visual": {
-          "$ref": "#/$defs/VisualSpec"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VisualSpec"
+            },
+            {
+              "discriminator": {
+                "mapping": {
+                  "annotated-chart": "#/$defs/AnnotatedChartVisual",
+                  "before-after-overlay": "#/$defs/BeforeAfterOverlayVisual",
+                  "comparison": "#/$defs/ComparisonVisual",
+                  "evidence-highlight": "#/$defs/EvidenceHighlightVisual",
+                  "grid-warp": "#/$defs/GridWarpVisual",
+                  "kinetic-text": "#/$defs/KineticTextVisual",
+                  "limitation": "#/$defs/LimitationVisual",
+                  "mechanism-diagram": "#/$defs/MechanismDiagramVisual",
+                  "parameter-simulation": "#/$defs/ParameterSimulationVisual",
+                  "process-flow": "#/$defs/ProcessFlowVisual",
+                  "raster-scan": "#/$defs/RasterScanVisual",
+                  "source-receipt": "#/$defs/SourceReceiptVisual",
+                  "time-slice": "#/$defs/TimeSliceVisual",
+                  "timeline": "#/$defs/TimelineVisual"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/KineticTextVisual"
+                },
+                {
+                  "$ref": "#/$defs/SourceReceiptVisual"
+                },
+                {
+                  "$ref": "#/$defs/MechanismDiagramVisual"
+                },
+                {
+                  "$ref": "#/$defs/AnnotatedChartVisual"
+                },
+                {
+                  "$ref": "#/$defs/ParameterSimulationVisual"
+                },
+                {
+                  "$ref": "#/$defs/ComparisonVisual"
+                },
+                {
+                  "$ref": "#/$defs/LimitationVisual"
+                },
+                {
+                  "$ref": "#/$defs/RasterScanVisual"
+                },
+                {
+                  "$ref": "#/$defs/TimeSliceVisual"
+                },
+                {
+                  "$ref": "#/$defs/GridWarpVisual"
+                },
+                {
+                  "$ref": "#/$defs/BeforeAfterOverlayVisual"
+                },
+                {
+                  "$ref": "#/$defs/EvidenceHighlightVisual"
+                },
+                {
+                  "$ref": "#/$defs/ProcessFlowVisual"
+                },
+                {
+                  "$ref": "#/$defs/TimelineVisual"
+                }
+              ]
+            }
+          ],
+          "title": "Visual"
         }
       },
       "required": [
@@ -215,6 +995,173 @@
         "dependency_hash"
       ],
       "title": "Scene",
+      "type": "object"
+    },
+    "SourceReceiptVisual": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_id": {
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "excerpt": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Excerpt",
+          "type": "string"
+        },
+        "highlight": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Highlight"
+        },
+        "kind": {
+          "const": "source-receipt",
+          "title": "Kind",
+          "type": "string"
+        },
+        "locator": {
+          "title": "Locator",
+          "type": "string"
+        },
+        "source_title": {
+          "title": "Source Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "source_title",
+        "excerpt",
+        "locator",
+        "evidence_id"
+      ],
+      "title": "SourceReceiptVisual",
+      "type": "object"
+    },
+    "TimeSlice": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "offset": {
+          "maximum": 1,
+          "minimum": -1,
+          "title": "Offset",
+          "type": "number"
+        },
+        "time": {
+          "minimum": 0,
+          "title": "Time",
+          "type": "number"
+        }
+      },
+      "required": [
+        "time",
+        "label",
+        "offset"
+      ],
+      "title": "TimeSlice",
+      "type": "object"
+    },
+    "TimeSliceVisual": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "time-slice",
+          "title": "Kind",
+          "type": "string"
+        },
+        "slices": {
+          "items": {
+            "$ref": "#/$defs/TimeSlice"
+          },
+          "maxItems": 12,
+          "minItems": 2,
+          "title": "Slices",
+          "type": "array"
+        },
+        "unit": {
+          "title": "Unit",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "unit",
+        "slices"
+      ],
+      "title": "TimeSliceVisual",
+      "type": "object"
+    },
+    "TimelineEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "time": {
+          "title": "Time",
+          "type": "number"
+        }
+      },
+      "required": [
+        "time",
+        "label"
+      ],
+      "title": "TimelineEvent",
+      "type": "object"
+    },
+    "TimelineVisual": {
+      "additionalProperties": false,
+      "properties": {
+        "events": {
+          "items": {
+            "$ref": "#/$defs/TimelineEvent"
+          },
+          "maxItems": 10,
+          "minItems": 2,
+          "title": "Events",
+          "type": "array"
+        },
+        "kind": {
+          "const": "timeline",
+          "title": "Kind",
+          "type": "string"
+        },
+        "unit": {
+          "title": "Unit",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "unit",
+        "events"
+      ],
+      "title": "TimelineVisual",
       "type": "object"
     },
     "VisualSpec": {

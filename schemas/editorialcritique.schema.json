@@ -1,0 +1,128 @@
+{
+  "$defs": {
+    "EditorialFinding": {
+      "additionalProperties": false,
+      "properties": {
+        "beat_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Beat Id"
+        },
+        "category": {
+          "enum": [
+            "unsupported-claim",
+            "missing-central-claim",
+            "missing-evidence",
+            "missing-limitation",
+            "repetition",
+            "excessive-text",
+            "weak-hook",
+            "pacing",
+            "manipulative-language",
+            "narrative-drift"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "message": {
+          "maxLength": 600,
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "segment_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Segment Id"
+        },
+        "severity": {
+          "enum": [
+            "warning",
+            "error"
+          ],
+          "title": "Severity",
+          "type": "string"
+        }
+      },
+      "required": [
+        "category",
+        "severity",
+        "message"
+      ],
+      "title": "EditorialFinding",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "beat_plan_version_id": {
+      "title": "Beat Plan Version Id",
+      "type": "string"
+    },
+    "blocking": {
+      "title": "Blocking",
+      "type": "boolean"
+    },
+    "critique_id": {
+      "pattern": "^editorial-critique-[0-9a-f]{16}$",
+      "title": "Critique Id",
+      "type": "string"
+    },
+    "findings": {
+      "items": {
+        "$ref": "#/$defs/EditorialFinding"
+      },
+      "title": "Findings",
+      "type": "array"
+    },
+    "input_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Input Hash",
+      "type": "string"
+    },
+    "narrative_brief_version_id": {
+      "title": "Narrative Brief Version Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "script_version_id": {
+      "title": "Script Version Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "critique_id",
+    "narrative_brief_version_id",
+    "beat_plan_version_id",
+    "script_version_id",
+    "input_hash",
+    "blocking"
+  ],
+  "title": "EditorialCritique",
+  "type": "object"
+}

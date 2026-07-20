@@ -1,0 +1,233 @@
+{
+  "$defs": {
+    "FactualLock": {
+      "additionalProperties": false,
+      "description": "Exact claim-content snapshot that creative artifacts may not expand.",
+      "properties": {
+        "approval_hash": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approval Hash"
+        },
+        "assertion": {
+          "maxLength": 1200,
+          "minLength": 1,
+          "title": "Assertion",
+          "type": "string"
+        },
+        "claim_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Claim Id",
+          "type": "string"
+        },
+        "claim_state_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Claim State Hash",
+          "type": "string"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "claim_id",
+        "claim_state_hash",
+        "assertion",
+        "evidence_span_ids"
+      ],
+      "title": "FactualLock",
+      "type": "object"
+    },
+    "SceneGuidance": {
+      "additionalProperties": false,
+      "properties": {
+        "animation_beats": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "title": "Animation Beats",
+          "type": "array"
+        },
+        "beat_id": {
+          "title": "Beat Id",
+          "type": "string"
+        },
+        "claim_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "title": "Claim Ids",
+          "type": "array"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 16,
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "layout_family": {
+          "enum": [
+            "hero",
+            "full-diagram",
+            "split-comparison",
+            "evidence-receipt",
+            "numeric-result",
+            "limitation"
+          ],
+          "title": "Layout Family",
+          "type": "string"
+        },
+        "on_screen_text": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "On Screen Text",
+          "type": "string"
+        },
+        "order": {
+          "minimum": 0,
+          "title": "Order",
+          "type": "integer"
+        },
+        "primitive_hint": {
+          "enum": [
+            "KineticText",
+            "SourceReceipt",
+            "MechanismDiagram",
+            "ChartReveal",
+            "ParameterSimulation",
+            "Comparison",
+            "LimitationCard",
+            "RasterScan",
+            "GridWarp",
+            "BeforeAfterOverlay",
+            "EvidenceHighlight",
+            "Timeline"
+          ],
+          "title": "Primitive Hint",
+          "type": "string"
+        },
+        "scene_key": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Scene Key",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "visual_direction": {
+          "maxLength": 1000,
+          "minLength": 8,
+          "title": "Visual Direction",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scene_key",
+        "order",
+        "beat_id",
+        "layout_family",
+        "primitive_hint",
+        "on_screen_text",
+        "visual_direction",
+        "animation_beats",
+        "claim_ids"
+      ],
+      "title": "SceneGuidance",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "angle": {
+      "enum": [
+        "surprising-result",
+        "everyday-mechanism",
+        "engineering-tradeoff"
+      ],
+      "title": "Angle",
+      "type": "string"
+    },
+    "beat_plan_version_id": {
+      "title": "Beat Plan Version Id",
+      "type": "string"
+    },
+    "factual_locks": {
+      "items": {
+        "$ref": "#/$defs/FactualLock"
+      },
+      "minItems": 1,
+      "title": "Factual Locks",
+      "type": "array"
+    },
+    "narrative_brief_version_id": {
+      "title": "Narrative Brief Version Id",
+      "type": "string"
+    },
+    "scenes": {
+      "items": {
+        "$ref": "#/$defs/SceneGuidance"
+      },
+      "maxItems": 12,
+      "minItems": 5,
+      "title": "Scenes",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "script_version_id": {
+      "title": "Script Version Id",
+      "type": "string"
+    },
+    "version_id": {
+      "pattern": "^visual-plan-[0-9a-f]{16}$",
+      "title": "Version Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "version_id",
+    "narrative_brief_version_id",
+    "beat_plan_version_id",
+    "script_version_id",
+    "angle",
+    "factual_locks",
+    "scenes"
+  ],
+  "title": "StoryboardGuidance",
+  "type": "object"
+}

@@ -1,0 +1,229 @@
+{
+  "$defs": {
+    "FactualLock": {
+      "additionalProperties": false,
+      "description": "Exact claim-content snapshot that creative artifacts may not expand.",
+      "properties": {
+        "approval_hash": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approval Hash"
+        },
+        "assertion": {
+          "maxLength": 1200,
+          "minLength": 1,
+          "title": "Assertion",
+          "type": "string"
+        },
+        "claim_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Claim Id",
+          "type": "string"
+        },
+        "claim_state_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Claim State Hash",
+          "type": "string"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "claim_id",
+        "claim_state_hash",
+        "assertion",
+        "evidence_span_ids"
+      ],
+      "title": "FactualLock",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "angle": {
+      "enum": [
+        "surprising-result",
+        "everyday-mechanism",
+        "engineering-tradeoff"
+      ],
+      "title": "Angle",
+      "type": "string"
+    },
+    "angle_selection_id": {
+      "title": "Angle Selection Id",
+      "type": "string"
+    },
+    "angles_version_id": {
+      "title": "Angles Version Id",
+      "type": "string"
+    },
+    "audience": {
+      "maxLength": 240,
+      "minLength": 3,
+      "title": "Audience",
+      "type": "string"
+    },
+    "central_claim_ids": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "minItems": 1,
+      "title": "Central Claim Ids",
+      "type": "array"
+    },
+    "central_mechanism": {
+      "maxLength": 800,
+      "minLength": 12,
+      "title": "Central Mechanism",
+      "type": "string"
+    },
+    "claims_version_id": {
+      "title": "Claims Version Id",
+      "type": "string"
+    },
+    "evidence_claim_ids": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "minItems": 1,
+      "title": "Evidence Claim Ids",
+      "type": "array"
+    },
+    "evidence_version_id": {
+      "title": "Evidence Version Id",
+      "type": "string"
+    },
+    "factual_locks": {
+      "items": {
+        "$ref": "#/$defs/FactualLock"
+      },
+      "minItems": 1,
+      "title": "Factual Locks",
+      "type": "array"
+    },
+    "limitation_claim_ids": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "minItems": 1,
+      "title": "Limitation Claim Ids",
+      "type": "array"
+    },
+    "meaningful_limitation": {
+      "maxLength": 600,
+      "minLength": 20,
+      "title": "Meaningful Limitation",
+      "type": "string"
+    },
+    "promise": {
+      "maxLength": 400,
+      "minLength": 12,
+      "title": "Promise",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "target_duration_seconds": {
+      "default": [
+        45,
+        75
+      ],
+      "maxItems": 2,
+      "minItems": 2,
+      "prefixItems": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "title": "Target Duration Seconds",
+      "type": "array"
+    },
+    "target_word_count": {
+      "default": [
+        130,
+        170
+      ],
+      "maxItems": 2,
+      "minItems": 2,
+      "prefixItems": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        }
+      ],
+      "title": "Target Word Count",
+      "type": "array"
+    },
+    "version_id": {
+      "pattern": "^brief-[0-9a-f]{16}$",
+      "title": "Version Id",
+      "type": "string"
+    },
+    "visible_evidence": {
+      "maxLength": 600,
+      "minLength": 12,
+      "title": "Visible Evidence",
+      "type": "string"
+    },
+    "visual_motif": {
+      "maxLength": 600,
+      "minLength": 12,
+      "title": "Visual Motif",
+      "type": "string"
+    }
+  },
+  "required": [
+    "version_id",
+    "claims_version_id",
+    "evidence_version_id",
+    "angles_version_id",
+    "angle_selection_id",
+    "angle",
+    "audience",
+    "promise",
+    "central_mechanism",
+    "central_claim_ids",
+    "evidence_claim_ids",
+    "limitation_claim_ids",
+    "visible_evidence",
+    "meaningful_limitation",
+    "visual_motif",
+    "factual_locks"
+  ],
+  "title": "NarrativeBrief",
+  "type": "object"
+}
