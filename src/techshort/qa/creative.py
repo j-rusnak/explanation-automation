@@ -754,9 +754,7 @@ def _dead_air_static_check(snapshot: CreativeQualityInput) -> CreativeQualityChe
 def _rehook_payoff_check(snapshot: CreativeQualityInput) -> CreativeQualityCheck:
     if snapshot.retention is not None:
         total_duration = snapshot.retention.total_duration_seconds
-        rehooks = [
-            event for event in snapshot.retention.events if event.event_kind == "re-hook"
-        ]
+        rehooks = [event for event in snapshot.retention.events if event.event_kind == "re-hook"]
         final_payoffs = [
             event for event in snapshot.retention.events if event.event_kind == "final-payoff"
         ]
@@ -819,65 +817,28 @@ def _rehook_payoff_check(snapshot: CreativeQualityInput) -> CreativeQualityCheck
             },
         )
 
-    total_duration = sum(scene.duration_seconds for scene in snapshot.scenes)
-    starts = _scene_starts(snapshot)
-
-    def find_role(role: EngagementRole) -> tuple[CreativeSceneInput, float] | None:
-        explicit = [
-            (scene, start)
-            for scene, start in zip(snapshot.scenes, starts, strict=True)
-            if scene.engagement_role == role
-        ]
-        if explicit:
-            return explicit[0]
-        tokens = (
-            ("question", "contrast", "switch", "surprise", "highlight", "reveal")
-            if role == "rehook"
-            else ("payoff", "result", "resolve", "assemble", "complete", "reveal")
-        )
-        minimum = 0.20 if role == "rehook" else 0.45
-        for scene, start in zip(snapshot.scenes[1:], starts[1:], strict=True):
-            position = start / total_duration if total_duration else 0.0
-            beats = " ".join(scene.motion_beats).casefold()
-            if position >= minimum and any(token in beats for token in tokens):
-                return scene, start
-        return None
-
-    rehook = find_role("rehook")
-    payoff = find_role("payoff")
-    rehook_position = rehook[1] / total_duration if rehook and total_duration else None
-    payoff_position = payoff[1] / total_duration if payoff and total_duration else None
-    valid_rehook = rehook_position is not None and 0.20 <= rehook_position <= 0.65
-    valid_payoff = payoff_position is not None and 0.45 <= payoff_position <= 0.90
-    status: QualityStatus = "pass" if valid_rehook and valid_payoff else "warning"
-    offenders = [
-        item[0].scene_id
-        for item, valid in ((rehook, valid_rehook), (payoff, valid_payoff))
-        if item is not None and not valid
+    declared_rehooks = [
+        scene.scene_id for scene in snapshot.scenes if scene.engagement_role == "rehook"
+    ]
+    declared_payoffs = [
+        scene.scene_id for scene in snapshot.scenes if scene.engagement_role == "payoff"
     ]
     return _check(
         "rehook-payoff-placement",
         "engagement",
-        status,
-        (
-            "Re-hook and payoff land inside the advisory runtime windows"
-            if status == "pass"
-            else "Re-hook or payoff is missing or outside its advisory runtime window"
-        ),
+        "warning",
+        "No validated retention plan is available; scene positions and labels cannot verify "
+        "re-hook or payoff timing",
         remediation=(
-            "Place one truthful visual re-hook at 20–65% of runtime and resolve the central "
-            "promise at 45–90%; do not withhold essential context as bait."
-            if status != "pass"
-            else None
+            "Generate and validate an evidence-locked retention plan with explicitly scheduled "
+            "re-hook, evidence-payoff, and final-payoff events. Legacy scene labels remain "
+            "advisory and are never treated as proof of placement."
         ),
-        object_ids=offenders,
         details={
-            "rehook_runtime_position": (
-                f"{rehook_position:.3f}" if rehook_position is not None else "missing"
-            ),
-            "payoff_runtime_position": (
-                f"{payoff_position:.3f}" if payoff_position is not None else "missing"
-            ),
+            "timing_source": "missing-retention-plan",
+            "declared_rehook_scene_ids": ",".join(declared_rehooks) or "none",
+            "declared_payoff_scene_ids": ",".join(declared_payoffs) or "none",
+            "legacy_scene_roles_accepted": "false",
         },
     )
 
@@ -905,10 +866,7 @@ def _hook_integrity_check(snapshot: CreativeQualityInput) -> CreativeQualityChec
     missing_provenance = first.factual and (not first.citation or not first.evidence_label)
     dishonest_plan = bool(
         snapshot.retention is not None
-        and (
-            not snapshot.retention.truth_up_front
-            or snapshot.retention.deceptive_withholding
-        )
+        and (not snapshot.retention.truth_up_front or snapshot.retention.deceptive_withholding)
     )
     if matched or dishonest_plan:
         status: QualityStatus = "failure"
@@ -1379,22 +1337,6 @@ def creative_input_from_manifests(
             retention_events_by_beat.setdefault(event.beat_id, []).append(
                 f"{event.event_kind}:{event.device}"
             )
-    rehook_index = next(
-        (
-            index
-            for index, scene in enumerate(storyboard.scenes[1:], start=1)
-            if total_duration and scene.start_time / total_duration >= 0.20
-        ),
-        None,
-    )
-    payoff_index = next(
-        (
-            index
-            for index, scene in enumerate(storyboard.scenes[1:], start=1)
-            if total_duration and scene.start_time / total_duration >= 0.55
-        ),
-        None,
-    )
     scenes: list[CreativeSceneInput] = []
     for index, scene in enumerate(storyboard.scenes):
         linked_segments = [
@@ -1411,10 +1353,6 @@ def creative_input_from_manifests(
             engagement_role = "cold-open"
         elif any(segment.segment_type == "limitation" for segment in linked_segments):
             engagement_role = "limitation"
-        elif index == rehook_index:
-            engagement_role = "rehook"
-        elif index == payoff_index:
-            engagement_role = "payoff"
         elif scene.primitive in {"SourceReceipt", "EvidenceHighlight", "AnnotatedChart"}:
             engagement_role = "evidence"
         elif index == len(storyboard.scenes) - 1:

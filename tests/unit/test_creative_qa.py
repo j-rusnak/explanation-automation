@@ -34,7 +34,7 @@ def _checks(snapshot: CreativeQualityInput) -> dict[str, str]:
     return {check.check_id: check.status for check in result.checks}
 
 
-def test_multi_topic_golden_corpus_is_strict_and_passes() -> None:
+def test_multi_topic_golden_corpus_flags_missing_retention_metadata() -> None:
     paths = sorted(QUALITY_FIXTURES.glob("*.json"))
     assert len(paths) >= 5
 
@@ -50,10 +50,12 @@ def test_multi_topic_golden_corpus_is_strict_and_passes() -> None:
         first = evaluate_creative_quality(snapshot)
         second = evaluate_creative_quality(snapshot)
         assert first == second
-        assert first.status == "pass", {
-            check.check_id: check.message for check in first.checks if check.status != "pass"
+        non_pass = {
+            check.check_id: check.status for check in first.checks if check.status != "pass"
         }
-        assert first.score == 100
+        assert non_pass == {"rehook-payoff-placement": "warning"}
+        assert first.status == "warning"
+        assert first.score == 96
 
 
 def test_quality_snapshot_rejects_unknown_fields() -> None:
@@ -201,6 +203,23 @@ def test_retention_checks_require_rehook_and_payoff_without_rewarding_bait() -> 
     assert "remove bait" in checks["hook-integrity"].remediation
 
 
+def test_legacy_scene_positions_roles_and_motion_tokens_do_not_fake_retention_pass() -> None:
+    snapshot = _fixture("comparison.json")
+
+    result = evaluate_creative_quality(snapshot)
+    check = next(item for item in result.checks if item.check_id == "rehook-payoff-placement")
+
+    assert check.status == "warning"
+    assert check.details == {
+        "timing_source": "missing-retention-plan",
+        "declared_rehook_scene_ids": "s2",
+        "declared_payoff_scene_ids": "s3",
+        "legacy_scene_roles_accepted": "false",
+    }
+    assert check.remediation is not None
+    assert "retention plan" in check.remediation
+
+
 def test_caption_timing_and_flashing_proxies_are_actionable() -> None:
     payload = _fixture("timeline.json").model_dump(mode="json")
     scenes = payload["scenes"]
@@ -328,6 +347,27 @@ def test_current_manifest_adapter_preserves_quality_metadata() -> None:
         citation="Camera timing note · Sensor readout",
     )
 
+    legacy_snapshot = creative_input_from_manifests(
+        storyboard,
+        script,
+        cues_from_script(script),
+        cover,
+        case_id="adapter-legacy-test",
+        topic_kind="mechanism",
+        pacing="high-retention",
+    )
+    assert legacy_snapshot.retention is None
+    assert not any(
+        scene.engagement_role in {"rehook", "payoff"} for scene in legacy_snapshot.scenes
+    )
+    legacy_check = next(
+        check
+        for check in evaluate_creative_quality(legacy_snapshot).checks
+        if check.check_id == "rehook-payoff-placement"
+    )
+    assert legacy_check.status == "warning"
+    assert legacy_check.details["timing_source"] == "missing-retention-plan"
+
     snapshot = creative_input_from_manifests(
         storyboard,
         script,
@@ -377,10 +417,8 @@ def test_current_manifest_adapter_preserves_quality_metadata() -> None:
     assert retimed.retention.events[0].scheduled_at_seconds == pytest.approx(
         retention_plan.attention_events[0].scheduled_at_seconds * expected_scale
     )
-    retimed_checks = {
-        check.check_id: check for check in evaluate_creative_quality(retimed).checks
-    }
+    retimed_checks = {check.check_id: check for check in evaluate_creative_quality(retimed).checks}
     assert retimed_checks["cold-open-timing"].details["timing_scale"] == f"{expected_scale:.3f}"
-    assert retimed_checks["visual-beat-cadence"].details[
-        "plan_scene_runtime_delta_seconds"
-    ] == "0.00"
+    assert (
+        retimed_checks["visual-beat-cadence"].details["plan_scene_runtime_delta_seconds"] == "0.00"
+    )
