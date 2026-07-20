@@ -699,7 +699,7 @@ def status(slug: str, json_output: Annotated[bool, typer.Option("--json")] = Fal
 
 @app.command()
 def demo(
-    slug: str = "rolling-shutter",
+    slug: Annotated[str, typer.Argument()] = "rolling-shutter",
     yes: Annotated[
         bool,
         typer.Option("--yes", help="Confirm regeneration and all five fixture review gates."),
