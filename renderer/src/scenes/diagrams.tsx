@@ -286,7 +286,7 @@ export const RasterScan: React.FC<PrimitiveProps> = ({ scene, themeName }) => {
                         position: "absolute",
                         left: horizontalScan ? 0 : `${ratio * 100}%`,
                         right: horizontalScan ? 0 : undefined,
-                        top: horizontalScan ? `${ratio * 100}%` : 0,
+                        top: horizontalScan ? `${12 + ratio * 84}%` : 0,
                         bottom: horizontalScan ? undefined : 0,
                         width: horizontalScan ? undefined : 2,
                         height: horizontalScan ? 2 : undefined,

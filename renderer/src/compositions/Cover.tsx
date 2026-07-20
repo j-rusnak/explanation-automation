@@ -89,6 +89,20 @@ const CoverShape: React.FC<{
       </svg>
     );
   }
+  if (feature === "straight-edge" && distorted) {
+    return (
+      <svg width="390" height="540" viewBox="0 0 390 540" aria-hidden="true">
+        <path
+          d="M 108 505 Q 118 275 272 35"
+          fill="none"
+          stroke={active}
+          strokeWidth={36}
+          strokeLinecap="round"
+          style={{ filter: `drop-shadow(0 0 24px ${active}66)` }}
+        />
+      </svg>
+    );
+  }
   return (
     <div
       style={{

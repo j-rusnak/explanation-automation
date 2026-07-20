@@ -194,27 +194,34 @@ export function AnnotatedChart({
               );
             });
           })}
-          {visual.annotations.map((annotation, index) => (
-            <g key={`${annotation.label}-${index}`} opacity={progress}>
-              <line
-                x1={xAt(annotation.x)}
-                y1={yAt(annotation.y)}
-                x2={xAt(annotation.x) + 50}
-                y2={yAt(annotation.y) - 50}
-                stroke={tokens.warning}
-                strokeWidth={4}
-              />
-              <text
-                x={xAt(annotation.x) + 57}
-                y={yAt(annotation.y) - 52}
-                fill={tokens.warning}
-                fontSize={22}
-                fontWeight={700}
-              >
-                {annotation.label}
-              </text>
-            </g>
-          ))}
+          {visual.annotations.map((annotation, index) => {
+            const pointX = xAt(annotation.x);
+            const pointY = yAt(annotation.y);
+            const placeLeft = pointX > 650;
+            const direction = placeLeft ? -1 : 1;
+            return (
+              <g key={`${annotation.label}-${index}`} opacity={progress}>
+                <line
+                  x1={pointX}
+                  y1={pointY}
+                  x2={pointX + direction * 50}
+                  y2={Math.max(28, pointY - 50)}
+                  stroke={tokens.warning}
+                  strokeWidth={4}
+                />
+                <text
+                  x={pointX + direction * 57}
+                  y={Math.max(26, pointY - 52)}
+                  textAnchor={placeLeft ? "end" : "start"}
+                  fill={tokens.warning}
+                  fontSize={22}
+                  fontWeight={700}
+                >
+                  {annotation.label}
+                </text>
+              </g>
+            );
+          })}
           <text
             x={470}
             y={570}

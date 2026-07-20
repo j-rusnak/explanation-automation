@@ -281,6 +281,21 @@ export const Shape: React.FC<{
       </svg>
     );
   }
+  if (feature === "straight-edge" && distorted) {
+    const bend = 82 * progress;
+    return (
+      <svg width="250" height="340" viewBox="0 0 250 340" aria-hidden="true">
+        <path
+          d={`M 76 310 Q ${76 + bend * 0.12} 172 ${76 + bend} 30`}
+          fill="none"
+          stroke={tokens.warning}
+          strokeWidth={24}
+          strokeLinecap="round"
+          style={{ filter: `drop-shadow(0 0 18px ${tokens.warning}66)` }}
+        />
+      </svg>
+    );
+  }
   return (
     <div
       style={{
