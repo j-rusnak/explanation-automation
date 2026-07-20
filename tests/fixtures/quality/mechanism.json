@@ -1,0 +1,67 @@
+{
+  "schema_version": "1.0.0",
+  "case_id": "golden-mechanism",
+  "topic_kind": "mechanism",
+  "storyboard_version_id": "storyboard-golden-mechanism",
+  "script_version_id": "script-golden-mechanism",
+  "cover": {
+    "cover_id": "cover-golden-mechanism",
+    "headline": "Why Straight Blades Look Bent",
+    "focal_visual": "scanline-warped blade comparison",
+    "layout": "split-hero",
+    "subtitle": "The sensor records rows at different moments",
+    "citation": "Camera timing note · Sensor readout",
+    "factual": true
+  },
+  "scenes": [
+    {
+      "scene_id": "s1", "primitive": "KineticText", "layout": "hero",
+      "duration_seconds": 4, "title": "One frame, many moments",
+      "on_screen_text": "Rows expose in sequence", "body": null,
+      "narration": "A rolling shutter records image rows at slightly different moments.",
+      "factual": true, "citation": "Camera timing note · Sensor readout",
+      "evidence_label": "DOCUMENTED", "series": [], "labels": [],
+      "x_axis_label": null, "y_axis_label": null, "units": null,
+      "motion_beats": ["headline-in", "row-scan"], "color_encodings": {},
+      "non_color_cues": []
+    },
+    {
+      "scene_id": "s2", "primitive": "RasterScan", "layout": "full-diagram",
+      "duration_seconds": 6, "title": "The edge moves during readout",
+      "on_screen_text": "Each row sees a new position", "body": null,
+      "narration": "As the blade moves, each newly sampled row captures a later position.",
+      "factual": true, "citation": "Camera timing note · Motion example",
+      "evidence_label": "DOCUMENTED", "series": [], "labels": [],
+      "x_axis_label": null, "y_axis_label": null, "units": null,
+      "motion_beats": ["edge-moves", "scanline-follows", "samples-hold"],
+      "color_encodings": {}, "non_color_cues": []
+    },
+    {
+      "scene_id": "s3", "primitive": "GridWarp", "layout": "before-after",
+      "duration_seconds": 6, "title": "Rows assemble into a skew",
+      "on_screen_text": "Time becomes shape", "body": null,
+      "narration": "Stack those time-shifted rows and a straight moving edge appears skewed.",
+      "factual": true, "citation": "Camera timing note · Distortion mechanism",
+      "evidence_label": "DOCUMENTED", "series": [], "labels": [],
+      "x_axis_label": null, "y_axis_label": null, "units": null,
+      "motion_beats": ["rows-stack", "outline-reveals"], "color_encodings": {},
+      "non_color_cues": []
+    },
+    {
+      "scene_id": "s4", "primitive": "LimitationCard", "layout": "editorial-card",
+      "duration_seconds": 5, "title": "Motion and timing both matter",
+      "on_screen_text": "Static scenes stay straight", "body": null,
+      "narration": "The effect depends on motion during readout, so it is not present in every frame.",
+      "factual": true, "citation": "Camera timing note · Limitation",
+      "evidence_label": "DOCUMENTED", "series": [], "labels": [],
+      "x_axis_label": null, "y_axis_label": null, "units": null,
+      "motion_beats": ["condition-in", "limitation-hold"], "color_encodings": {},
+      "non_color_cues": []
+    }
+  ],
+  "captions": [
+    {"cue_id": "c1", "start_seconds": 0, "end_seconds": 2.5, "text": "Rows are recorded at different moments."},
+    {"cue_id": "c2", "start_seconds": 2.5, "end_seconds": 5.5, "text": "A moving edge shifts during that readout."},
+    {"cue_id": "c3", "start_seconds": 5.5, "end_seconds": 8.5, "text": "The assembled rows make time look like shape."}
+  ]
+}
