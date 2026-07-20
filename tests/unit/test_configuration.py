@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from techshort.configuration import set_pacing_profile
-from techshort.domain.models import ReviewStatus
+from techshort.configuration import set_pacing_profile, set_safe_zone
+from techshort.domain.models import ReviewStatus, SafeZoneInsets
 from techshort.domain.storage import ProjectStore
 
 
@@ -35,3 +35,19 @@ def test_pacing_profile_rejects_unknown_values(tmp_path: Path) -> None:
     store.initialize("Pacing test")
     with pytest.raises(ValueError, match="measured, brisk, or high-retention"):
         set_pacing_profile(store, "viral-chaos")  # type: ignore[arg-type]
+
+
+def test_safe_zone_is_bounded_and_invalidates_visual_review(tmp_path: Path) -> None:
+    store = ProjectStore(tmp_path / "projects", "safe-zone-test")
+    store.initialize("Safe zone test")
+    assert store.project().safe_zone == SafeZoneInsets()
+
+    set_safe_zone(
+        store,
+        SafeZoneInsets(top=0.05, right=0.16, bottom=0.18, left=0.07),
+    )
+
+    assert store.project().safe_zone.right == 0.16
+    assert store.project().approvals.storyboard == ReviewStatus.STALE
+    with pytest.raises(ValueError, match="too little usable content"):
+        SafeZoneInsets(top=0.22, right=0.1, bottom=0.2, left=0.1)

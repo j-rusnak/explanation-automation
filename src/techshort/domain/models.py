@@ -47,6 +47,22 @@ class StrictModel(BaseModel):
     schema_version: Literal["1.0.0"] = SCHEMA_VERSION
 
 
+class SafeZoneInsets(BaseModel):
+    """Resolution-independent insets for shared TikTok/Reels-safe content."""
+
+    model_config = ConfigDict(extra="forbid", validate_assignment=True, allow_inf_nan=False)
+    top: float = Field(default=0.06, ge=0, le=0.25)
+    right: float = Field(default=0.14, ge=0, le=0.25)
+    bottom: float = Field(default=0.17, ge=0, le=0.25)
+    left: float = Field(default=0.067, ge=0, le=0.25)
+
+    @model_validator(mode="after")
+    def leaves_a_useful_content_area(self) -> SafeZoneInsets:
+        if self.left + self.right > 0.4 or self.top + self.bottom > 0.4:
+            raise ValueError("safe-zone insets leave too little usable content area")
+        return self
+
+
 class ReviewStatus(StrEnum):
     PENDING = "pending"
     APPROVED = "approved"
@@ -75,6 +91,7 @@ class ProjectManifest(StrictModel):
     fps: int = 30
     theme: Literal["midnight", "blueprint", "signal-lab", "technical-editorial"] = "blueprint"
     pacing: PacingProfile = "high-retention"
+    safe_zone: SafeZoneInsets = Field(default_factory=SafeZoneInsets)
     narration_mode: Literal["narrated", "silent-reviewed"] = "narrated"
     source_ids: list[str] = Field(default_factory=list)
     active_source_id: str | None = None

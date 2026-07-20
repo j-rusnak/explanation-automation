@@ -204,6 +204,7 @@ def current_artifact_hashes(store: ProjectStore) -> dict[str, str]:
             "fps": project.fps,
             "theme": project.theme,
             "pacing": project.pacing,
+            "safe_zone": project.safe_zone.model_dump(mode="json"),
             "narration_mode": project.narration_mode,
             "content_risk": project.content_risk,
             "active_source_id": project.active_source_id,

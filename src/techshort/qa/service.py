@@ -78,9 +78,9 @@ from techshort.review import (
 
 PREVIEW_WIDTH = 360
 PREVIEW_HEIGHT = 640
-CAPTION_BOTTOM_INSET = 145
 CAPTION_MIN_HEIGHT = 170
 FULL_HEIGHT = 1920
+MIN_PLATFORM_SAFE_ZONE = {"top": 0.04, "right": 0.1, "bottom": 0.15, "left": 0.05}
 MIN_TEXT_CONTRAST = 4.5
 DEFAULT_THEME_COLORS = {
     "background": "#071124",
@@ -850,6 +850,7 @@ def run_qa(
             cover_input,
             case_id=project.project_id,
             topic_kind="mechanism",
+            pacing=project.pacing,
         )
         creative_result = evaluate_creative_quality(creative_snapshot)
         creative_path = str(Path(destination).parent / "creative-quality.json").replace("\\", "/")
@@ -895,15 +896,19 @@ def run_qa(
             hard_blocker=False,
         )
     )
-    inset_ratio = CAPTION_BOTTOM_INSET / FULL_HEIGHT
     caption_height_ratio = CAPTION_MIN_HEIGHT / FULL_HEIGHT
-    safe_zone_valid = inset_ratio >= 0.05 and caption_height_ratio <= 0.12 and not caption_issues
+    safe_zone = project.safe_zone.model_dump(mode="json")
+    safe_zone_valid = (
+        all(safe_zone[side] >= minimum for side, minimum in MIN_PLATFORM_SAFE_ZONE.items())
+        and caption_height_ratio <= 0.12
+        and not caption_issues
+    )
     checks.append(
         _check(
             "caption-safe-zone",
             safe_zone_valid,
-            "Caption geometry remains inside the configured mobile safe zone",
-            "Caption geometry or cue length can leave the configured mobile safe zone",
+            "Caption geometry remains inside the shared TikTok/Reels-safe content zone",
+            "Caption geometry, configured insets, or cue length can enter platform UI zones",
         )
     )
 

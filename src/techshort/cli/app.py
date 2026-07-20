@@ -21,13 +21,14 @@ from techshort.audio import (
     probe_duration,
     set_narration_mode,
 )
-from techshort.configuration import PACING_PROFILES, set_pacing_profile
+from techshort.configuration import PACING_PROFILES, set_pacing_profile, set_safe_zone
 from techshort.domain.hashing import sha256_file, stable_hash
 from techshort.domain.models import (
     ClaimCritiqueReport,
     PacingProfile,
     QAReport,
     ReviewStatus,
+    SafeZoneInsets,
     ScriptManifest,
 )
 from techshort.domain.storage import ProjectStore, load_model
@@ -102,6 +103,29 @@ def style_pacing(slug: str, profile: str) -> None:
             console.print(
                 f"Pacing set to {profile}; storyboard and downstream review are now stale"
             )
+    except (OSError, ValueError) as exc:
+        fail(str(exc))
+
+
+@style_app.command("safe-zone")
+def style_safe_zone(
+    slug: str,
+    top: Annotated[float, typer.Option(min=0, max=0.25)] = 0.06,
+    right: Annotated[float, typer.Option(min=0, max=0.25)] = 0.14,
+    bottom: Annotated[float, typer.Option(min=0, max=0.25)] = 0.17,
+    left: Annotated[float, typer.Option(min=0, max=0.25)] = 0.067,
+) -> None:
+    """Set resolution-independent content insets shared by TikTok and Reels."""
+
+    try:
+        target = store(slug)
+        safe_zone = SafeZoneInsets(top=top, right=right, bottom=bottom, left=left)
+        previous = target.project().safe_zone
+        set_safe_zone(target, safe_zone)
+        if previous == safe_zone:
+            console.print("Safe zone already matches those insets")
+        else:
+            console.print("Safe zone updated; storyboard and downstream review are now stale")
     except (OSError, ValueError) as exc:
         fail(str(exc))
 
