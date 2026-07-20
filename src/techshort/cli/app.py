@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Annotated, Any, NoReturn, cast
+from typing import Annotated, Any, NoReturn
 
 import typer
 from rich.console import Console
@@ -25,7 +25,6 @@ from techshort.configuration import PACING_PROFILES, set_pacing_profile, set_saf
 from techshort.domain.hashing import sha256_file, stable_hash
 from techshort.domain.models import (
     ClaimCritiqueReport,
-    PacingProfile,
     QAReport,
     ReviewStatus,
     SafeZoneInsets,
@@ -96,7 +95,7 @@ def style_pacing(slug: str, profile: str) -> None:
             raise ValueError("pacing must be measured, brisk, or high-retention")
         target = store(slug)
         previous = target.project().pacing
-        set_pacing_profile(target, cast(PacingProfile, profile))
+        set_pacing_profile(target, profile)
         if previous == profile:
             console.print(f"Pacing already set to {profile}")
         else:

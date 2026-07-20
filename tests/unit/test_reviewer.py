@@ -53,6 +53,8 @@ def test_reviewer_constructs_every_step_without_duplicate_widget_ids(
     assert not app.exception
     assert app.selectbox(key="project-theme")
     assert app.button(key="project-theme-apply")
+    assert app.selectbox(key="project-pacing")
+    assert app.button(key="project-pacing-apply")
     assert app.selectbox(key="project-narration-mode")
     assert app.button(key="project-narration-mode-apply")
     steps = [
@@ -106,6 +108,11 @@ def test_script_step_shows_all_angles_and_explicit_selection_controls(
     app.run()
     assert not app.exception
     assert any("Editorial critique" in item.value for item in app.subheader)
+    assert any("Retention plan" in item.value for item in app.subheader)
+    assert any(
+        metric.label == "Narration pace" and "WPM" in metric.value for metric in app.metric
+    )
+    assert any(item.label == "Retention event schedule" for item in app.expander)
     for candidate in angles.candidates:
         assert any(candidate.title in item.value for item in app.markdown)
         assert app.button(key=f"angle-select-{candidate.angle}")
@@ -146,6 +153,8 @@ def test_qa_step_surfaces_creative_quality_findings(
 
     assert not app.exception
     assert any("Creative quality review" in item.value for item in app.subheader)
+    assert any("Retention plan" in item.value for item in app.subheader)
+    assert app.checkbox(key="creative-show-passes")
 
 
 def test_project_preferences_and_cover_selection_persist(
@@ -162,6 +171,12 @@ def test_project_preferences_and_cover_selection_persist(
     app.button(key="project-theme-apply").click()
     app.run()
     assert store.project().theme == "signal-lab"
+
+    app.selectbox(key="project-pacing").set_value("measured")
+    app.run()
+    app.button(key="project-pacing-apply").click()
+    app.run()
+    assert store.project().pacing == "measured"
 
     app.selectbox(key="project-narration-mode").set_value("silent-reviewed")
     app.run()

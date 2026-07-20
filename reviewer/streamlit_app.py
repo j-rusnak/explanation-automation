@@ -22,7 +22,13 @@ from techshort.audio import (
     probe_duration,
     set_narration_mode,
 )
-from techshort.domain.creative import EditorialCritique, VisualCritique
+from techshort.configuration import PACING_PROFILES, set_pacing_profile
+from techshort.domain.creative import (
+    EditorialCritique,
+    RetentionCritique,
+    RetentionPlan,
+    VisualCritique,
+)
 from techshort.domain.hashing import sha256_file, stable_hash
 from techshort.domain.models import (
     AngleSelection,
@@ -365,7 +371,160 @@ def _show_cover_candidates(store: ProjectStore) -> None:
     )
 
 
+def _retention_review_state(
+    store: ProjectStore,
+    script: ScriptManifest,
+) -> tuple[
+    RetentionPlan | None,
+    RetentionCritique | None,
+    bool,
+    bool,
+    str | None,
+]:
+    project = store.project()
+    try:
+        plan = _load_if(store, "script/retention-plan.json", RetentionPlan)
+        critique = _load_if(store, "script/retention-critique.json", RetentionCritique)
+    except (OSError, ValueError) as exc:
+        return None, None, False, False, f"Saved retention artifacts are invalid: {exc}"
+    plan_is_current = bool(
+        plan is not None
+        and project.active_versions.get("retention_plan") == plan.version_id
+        and plan.script_version_id == script.version_id
+    )
+    critique_is_current = bool(
+        plan is not None
+        and critique is not None
+        and plan_is_current
+        and project.active_versions.get("retention_critique") == critique.critique_id
+        and critique.retention_plan_version_id == plan.version_id
+        and critique.script_version_id == script.version_id
+    )
+    return plan, critique, plan_is_current, critique_is_current, None
+
+
+def _show_retention_review(
+    plan: RetentionPlan | None,
+    critique: RetentionCritique | None,
+    *,
+    plan_is_current: bool,
+    critique_is_current: bool,
+    timing_scale: float,
+) -> None:
+    st.subheader("Retention plan")
+    if plan is None:
+        st.info(
+            "No persisted retention plan is available. Timing feedback will use deterministic "
+            "script, scene, and caption estimates."
+        )
+        return
+    if not plan_is_current:
+        st.warning(
+            "This retention plan is stale or does not bind the current script. Timing feedback "
+            "will use scene-derived values until it is regenerated."
+        )
+    first_event = plan.attention_events[0]
+    midpoint_rehooks = [
+        event
+        for event in plan.attention_events
+        if event.event_kind == "re-hook"
+        and plan.cadence.total_duration_seconds * 0.35
+        <= event.scheduled_at_seconds
+        <= plan.cadence.total_duration_seconds * 0.65
+    ]
+    cold, first, gap, rehook = st.columns(4)
+    cold.metric(
+        "Cold open",
+        f"{plan.cold_open.duration_seconds * timing_scale:g} s",
+        "target <= 5 s",
+    )
+    first.metric(
+        "First visual beat",
+        f"{first_event.scheduled_at_seconds * timing_scale:g} s",
+        "target <= 2 s",
+    )
+    gap.metric("Allowed gap", f"{plan.cadence.max_attention_gap_seconds:g} s")
+    rehook.metric("Midpoint re-hooks", len(midpoint_rehooks))
+    effective_duration = plan.cadence.total_duration_seconds * timing_scale
+    words_per_minute = (
+        critique.spoken_word_count / effective_duration * 60
+        if critique is not None and effective_duration > 0
+        else None
+    )
+    st.metric(
+        "Narration pace",
+        f"{words_per_minute:.0f} WPM" if words_per_minute is not None else "Not available",
+        f"{effective_duration:g} s rendered runtime",
+    )
+    st.write(f"Opening: {plan.cold_open.text}")
+    st.write(f"Promised payoff: {plan.cold_open.promised_payoff}")
+    st.caption(
+        "The opening states the mechanism or result up front. Curiosity may organize the "
+        "explanation, but cannot hide essential context or ask for engagement."
+    )
+    if abs(timing_scale - 1) > 0.001:
+        st.caption(
+            f"Displayed event times are scaled by {timing_scale:.3f} to match imported "
+            "narration and rendered scene timing."
+        )
+    with st.expander("Retention event schedule"):
+        st.dataframe(
+            [
+                {
+                    "render time (s)": round(event.scheduled_at_seconds * timing_scale, 3),
+                    "canonical time (s)": event.scheduled_at_seconds,
+                    "kind": event.event_kind,
+                    "device": event.device,
+                    "purpose": event.purpose,
+                    "beat": event.beat_id,
+                }
+                for event in plan.attention_events
+            ],
+            hide_index=True,
+            width="stretch",
+        )
+        st.markdown("#### Curiosity threads and explicit payoffs")
+        st.dataframe(
+            [
+                {
+                    "question": thread.question,
+                    "payoff": thread.payoff,
+                    "payoff beat": thread.payoff_beat_id,
+                }
+                for thread in plan.curiosity_threads
+            ],
+            hide_index=True,
+            width="stretch",
+        )
+    if critique is None:
+        st.warning("The deterministic retention critique is missing; regenerate the script.")
+        return
+    if not critique_is_current:
+        st.warning("The saved retention critique is stale and must be regenerated.")
+    elif critique.blocking:
+        st.error("The current retention critique blocks script approval.")
+    else:
+        st.success("The current retention critique has no blocking findings.")
+    st.caption(
+        f"Deterministic retention critique: {critique.spoken_word_count} spoken words. "
+        "It supports review but never replaces evidence or human approval."
+    )
+    if not critique.findings:
+        st.success("No retention critique findings for the current plan and script.")
+        return
+    for finding in critique.findings:
+        object_id = finding.event_id or finding.segment_id or finding.beat_id
+        message = f"{finding.category}: {finding.message}"
+        if object_id:
+            message += f" ({object_id})"
+        if finding.severity == "error":
+            st.error(message)
+        else:
+            st.warning(message)
+
+
 def _show_creative_findings(store: ProjectStore) -> None:
+    project = store.project()
     storyboard = _load_if(store, "storyboard/storyboard.json", StoryboardManifest)
     script = _load_if(store, "script/script.json", ScriptManifest)
     covers = _load_if(store, "storyboard/covers.json", CoverManifest)
@@ -373,6 +532,13 @@ def _show_creative_findings(store: ProjectStore) -> None:
     if storyboard is None or script is None or covers is None or selection is None:
         st.info("Creative QA becomes available after script, storyboard, and cover selection.")
         return
+    (
+        retention_plan,
+        retention_critique,
+        plan_is_current,
+        critique_is_current,
+        retention_load_warning,
+    ) = _retention_review_state(store, script)
     try:
         selected_cover_payload(store)
         candidate = next(
@@ -389,24 +555,66 @@ def _show_creative_findings(store: ProjectStore) -> None:
             citation="Evidence-linked source receipt",
             factual=True,
         )
+        narration = active_audio(store)
+        narration_duration = probe_duration(narration) if narration is not None else None
         snapshot = creative_input_from_manifests(
             storyboard,
             script,
-            cues_from_script(script),
+            cues_from_script(script, target_duration=narration_duration),
             cover,
-            case_id=store.project().project_id,
+            case_id=project.project_id,
             topic_kind="mechanism",
+            pacing=project.pacing,
+            retention_plan=retention_plan if plan_is_current else None,
         )
         result = evaluate_creative_quality(snapshot)
     except (OSError, StopIteration, ValueError) as exc:
         st.warning(f"Creative QA unavailable: {exc}")
         return
     st.subheader("Creative quality review")
+    if retention_load_warning:
+        st.warning(retention_load_warning)
+    _show_retention_review(
+        retention_plan,
+        retention_critique,
+        plan_is_current=plan_is_current,
+        critique_is_current=critique_is_current,
+        timing_scale=(
+            snapshot.retention.timing_scale if snapshot.retention is not None else 1.0
+        ),
+    )
     st.metric("Creative QA score", f"{result.score}/100", result.status.upper())
+    st.caption(
+        f"Advisory score for the {project.pacing} pacing profile. It cannot override evidence, "
+        "rights, accessibility, or human approval gates."
+    )
+    show_passes = st.checkbox(
+        "Show passing creative checks",
+        value=False,
+        key="creative-show-passes",
+        help="Keep this off to focus on concrete remediation before preview approval.",
+    )
+    attention = [check for check in result.checks if check.status != "pass"]
+    retention_attention = [
+        check
+        for check in attention
+        if check.category in {"engagement", "captions", "accessibility", "motion"}
+    ]
+    if retention_attention:
+        st.warning(f"{len(retention_attention)} retention or accessibility finding(s) need review.")
+    else:
+        st.success("Retention, caption, motion-intensity, and hook proxies are within budget.")
     for check in result.checks:
+        if check.status == "pass" and not show_passes:
+            continue
         message = f"{check.category} · {check.message}"
         if check.remediation:
             message += f" Next: {check.remediation}"
+        if check.details:
+            measurements = ", ".join(
+                f"{key.replace('_', ' ')}: {value}" for key, value in check.details.items()
+            )
+            message += f" Measurements: {measurements}."
         if check.status == "failure":
             st.error(message)
         elif check.status == "warning":
@@ -591,6 +799,7 @@ def _show_project(store: ProjectStore) -> None:
             "content risk": project.content_risk,
             "active source": project.active_source_id or "none",
             "theme": project.theme,
+            "pacing": project.pacing,
             "narration mode": project.narration_mode,
         }
     )
@@ -618,6 +827,25 @@ def _show_project(store: ProjectStore) -> None:
         store,
         theme,
         disabled=theme == project.theme,
+    )
+    pacing = st.selectbox(
+        "Pacing profile",
+        PACING_PROFILES,
+        index=PACING_PROFILES.index(project.pacing),
+        key="project-pacing",
+        help=(
+            "Measured prioritizes longer inspection time, Brisk is the balanced default, and "
+            "High-retention tightens visual beat spacing. Every profile must remain calm enough "
+            "to read and must not introduce flashing or engagement bait."
+        ),
+    )
+    _perform(
+        "Apply pacing profile",
+        "project-pacing-apply",
+        set_pacing_profile,
+        store,
+        pacing,
+        disabled=pacing == project.pacing,
     )
     narration_mode = st.selectbox(
         "Narration mode",
@@ -859,6 +1087,38 @@ def _show_script(store: ProjectStore, reviewer: str) -> None:
     first.metric("Spoken words", words)
     second.metric("Selected angle", script.angle)
     _show_editorial_findings(store, "editorial")
+    (
+        retention_plan,
+        retention_critique,
+        plan_is_current,
+        critique_is_current,
+        retention_load_warning,
+    ) = _retention_review_state(store, script)
+    if retention_load_warning:
+        st.warning(retention_load_warning)
+    rendered_duration: float = float(
+        sum(segment.approximate_duration for segment in script.segments)
+    )
+    try:
+        narration = active_audio(store)
+        if narration is not None:
+            probed_duration = probe_duration(narration)
+            if probed_duration is not None:
+                rendered_duration = probed_duration
+    except (OSError, ValueError) as exc:
+        st.warning(f"Narration timing is unavailable; showing script timing: {exc}")
+    timing_scale = (
+        rendered_duration / retention_plan.cadence.total_duration_seconds
+        if retention_plan is not None and rendered_duration > 0
+        else 1.0
+    )
+    _show_retention_review(
+        retention_plan,
+        retention_critique,
+        plan_is_current=plan_is_current,
+        critique_is_current=critique_is_current,
+        timing_scale=timing_scale,
+    )
     for segment in script.segments:
         with st.container(border=True):
             st.subheader(segment.segment_id)
