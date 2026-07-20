@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from techshort.alignment import cues_from_script, write_caption_files
+from techshort.audio import set_narration_mode
 from techshort.domain.models import ScriptManifest, SourceIndex, StoryboardManifest
 from techshort.domain.storage import ProjectStore, atomic_write_model, load_model
 from techshort.generation import (
@@ -10,7 +11,9 @@ from techshort.generation import (
     fixture_script,
     fixture_storyboard,
     generate_angles,
+    generate_fixture_covers,
     select_angle,
+    select_cover,
 )
 from techshort.ingestion import ingest_source
 from techshort.qa import run_qa
@@ -20,6 +23,7 @@ from techshort.review import approve_claims, approve_rights, approve_script, app
 def _approved_store(tmp_path: Path) -> ProjectStore:
     store = ProjectStore(tmp_path / "projects", "qa-test")
     store.initialize("QA test")
+    set_narration_mode(store, "silent-reviewed")
     ingest_source(store, Path("examples/rolling-shutter/rolling-shutter.md"))
     fixture_claims(store)
     approve_claims(store, "qa-reviewer")
@@ -28,6 +32,8 @@ def _approved_store(tmp_path: Path) -> ProjectStore:
     fixture_script(store)
     approve_script(store, "qa-reviewer")
     fixture_storyboard(store)
+    generate_fixture_covers(store)
+    select_cover(store, "cover-scanline")
     approve_storyboard(store, "qa-reviewer")
     approve_rights(store, "qa-reviewer")
     script = load_model(store.path("script/script.json"), ScriptManifest)
@@ -92,7 +98,7 @@ def test_qa_hard_fails_low_scene_panel_contrast(tmp_path: Path) -> None:
     store = _approved_store(tmp_path)
     storyboard_path = store.path("storyboard/storyboard.json")
     storyboard = load_model(storyboard_path, StoryboardManifest)
-    scene = next(item for item in storyboard.scenes if item.primitive == "Comparison")
+    scene = next(item for item in storyboard.scenes if item.primitive == "BeforeAfterOverlay")
     scene.theme_overrides = {"panel": "#FFFFFF", "text": "#FFFFFF"}
     atomic_write_model(storyboard_path, storyboard)
 

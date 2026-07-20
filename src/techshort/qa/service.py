@@ -19,20 +19,44 @@ from techshort.alignment import (
 )
 from techshort.assets import BUILTIN_FONT_ASSET_IDS
 from techshort.audio import active_audio, probe_duration, resolve_narration_transcript
+from techshort.domain.creative import (
+    BeatPlan,
+    EditorialCritique,
+    NarrativeBrief,
+    StoryboardGuidance,
+    VisualCritique,
+)
 from techshort.domain.hashing import sha256_file, stable_hash
 from techshort.domain.models import (
     AngleSelection,
     AnglesManifest,
+    AnnotatedChartVisual,
     AssetManifest,
+    BeforeAfterOverlayVisual,
     ClaimsManifest,
+    ComparisonVisual,
+    CoverManifest,
+    CoverSelection,
+    EvidenceHighlightVisual,
     EvidenceManifest,
+    GridWarpVisual,
+    KineticTextVisual,
+    LimitationVisual,
+    MechanismDiagramVisual,
+    ParameterSimulationVisual,
+    ProcessFlowVisual,
     QACheck,
     QAReport,
+    RasterScanVisual,
     RenderManifest,
     ReviewStatus,
     ScriptManifest,
     SourceIndex,
+    SourceReceiptVisual,
     StoryboardManifest,
+    TimelineVisual,
+    TimeSliceVisual,
+    VisualSpec,
     derive_angle_selection_id,
     derive_angles_version_id,
     derive_script_version_id,
@@ -40,6 +64,11 @@ from techshort.domain.models import (
 from techshort.domain.storage import ProjectStore, atomic_write_model, load_model
 from techshort.evidence import unsupported_assertion_tokens
 from techshort.ingestion import resolve_evidence_text, verify_source_integrity
+from techshort.qa.creative import (
+    CreativeCoverInput,
+    creative_input_from_manifests,
+    evaluate_creative_quality,
+)
 from techshort.rendering.tools import media_tool
 from techshort.review import (
     current_artifact_hashes,
@@ -115,19 +144,81 @@ def _claim_support_texts(
 
 def _scene_assertion_text(scene: Any) -> str:
     visual = scene.visual
-    rows = [
-        scene.on_screen_text,
-        scene.accessibility_description,
-        visual.title,
-        visual.body,
-        visual.left,
-        visual.right,
-        *visual.labels,
-        *(node.label for node in visual.nodes),
-        *(edge.label for edge in visual.edges),
-    ]
-    if scene.primitive == "ChartReveal":
-        rows.extend(format(value, "g") for value in visual.series)
+    rows: list[str | None] = [scene.on_screen_text, scene.accessibility_description]
+    if isinstance(visual, VisualSpec):
+        rows.extend(
+            [
+                visual.title,
+                visual.body,
+                visual.left,
+                visual.right,
+                *visual.labels,
+                *(node.label for node in visual.nodes),
+                *(edge.label for edge in visual.edges),
+            ]
+        )
+        if scene.primitive == "ChartReveal":
+            rows.extend(format(value, "g") for value in visual.series)
+    elif isinstance(visual, KineticTextVisual):
+        rows.extend([*visual.emphasis, visual.supporting_text])
+    elif isinstance(visual, (SourceReceiptVisual, EvidenceHighlightVisual)):
+        rows.extend([visual.source_title, visual.excerpt])
+    elif isinstance(visual, (MechanismDiagramVisual, ProcessFlowVisual)):
+        rows.extend(node.label for node in visual.nodes)
+        rows.extend(edge.label for edge in visual.edges)
+    elif isinstance(visual, AnnotatedChartVisual):
+        rows.extend(
+            [
+                visual.x_axis.label,
+                visual.x_axis.unit,
+                visual.y_axis.label,
+                visual.y_axis.unit,
+            ]
+        )
+        for series in visual.series:
+            rows.append(series.label)
+            rows.extend(f"{format(point.x, 'g')} {format(point.y, 'g')}" for point in series.points)
+        for annotation in visual.annotations:
+            rows.extend([format(annotation.x, "g"), format(annotation.y, "g"), annotation.label])
+    elif isinstance(visual, ParameterSimulationVisual):
+        rows.extend(
+            [
+                visual.parameter_label,
+                visual.unit,
+                format(visual.minimum, "g"),
+                format(visual.maximum, "g"),
+                format(visual.value, "g"),
+                visual.left_label,
+                visual.right_label,
+            ]
+        )
+    elif isinstance(visual, ComparisonVisual):
+        rows.extend(
+            [
+                visual.left.label,
+                visual.left.value,
+                visual.left.detail,
+                visual.right.label,
+                visual.right.value,
+                visual.right.detail,
+            ]
+        )
+    elif isinstance(visual, LimitationVisual):
+        rows.extend([visual.limitation, visual.applies_when])
+    elif isinstance(visual, RasterScanVisual):
+        rows.extend([visual.scan_label, visual.before_label, visual.after_label])
+    elif isinstance(visual, TimeSliceVisual):
+        rows.append(visual.unit)
+        rows.extend(f"{format(item.time, 'g')} {item.label}" for item in visual.slices)
+    elif isinstance(visual, GridWarpVisual):
+        rows.extend([visual.before_label, visual.after_label])
+    elif isinstance(visual, BeforeAfterOverlayVisual):
+        rows.extend([visual.before_label, visual.after_label])
+    elif isinstance(visual, TimelineVisual):
+        rows.append(visual.unit)
+        rows.extend(
+            f"{format(item.time, 'g')} {item.label} {item.detail or ''}" for item in visual.events
+        )
     return " ".join(value for value in rows if value is not None)
 
 
@@ -140,7 +231,10 @@ def _storyboard_provenance_valid(
         scene_claims = [claims_by_id.get(claim_id) for claim_id in scene.claim_ids]
         if not scene.claim_ids or any(claim is None for claim in scene_claims):
             return False
-        if scene.visual.citation is not None and scene.visual.citation not in scene.claim_ids:
+        if isinstance(scene.visual, VisualSpec):
+            if scene.visual.citation is not None and scene.visual.citation not in scene.claim_ids:
+                return False
+        elif not scene.citation_label:
             return False
         expected_labels = {claim.evidence_label.upper() for claim in scene_claims if claim}
         expected_label = "INFERRED" if "INFERRED" in expected_labels else None
@@ -158,8 +252,15 @@ def _storyboard_provenance_valid(
         ]
         if unsupported_assertion_tokens(_scene_assertion_text(scene), support):
             return False
-        if scene.primitive == "SourceReceipt":
-            evidence_id = scene.visual.evidence_id
+        if scene.primitive in {"SourceReceipt", "EvidenceHighlight"}:
+            evidence_id = (
+                scene.visual.evidence_id
+                if isinstance(
+                    scene.visual,
+                    (VisualSpec, SourceReceiptVisual, EvidenceHighlightVisual),
+                )
+                else None
+            )
             if evidence_id is None or evidence_id not in evidence_by_id:
                 return False
             allowed_evidence = {
@@ -232,6 +333,8 @@ def run_qa(
         selection = load_model(store.path("script/angle-selection.json"), AngleSelection)
         script = load_model(store.path("script/script.json"), ScriptManifest)
         storyboard = load_model(store.path("storyboard/storyboard.json"), StoryboardManifest)
+        covers = load_model(store.path("storyboard/covers.json"), CoverManifest)
+        cover_selection = load_model(store.path("storyboard/cover-selection.json"), CoverSelection)
         assets = load_model(store.path("assets/asset-manifest.json"), AssetManifest)
     except (OSError, ValueError) as exc:
         checks.append(
@@ -352,6 +455,57 @@ def run_qa(
         ),
         None,
     )
+    selected_cover = next(
+        (
+            candidate
+            for candidate in covers.candidates
+            if candidate.candidate_id == cover_selection.selected_candidate_id
+        ),
+        None,
+    )
+    creative_chain_valid = True
+    creative_keys = {
+        "narrative_brief",
+        "beat_plan",
+        "editorial_critique",
+        "storyboard_guidance",
+        "visual_critique",
+    }
+    if creative_keys.intersection(project.active_versions):
+        try:
+            brief = load_model(store.path("script/narrative-brief.json"), NarrativeBrief)
+            beat_plan = load_model(store.path("script/beat-plan.json"), BeatPlan)
+            editorial_critique = load_model(
+                store.path("script/editorial-critique.json"), EditorialCritique
+            )
+            guidance = load_model(store.path("storyboard/guidance.json"), StoryboardGuidance)
+            visual_critique = load_model(
+                store.path("storyboard/visual-critique.json"), VisualCritique
+            )
+            creative_chain_valid = (
+                creative_keys.issubset(project.active_versions)
+                and project.active_versions.get("narrative_brief") == brief.version_id
+                and project.active_versions.get("beat_plan") == beat_plan.version_id
+                and project.active_versions.get("editorial_critique")
+                == editorial_critique.critique_id
+                and project.active_versions.get("storyboard_guidance") == guidance.version_id
+                and project.active_versions.get("visual_critique") == visual_critique.critique_id
+                and brief.claims_version_id == claims.version_id
+                and brief.evidence_version_id == evidence.version_id
+                and beat_plan.narrative_brief_version_id == brief.version_id
+                and editorial_critique.script_version_id == script.version_id
+                and guidance.script_version_id == script.version_id
+                and visual_critique.storyboard_guidance_version_id == guidance.version_id
+                and not editorial_critique.blocking
+                and not visual_critique.blocking
+            )
+        except (OSError, ValueError):
+            creative_chain_valid = False
+    cover_links_valid = selected_cover is not None and all(
+        set(item.claim_ids).issubset(approved_claim_ids)
+        and set(item.evidence_ids).issubset(evidence_by_id)
+        for item in covers.candidates
+    )
     angle_claims_valid = all(
         set(candidate.central_claim_ids).issubset(approved_claim_ids)
         for candidate in angles.candidates
@@ -397,7 +551,15 @@ def run_qa(
         and project.active_versions.get("angle_selection") == selection.selection_id
         and project.active_versions.get("script") == script.version_id
         and project.active_versions.get("storyboard") == storyboard.version_id
+        and covers.storyboard_version_id == storyboard.version_id
+        and cover_selection.cover_version_id == covers.version_id
+        and selected_cover is not None
+        and cover_selection.selected_candidate_hash == stable_hash(selected_cover)
+        and project.active_versions.get("covers") == covers.version_id
+        and project.active_versions.get("cover_selection") == cover_selection.selection_id
         and project.active_versions.get("assets") == assets.version_id
+        and creative_chain_valid
+        and cover_links_valid
     )
     try:
         scene_dependencies_valid = all(
@@ -503,6 +665,8 @@ def run_qa(
                 "angle_selection",
                 "script",
                 "storyboard",
+                "covers",
+                "cover_selection",
                 "rights",
             }
         )
@@ -527,6 +691,10 @@ def run_qa(
         citation_valid = citation_valid and bool(linked) and bool(implied_claims)
         citation_valid = citation_valid and set(scene.claim_ids) == implied_claims
         citation_valid = citation_valid and set(scene.claim_ids).issubset(approved_claim_ids)
+        citation_valid = citation_valid and bool(
+            scene.citation_label
+            or (scene.visual.citation if isinstance(scene.visual, VisualSpec) else None)
+        )
     checks.append(
         _check(
             "missing-citations",
@@ -558,22 +726,52 @@ def run_qa(
 
     narration: Path | None = None
     narration_duration: float | None = None
+    narration_error: str | None = None
     try:
         narration = active_audio(store)
         narration_duration = probe_duration(narration) if narration else None
-    except (OSError, ValueError):
+    except (OSError, ValueError) as exc:
         narration = None
         narration_duration = None
-        if "audio_asset" in project.active_versions:
-            checks.append(
-                _check(
-                    "audio-validity",
-                    False,
-                    "Imported narration is valid",
-                    "The active narration asset is missing, stale, or invalid",
-                )
+        narration_error = str(exc)
+    if narration_error is not None:
+        checks.append(
+            _check(
+                "audio-validity",
+                False,
+                "Imported narration is valid",
+                f"The active narration asset is missing, stale, or invalid: {narration_error}",
             )
-    if narration:
+        )
+    elif project.narration_mode == "narrated" and narration is None:
+        checks.append(
+            _check(
+                "audio-validity",
+                False,
+                "Required narration audio is present and valid",
+                "Narration mode is narrated, but no active audio is present; import audio or "
+                "explicitly select silent-reviewed mode",
+            )
+        )
+    elif project.narration_mode == "silent-reviewed" and narration is not None:
+        checks.append(
+            _check(
+                "audio-validity",
+                False,
+                "Silent-reviewed mode contains no narration track",
+                "Silent-reviewed mode conflicts with active narration audio",
+            )
+        )
+    elif project.narration_mode == "silent-reviewed":
+        checks.append(
+            _check(
+                "audio-validity",
+                True,
+                "Silent output was explicitly selected for human review",
+                "Silent output requires explicit selection",
+            )
+        )
+    elif narration:
         checks.append(
             _check(
                 "audio-validity",
@@ -636,6 +834,40 @@ def run_qa(
     )
 
     cues = cues_from_script(script, target_duration=narration_duration)
+    if selected_cover is not None:
+        cover_input = CreativeCoverInput(
+            cover_id=selected_cover.candidate_id,
+            headline=selected_cover.headline,
+            focal_visual=selected_cover.hero.kind,
+            layout=selected_cover.layout,
+            subtitle=selected_cover.subheadline,
+            citation="Evidence-linked",
+        )
+        creative_snapshot = creative_input_from_manifests(
+            storyboard,
+            script,
+            cues,
+            cover_input,
+            case_id=project.project_id,
+            topic_kind="mechanism",
+        )
+        creative_result = evaluate_creative_quality(creative_snapshot)
+        creative_path = str(Path(destination).parent / "creative-quality.json").replace("\\", "/")
+        atomic_write_model(store.path(creative_path), creative_result)
+        attention = [item.message for item in creative_result.checks if item.status != "pass"]
+        checks.append(
+            QACheck(
+                check_id="creative-quality",
+                status="warning" if creative_result.needs_attention else "pass",
+                message=(
+                    f"Creative quality score {creative_result.score}/100; "
+                    + "; ".join(attention[:4])
+                    if attention
+                    else f"Creative quality score {creative_result.score}/100"
+                ),
+                hard_blocker=False,
+            )
+        )
     caption_issues = caption_warnings(cues)
     srt_path = store.path("captions/captions.srt")
     vtt_path = store.path("captions/captions.vtt")
@@ -873,29 +1105,30 @@ def _media_checks(
 
     manifest_path = path.parent / "render-manifest.json"
     manifest_valid = False
+    render_manifest: RenderManifest | None = None
     if manifest_path.is_file():
         try:
-            manifest = load_model(manifest_path, RenderManifest)
+            render_manifest = load_model(manifest_path, RenderManifest)
             relative_output = path.relative_to(store.root).as_posix()
             narration = active_audio(store)
             expected_audio_hash = sha256_file(narration) if narration else None
             manifest_valid = (
-                manifest.width == width
-                and manifest.height == height
-                and math.isclose(manifest.fps, fps, abs_tol=0.01)
-                and abs(manifest.duration - expected_duration) < 1.5
-                and manifest.codec == "h264"
-                and manifest.script_hash == stable_hash(script)
-                and manifest.storyboard_hash == stable_hash(storyboard)
-                and manifest.asset_hashes
+                render_manifest.width == width
+                and render_manifest.height == height
+                and math.isclose(render_manifest.fps, fps, abs_tol=0.01)
+                and abs(render_manifest.duration - expected_duration) < 1.5
+                and render_manifest.codec == "h264"
+                and render_manifest.script_hash == stable_hash(script)
+                and render_manifest.storyboard_hash == stable_hash(storyboard)
+                and render_manifest.asset_hashes
                 == {asset.asset_id: asset.sha256 for asset in assets.assets}
-                and manifest.audio_hash == expected_audio_hash
-                and manifest.source_hashes
+                and render_manifest.audio_hash == expected_audio_hash
+                and render_manifest.source_hashes
                 == {source.source_id: source.content_hash for source in sources.sources}
-                and relative_output in manifest.output_paths
-                and manifest.output_hashes.get(relative_output) == sha256_file(path)
-                and manifest.watermarked is is_preview
-                and manifest.renderer_version not in {"", "pending-lock"}
+                and relative_output in render_manifest.output_paths
+                and render_manifest.output_hashes.get(relative_output) == sha256_file(path)
+                and render_manifest.watermarked is is_preview
+                and render_manifest.renderer_version not in {"", "pending-lock"}
             )
         except (OSError, ValueError):
             manifest_valid = False
@@ -935,6 +1168,24 @@ def _media_checks(
             contact_sheet.is_file() and contact_sheet.stat().st_size > 1000,
             "Representative contact sheet is available for human review",
             "Renderer did not produce a representative contact sheet",
+        )
+    )
+    expected_stills = [
+        path.parent / f"scene-still-{scene.scene_id}.png" for scene in storyboard.scenes
+    ]
+    stills_valid = render_manifest is not None and all(
+        still.is_file()
+        and still.stat().st_size > 1000
+        and render_manifest.output_hashes.get(still.relative_to(store.root).as_posix())
+        == sha256_file(still)
+        for still in expected_stills
+    )
+    checks.append(
+        _check(
+            "scene-stills",
+            stills_valid,
+            "Every scene has a hash-tracked representative still for human review",
+            "One or more representative scene stills are missing, stale, or untracked",
         )
     )
     return checks
@@ -1045,7 +1296,10 @@ def _storyboard_text_contrast_pairs(
                         DEFAULT_GRADIENT_HIGHLIGHT,
                     )
                 )
-        elif scene.primitive == "MechanismDiagram":
+        elif scene.primitive in {"MechanismDiagram", "ProcessFlow"} and isinstance(
+            scene.visual,
+            (VisualSpec, MechanismDiagramVisual, ProcessFlowVisual),
+        ):
             if any(node.state == "active" for node in scene.visual.nodes):
                 pairs.append((f"{scope} active-node text/accent", background, colors["accent"]))
             if any(node.state != "active" for node in scene.visual.nodes):
@@ -1054,7 +1308,11 @@ def _storyboard_text_contrast_pairs(
                 pairs.append(
                     (f"{scope} edge-label warning/background", colors["warning"], background)
                 )
-        elif scene.primitive in {"ParameterSimulation", "Comparison"}:
+        elif scene.primitive in {
+            "ParameterSimulation",
+            "Comparison",
+            "BeforeAfterOverlay",
+        }:
             pairs.append((f"{scope} panel text/background", colors["text"], colors["panel"]))
         elif scene.primitive == "LimitationCard":
             pairs.extend(

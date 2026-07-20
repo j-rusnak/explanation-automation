@@ -13,7 +13,9 @@ from techshort.generation import (
     fixture_script,
     fixture_storyboard,
     generate_angles,
+    generate_fixture_covers,
     select_angle,
+    select_cover,
 )
 from techshort.ingestion import ingest_source
 from techshort.qa import run_qa
@@ -31,6 +33,8 @@ def _approved_store(tmp_path: Path) -> tuple[ProjectStore, ScriptManifest]:
     fixture_script(store)
     approve_script(store, "qa-reviewer")
     fixture_storyboard(store)
+    generate_fixture_covers(store)
+    select_cover(store, "cover-scanline")
     approve_storyboard(store, "qa-reviewer")
     approve_rights(store, "qa-reviewer")
     script = load_model(store.path("script/script.json"), ScriptManifest)
