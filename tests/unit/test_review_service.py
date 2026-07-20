@@ -26,7 +26,9 @@ from techshort.generation import (
     fixture_script,
     fixture_storyboard,
     generate_angles,
+    generate_fixture_covers,
     select_angle,
+    select_cover,
 )
 from techshort.ingestion import ingest_source
 from techshort.review import (
@@ -76,6 +78,8 @@ def _storyboard_store(tmp_path: Path, slug: str = "story-review") -> ProjectStor
     store = _script_store(tmp_path, slug)
     approve_script(store, "reviewer")
     fixture_storyboard(store)
+    generate_fixture_covers(store)
+    select_cover(store, "cover-scanline")
     return store
 
 
@@ -341,8 +345,10 @@ def test_storyboard_review_rejects_fabricated_labels_citations_and_receipts(
     citation_store = _storyboard_store(tmp_path, "fake-scene-citation")
     storyboard = load_model(citation_store.path("storyboard/storyboard.json"), StoryboardManifest)
     scene = storyboard.scenes[0]
-    visual = scene.visual.model_dump(mode="json")
-    visual["citation"] = "doi-10.9999-fabricated"
+    visual = {
+        "title": "Legacy visual citation",
+        "citation": "doi-10.9999-fabricated",
+    }
     edit_scene(citation_store, scene.scene_id, {"visual": visual}, "reviewer")
     with pytest.raises(ValueError, match="fabricated visual citation"):
         approve_scene(citation_store, scene.scene_id, "reviewer")
@@ -354,14 +360,47 @@ def test_storyboard_review_rejects_fabricated_labels_citations_and_receipts(
     with pytest.raises(ValueError, match="evidence label"):
         approve_scene(label_store, scene.scene_id, "reviewer")
 
-    receipt_store = _storyboard_store(tmp_path, "fake-source-receipt")
+    receipt_store = _storyboard_store(tmp_path, "fake-evidence-highlight")
     storyboard = load_model(receipt_store.path("storyboard/storyboard.json"), StoryboardManifest)
-    receipt = next(item for item in storyboard.scenes if item.primitive == "SourceReceipt")
+    receipt = next(item for item in storyboard.scenes if item.primitive == "EvidenceHighlight")
     visual = receipt.visual.model_dump(mode="json")
     visual["evidence_id"] = "evidence-fabricated"
     edit_scene(receipt_store, receipt.scene_id, {"visual": visual}, "reviewer")
     with pytest.raises(ValueError, match="requires evidence cited by its claims"):
         approve_scene(receipt_store, receipt.scene_id, "reviewer")
+
+    legacy_store = _storyboard_store(tmp_path, "fake-legacy-source-receipt")
+    storyboard = load_model(legacy_store.path("storyboard/storyboard.json"), StoryboardManifest)
+    receipt = storyboard.scenes[0]
+    edit_scene(
+        legacy_store,
+        receipt.scene_id,
+        {
+            "primitive": "SourceReceipt",
+            "visual": {
+                "title": "Legacy source receipt",
+                "body": "Rows capture different moments.",
+                "evidence_id": "evidence-fabricated",
+            },
+        },
+        "reviewer",
+    )
+    with pytest.raises(ValueError, match="SourceReceipt scene .* requires evidence"):
+        approve_scene(legacy_store, receipt.scene_id, "reviewer")
+
+
+def test_storyboard_review_checks_typed_chart_values_against_claim_evidence(
+    tmp_path: Path,
+) -> None:
+    store = _storyboard_store(tmp_path, "typed-chart-provenance")
+    storyboard = load_model(store.path("storyboard/storyboard.json"), StoryboardManifest)
+    chart = next(item for item in storyboard.scenes if item.primitive == "AnnotatedChart")
+    visual = chart.visual.model_dump(mode="json")
+    visual["series"][0]["points"][1]["y"] = 9999
+    edit_scene(store, chart.scene_id, {"visual": visual}, "reviewer")
+
+    with pytest.raises(ValueError, match="unsupported number, unit, or DOI: 9999"):
+        approve_scene(store, chart.scene_id, "reviewer")
 
 
 def test_asset_actions_require_exact_file_hash_and_active_manifest_version(

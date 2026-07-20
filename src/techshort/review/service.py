@@ -5,18 +5,37 @@ from typing import Literal
 from uuid import uuid4
 
 from techshort.audio import active_audio, active_transcript
+from techshort.domain.creative import (
+    BeatPlan,
+    EditorialCritique,
+    NarrativeBrief,
+    StoryboardGuidance,
+    VisualCritique,
+)
 from techshort.domain.hashing import sha256_file, stable_hash
 from techshort.domain.models import (
     AngleSelection,
     AnglesManifest,
+    AnnotatedChartVisual,
     Asset,
     AssetManifest,
+    BeforeAfterOverlayVisual,
     Claim,
     ClaimsManifest,
+    ComparisonVisual,
+    CoverManifest,
+    CoverSelection,
+    EvidenceHighlightVisual,
     EvidenceManifest,
     EvidenceSpan,
+    GridWarpVisual,
+    KineticTextVisual,
+    LimitationVisual,
+    MechanismDiagramVisual,
+    ParameterSimulationVisual,
     ProjectManifest,
     QAReport,
+    RasterScanVisual,
     ReviewDecision,
     ReviewLog,
     ReviewStatus,
@@ -25,7 +44,11 @@ from techshort.domain.models import (
     ScriptSegment,
     SourceDocument,
     SourceIndex,
+    SourceReceiptVisual,
     StoryboardManifest,
+    TimelineVisual,
+    TimeSliceVisual,
+    VisualSpec,
     derive_angle_selection_id,
     derive_angles_version_id,
     derive_script_version_id,
@@ -71,6 +94,7 @@ REQUIRED_FINAL_QA_CHECKS = {
     "render-manifest",
     "blank-frames",
     "contact-sheet",
+    "scene-stills",
 }
 
 
@@ -140,6 +164,8 @@ def current_artifact_hashes(store: ProjectStore) -> dict[str, str]:
         "angle-selection": store.path("script/angle-selection.json"),
         "script": store.path("script/script.json"),
         "storyboard": store.path("storyboard/storyboard.json"),
+        "covers": store.path("storyboard/covers.json"),
+        "cover-selection": store.path("storyboard/cover-selection.json"),
         "assets": store.path("assets/asset-manifest.json"),
         "claim-critique": store.path("claims/critique.json"),
         "claims-generation-receipt": store.path("claims/generation-receipt.json"),
@@ -148,6 +174,15 @@ def current_artifact_hashes(store: ProjectStore) -> dict[str, str]:
         "script-generation-receipt": store.path("script/generation-receipt.json"),
         "storyboard-generation-receipt": store.path("storyboard/generation-receipt.json"),
     }
+    creative_paths = {
+        "narrative_brief": store.path("script/narrative-brief.json"),
+        "beat_plan": store.path("script/beat-plan.json"),
+        "editorial_critique": store.path("script/editorial-critique.json"),
+        "storyboard_guidance": store.path("storyboard/guidance.json"),
+        "visual_critique": store.path("storyboard/visual-critique.json"),
+    }
+    if set(creative_paths).intersection(project.active_versions):
+        paths.update(creative_paths)
     missing = [key for key, path in paths.items() if not path.is_file()]
     if missing:
         raise ValueError(f"required artifact is missing: {missing[0]}")
@@ -168,6 +203,7 @@ def current_artifact_hashes(store: ProjectStore) -> dict[str, str]:
             "height": project.height,
             "fps": project.fps,
             "theme": project.theme,
+            "narration_mode": project.narration_mode,
             "content_risk": project.content_risk,
             "active_source_id": project.active_source_id,
         }
@@ -485,20 +521,116 @@ def _claim_support(claim: Claim, evidence_by_id: dict[str, EvidenceSpan]) -> lis
 
 def _scene_assertion_text(scene: Scene) -> str:
     visual = scene.visual
-    rows = [
+    rows: list[str | None] = [
         scene.on_screen_text,
         scene.accessibility_description,
-        visual.title,
-        visual.body,
-        visual.left,
-        visual.right,
-        *visual.labels,
-        *(node.label for node in visual.nodes),
-        *(edge.label for edge in visual.edges),
+        scene.citation_label,
     ]
-    if scene.primitive == "ChartReveal":
-        rows.extend(format(value, "g") for value in visual.series)
+    if isinstance(visual, VisualSpec):
+        rows.extend(
+            [
+                visual.title,
+                visual.body,
+                visual.left,
+                visual.right,
+                *visual.labels,
+                *(node.label for node in visual.nodes),
+                *(edge.label for edge in visual.edges),
+            ]
+        )
+        if scene.primitive == "ChartReveal":
+            rows.extend(format(value, "g") for value in visual.series)
+    elif isinstance(visual, KineticTextVisual):
+        rows.extend([*visual.emphasis, visual.supporting_text])
+    elif isinstance(visual, SourceReceiptVisual):
+        rows.extend([visual.source_title, visual.excerpt, visual.highlight])
+    elif isinstance(visual, MechanismDiagramVisual):
+        rows.extend(node.label for node in visual.nodes)
+        rows.extend(edge.label for edge in visual.edges)
+    elif isinstance(visual, AnnotatedChartVisual):
+        rows.extend(
+            [
+                visual.x_axis.label,
+                visual.x_axis.unit,
+                visual.y_axis.label,
+                visual.y_axis.unit,
+            ]
+        )
+        for series in visual.series:
+            rows.append(series.label)
+            rows.extend(f"{format(point.x, 'g')} {format(point.y, 'g')}" for point in series.points)
+        for annotation in visual.annotations:
+            rows.extend(
+                [
+                    annotation.label,
+                    f"{format(annotation.x, 'g')} {format(annotation.y, 'g')}",
+                ]
+            )
+    elif isinstance(visual, ParameterSimulationVisual):
+        rows.extend(
+            [
+                visual.parameter_label,
+                visual.unit,
+                visual.left_label,
+                visual.right_label,
+            ]
+        )
+    elif isinstance(visual, ComparisonVisual):
+        rows.extend(
+            [
+                visual.left.label,
+                visual.left.value,
+                visual.left.detail,
+                visual.right.label,
+                visual.right.value,
+                visual.right.detail,
+            ]
+        )
+    elif isinstance(visual, LimitationVisual):
+        rows.extend([visual.limitation, visual.applies_when])
+    elif isinstance(visual, RasterScanVisual):
+        rows.extend([visual.scan_label, visual.before_label, visual.after_label])
+    elif isinstance(visual, TimeSliceVisual):
+        rows.append(visual.unit)
+        rows.extend(
+            f"{format(item.time, 'g')} {visual.unit} {item.label}" for item in visual.slices
+        )
+    elif isinstance(visual, GridWarpVisual):
+        rows.extend([visual.before_label, visual.after_label])
+    elif isinstance(visual, BeforeAfterOverlayVisual):
+        rows.extend([visual.before_label, visual.after_label])
+    elif isinstance(visual, EvidenceHighlightVisual):
+        rows.extend([visual.source_title, visual.excerpt])
+    elif isinstance(visual, TimelineVisual):
+        rows.append(visual.unit)
+        rows.extend(
+            " ".join(
+                item
+                for item in (
+                    f"{format(event.time, 'g')} {visual.unit}",
+                    event.label,
+                    event.detail,
+                )
+                if item is not None
+            )
+            for event in visual.events
+        )
     return " ".join(value for value in rows if value is not None)
+
+
+def _legacy_visual_citation(scene: Scene) -> str | None:
+    if isinstance(scene.visual, VisualSpec):
+        return scene.visual.citation
+    return None
+
+
+def _evidence_visual_id(scene: Scene) -> str | None:
+    visual = scene.visual
+    if isinstance(visual, VisualSpec):
+        return visual.evidence_id if scene.primitive == "SourceReceipt" else None
+    if isinstance(visual, (SourceReceiptVisual, EvidenceHighlightVisual)):
+        return visual.evidence_id
+    return None
 
 
 def _validate_claim_dependencies(
@@ -657,6 +789,72 @@ def _validate_script_dependencies(
                 f"segment {segment.segment_id} contains unsupported number, unit, or DOI: "
                 + ", ".join(unsupported)
             )
+    _validate_editorial_dependencies(store, script, claims, evidence, project)
+
+
+def _validate_editorial_dependencies(
+    store: ProjectStore,
+    script: ScriptManifest,
+    claims: ClaimsManifest,
+    evidence: EvidenceManifest,
+    project: ProjectManifest,
+) -> None:
+    keys = {"narrative_brief", "beat_plan", "editorial_critique"}
+    if not keys.intersection(project.active_versions):
+        return
+    if not keys.issubset(project.active_versions):
+        raise ValueError("editorial planning artifacts are incomplete")
+    brief = load_model(store.path("script/narrative-brief.json"), NarrativeBrief)
+    plan = load_model(store.path("script/beat-plan.json"), BeatPlan)
+    critique = load_model(store.path("script/editorial-critique.json"), EditorialCritique)
+    _ensure_active_versions(
+        project,
+        narrative_brief=brief.version_id,
+        beat_plan=plan.version_id,
+        editorial_critique=critique.critique_id,
+    )
+    if (
+        brief.claims_version_id != claims.version_id
+        or brief.evidence_version_id != evidence.version_id
+        or plan.narrative_brief_version_id != brief.version_id
+        or plan.claims_version_id != claims.version_id
+        or critique.narrative_brief_version_id != brief.version_id
+        or critique.beat_plan_version_id != plan.version_id
+        or critique.script_version_id != script.version_id
+    ):
+        raise ValueError("editorial planning artifacts are stale")
+    if critique.blocking:
+        messages = [item.message for item in critique.findings if item.severity == "error"]
+        raise ValueError("editorial critique blocks approval: " + "; ".join(messages[:3]))
+
+
+def _validate_visual_critique_dependencies(
+    store: ProjectStore,
+    script: ScriptManifest,
+    project: ProjectManifest,
+) -> None:
+    keys = {"storyboard_guidance", "visual_critique"}
+    if not keys.intersection(project.active_versions):
+        return
+    if not keys.issubset(project.active_versions):
+        raise ValueError("visual planning artifacts are incomplete")
+    guidance = load_model(store.path("storyboard/guidance.json"), StoryboardGuidance)
+    critique = load_model(store.path("storyboard/visual-critique.json"), VisualCritique)
+    _ensure_active_versions(
+        project,
+        storyboard_guidance=guidance.version_id,
+        visual_critique=critique.critique_id,
+    )
+    if (
+        guidance.script_version_id != script.version_id
+        or critique.storyboard_guidance_version_id != guidance.version_id
+        or critique.narrative_brief_version_id != guidance.narrative_brief_version_id
+        or critique.beat_plan_version_id != guidance.beat_plan_version_id
+    ):
+        raise ValueError("visual planning artifacts are stale")
+    if critique.blocking:
+        messages = [item.message for item in critique.findings if item.severity == "error"]
+        raise ValueError("visual critique blocks approval: " + "; ".join(messages[:3]))
 
 
 def _segment_is_current(store: ProjectStore, segment: ScriptSegment) -> bool:
@@ -714,7 +912,8 @@ def _validate_storyboard_dependencies(
             raise ValueError(f"scene {scene.scene_id} cites an unapproved or stale claim")
         if not scene.claim_ids:
             raise ValueError(f"scene {scene.scene_id} requires approved claim IDs")
-        if scene.visual.citation is not None and scene.visual.citation not in scene.claim_ids:
+        visual_citation = _legacy_visual_citation(scene)
+        if visual_citation is not None and visual_citation not in scene.claim_ids:
             raise ValueError(f"scene {scene.scene_id} contains a fabricated visual citation")
         scene_claims = [claims_by_id[item] for item in scene.claim_ids]
         labels = {claim.evidence_label.upper() for claim in scene_claims}
@@ -736,12 +935,12 @@ def _validate_storyboard_dependencies(
                 f"scene {scene.scene_id} contains unsupported number, unit, or DOI: "
                 + ", ".join(unsupported)
             )
-        if scene.primitive == "SourceReceipt":
-            evidence_id = scene.visual.evidence_id
+        if scene.primitive in {"SourceReceipt", "EvidenceHighlight"}:
+            evidence_id = _evidence_visual_id(scene)
             cited_evidence = {item for claim in scene_claims for item in claim.evidence_span_ids}
             if evidence_id is None or evidence_id not in cited_evidence:
                 raise ValueError(
-                    f"SourceReceipt scene {scene.scene_id} requires evidence cited by its claims"
+                    f"{scene.primitive} scene {scene.scene_id} requires evidence cited by its claims"
                 )
         expected_dependency = scene_dependency_hash(scene, script)
         if scene.dependency_hash != expected_dependency:
@@ -751,6 +950,7 @@ def _validate_storyboard_dependencies(
             raise ValueError(
                 f"scene {scene.scene_id} references missing asset {sorted(missing_assets)[0]}"
             )
+    _validate_visual_critique_dependencies(store, script, project)
 
 
 def _validate_rights_dependencies(
@@ -792,6 +992,53 @@ def _validate_rights_dependencies(
             raise ValueError(
                 f"asset {asset.asset_id} names missing scene {sorted(missing_scenes)[0]}"
             )
+
+
+def _validate_cover_dependencies(
+    store: ProjectStore,
+    storyboard: StoryboardManifest,
+    claims: ClaimsManifest,
+    evidence: EvidenceManifest,
+    project: ProjectManifest,
+) -> None:
+    covers_path = store.path("storyboard/covers.json")
+    selection_path = store.path("storyboard/cover-selection.json")
+    if not covers_path.is_file() or not selection_path.is_file():
+        raise ValueError(
+            "storyboard approval requires three generated cover candidates and a selection"
+        )
+    covers = load_model(covers_path, CoverManifest)
+    selection = load_model(selection_path, CoverSelection)
+    if covers.storyboard_version_id != storyboard.version_id:
+        raise ValueError("cover candidates were generated from a different storyboard")
+    _ensure_active_versions(
+        project,
+        covers=covers.version_id,
+        cover_selection=selection.selection_id,
+    )
+    candidate = next(
+        (
+            item
+            for item in covers.candidates
+            if item.candidate_id == selection.selected_candidate_id
+        ),
+        None,
+    )
+    if (
+        candidate is None
+        or selection.cover_version_id != covers.version_id
+        or selection.selected_candidate_hash != stable_hash(candidate)
+    ):
+        raise ValueError("selected cover is missing, stale, or hash-mismatched")
+    approved_claims = {
+        claim.claim_id for claim in claims.claims if _claim_is_current(store, claim, evidence)
+    }
+    known_evidence = {span.evidence_id for span in evidence.evidence}
+    for item in covers.candidates:
+        if not set(item.claim_ids).issubset(approved_claims):
+            raise ValueError(f"cover {item.candidate_id} references an unapproved claim")
+        if not set(item.evidence_ids).issubset(known_evidence):
+            raise ValueError(f"cover {item.candidate_id} references missing evidence")
 
 
 def _set_gate(
@@ -931,6 +1178,7 @@ def approve_storyboard(store: ProjectStore, reviewer: str) -> StoryboardManifest
     storyboard = load_model(store.path("storyboard/storyboard.json"), StoryboardManifest)
     project = store.project()
     _validate_storyboard_dependencies(store, storyboard, script, claims, evidence, project)
+    _validate_cover_dependencies(store, storyboard, claims, evidence, project)
     rows: list[tuple[ObjectType, str, str, Decision, str | None]] = []
     for scene in storyboard.scenes:
         scene.review_status = ReviewStatus.APPROVED
@@ -1010,6 +1258,7 @@ def _all_gate_dependencies_are_current(store: ProjectStore) -> None:
     assets = _load_assets(store)
     project = store.project()
     _validate_storyboard_dependencies(store, storyboard, script, claims, evidence, project)
+    _validate_cover_dependencies(store, storyboard, claims, evidence, project)
     _validate_rights_dependencies(store, assets, project)
     if not all(_claim_is_current(store, claim, evidence) for claim in claims.claims):
         raise ValueError("claim approvals are not current")
