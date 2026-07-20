@@ -87,6 +87,8 @@ REQUIRED_FINAL_QA_CHECKS = {
     "duration",
     "caption-integrity",
     "caption-safe-zone",
+    "caption-timing-accessibility",
+    "motion-intensity-flashing",
     "low-text-contrast",
     "resolution",
     "frame-rate",

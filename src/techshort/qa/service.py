@@ -23,6 +23,8 @@ from techshort.domain.creative import (
     BeatPlan,
     EditorialCritique,
     NarrativeBrief,
+    RetentionCritique,
+    RetentionPlan,
     StoryboardGuidance,
     VisualCritique,
 )
@@ -63,6 +65,7 @@ from techshort.domain.models import (
 )
 from techshort.domain.storage import ProjectStore, atomic_write_model, load_model
 from techshort.evidence import unsupported_assertion_tokens
+from techshort.generation.editorial.retention import critique_retention
 from techshort.ingestion import resolve_evidence_text, verify_source_integrity
 from techshort.qa.creative import (
     CreativeCoverInput,
@@ -185,9 +188,9 @@ def _scene_assertion_text(scene: Any) -> str:
             [
                 visual.parameter_label,
                 visual.unit,
-                format(visual.minimum, "g"),
-                format(visual.maximum, "g"),
-                format(visual.value, "g"),
+                f"{format(visual.minimum, 'g')} {visual.unit}",
+                f"{format(visual.maximum, 'g')} {visual.unit}",
+                f"{format(visual.value, 'g')} {visual.unit}",
                 visual.left_label,
                 visual.right_label,
             ]
@@ -464,6 +467,7 @@ def run_qa(
         None,
     )
     creative_chain_valid = True
+    current_retention_plan: RetentionPlan | None = None
     creative_keys = {
         "narrative_brief",
         "beat_plan",
@@ -499,6 +503,33 @@ def run_qa(
                 and not editorial_critique.blocking
                 and not visual_critique.blocking
             )
+        except (OSError, ValueError):
+            creative_chain_valid = False
+    retention_keys = {"retention_plan", "retention_critique"}
+    if retention_keys.intersection(project.active_versions):
+        try:
+            retention = load_model(store.path("script/retention-plan.json"), RetentionPlan)
+            retention_critique = load_model(
+                store.path("script/retention-critique.json"), RetentionCritique
+            )
+            brief = load_model(store.path("script/narrative-brief.json"), NarrativeBrief)
+            beat_plan = load_model(store.path("script/beat-plan.json"), BeatPlan)
+            retention_chain_valid = (
+                retention_keys.issubset(project.active_versions)
+                and project.active_versions.get("retention_plan") == retention.version_id
+                and project.active_versions.get("retention_critique")
+                == retention_critique.critique_id
+                and retention.narrative_brief_version_id == brief.version_id
+                and retention.beat_plan_version_id == beat_plan.version_id
+                and retention.script_version_id == script.version_id
+                and retention.claims_version_id == claims.version_id
+                and retention_critique
+                == critique_retention(retention, brief, beat_plan, script)
+                and not retention_critique.blocking
+            )
+            creative_chain_valid = creative_chain_valid and retention_chain_valid
+            if retention_chain_valid:
+                current_retention_plan = retention
         except (OSError, ValueError):
             creative_chain_valid = False
     cover_links_valid = selected_cover is not None and all(
@@ -851,6 +882,7 @@ def run_qa(
             case_id=project.project_id,
             topic_kind="mechanism",
             pacing=project.pacing,
+            retention_plan=current_retention_plan,
         )
         creative_result = evaluate_creative_quality(creative_snapshot)
         creative_path = str(Path(destination).parent / "creative-quality.json").replace("\\", "/")
@@ -869,6 +901,29 @@ def run_qa(
                 hard_blocker=False,
             )
         )
+        for accessibility_check_id in (
+            "caption-timing-accessibility",
+            "motion-intensity-flashing",
+        ):
+            accessibility_check = next(
+                item
+                for item in creative_result.checks
+                if item.check_id == accessibility_check_id
+            )
+            checks.append(
+                QACheck(
+                    check_id=accessibility_check.check_id,
+                    status=(
+                        "failure" if accessibility_check.status == "failure" else "pass"
+                    ),
+                    message=(
+                        accessibility_check.message
+                        if accessibility_check.status != "warning"
+                        else f"Advisory proxy: {accessibility_check.message}"
+                    ),
+                    hard_blocker=accessibility_check.status == "failure",
+                )
+            )
     caption_issues = caption_warnings(cues)
     srt_path = store.path("captions/captions.srt")
     vtt_path = store.path("captions/captions.vtt")
