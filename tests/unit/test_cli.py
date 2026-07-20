@@ -21,6 +21,7 @@ def test_cli_help_is_discoverable() -> None:
         "claims",
         "script",
         "storyboard",
+        "cover",
         "audio",
         "captions",
         "preview",

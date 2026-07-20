@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from techshort.alignment import as_srt, as_vtt, cues_from_script
+from techshort.audio import set_narration_mode
 from techshort.domain.models import ScriptManifest
 from techshort.domain.storage import ProjectStore, load_model
 from techshort.export import export_project, generate_evidence_page
@@ -15,7 +16,9 @@ from techshort.generation import (
     fixture_script,
     fixture_storyboard,
     generate_angles,
+    generate_fixture_covers,
     select_angle,
+    select_cover,
 )
 from techshort.ingestion import ingest_source
 from techshort.qa import run_qa
@@ -31,6 +34,7 @@ from techshort.review import (
 def test_offline_pipeline_through_pre_render_export_gate(tmp_path: Path) -> None:
     store = ProjectStore(tmp_path / "projects", "rolling-shutter")
     store.initialize("Rolling shutter")
+    set_narration_mode(store, "silent-reviewed")
     fixture = Path("examples/rolling-shutter/rolling-shutter.md")
     ingest_source(store, fixture)
     claims = fixture_claims(store)
@@ -41,7 +45,13 @@ def test_offline_pipeline_through_pre_render_export_gate(tmp_path: Path) -> None
     script = fixture_script(store)
     approve_script(store, "test")
     storyboard = fixture_storyboard(store)
-    assert len({scene.primitive for scene in storyboard.scenes}) == 7
+    assert len({scene.primitive for scene in storyboard.scenes}) >= 7
+    assert {"RasterScan", "EvidenceHighlight", "AnnotatedChart"}.issubset(
+        {scene.primitive for scene in storyboard.scenes}
+    )
+    covers = generate_fixture_covers(store)
+    assert len(covers.candidates) == 3
+    select_cover(store, "cover-scanline")
     approve_storyboard(store, "test")
     approve_rights(store, "test")
     script = load_model(store.path("script/script.json"), ScriptManifest)

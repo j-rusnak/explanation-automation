@@ -14,7 +14,13 @@ from rich.table import Table
 
 from techshort import __version__
 from techshort.alignment import cues_from_script, write_caption_files
-from techshort.audio import active_audio, import_audio, import_transcript, probe_duration
+from techshort.audio import (
+    active_audio,
+    import_audio,
+    import_transcript,
+    probe_duration,
+    set_narration_mode,
+)
 from techshort.domain.hashing import sha256_file, stable_hash
 from techshort.domain.models import (
     ClaimCritiqueReport,
@@ -27,9 +33,11 @@ from techshort.export import export_project, generate_evidence_page
 from techshort.generation import (
     generate_angles,
     generate_claims,
+    generate_fixture_covers,
     generate_script,
     generate_storyboard,
     select_angle,
+    select_cover,
 )
 from techshort.ingestion import ingest_source
 from techshort.providers import CodexCliProvider
@@ -52,11 +60,13 @@ app = typer.Typer(
 claims_app = typer.Typer(help="Generate evidence-linked candidate claims.")
 script_app = typer.Typer(help="Generate and manage evidence-linked scripts.")
 storyboard_app = typer.Typer(help="Generate allowlisted structured storyboards.")
+cover_app = typer.Typer(help="Generate and select evidence-linked cover designs.")
 audio_app = typer.Typer(help="Import user-recorded narration.")
 captions_app = typer.Typer(help="Generate deterministic SRT, VTT, and burned-caption cues.")
 app.add_typer(claims_app, name="claims")
 app.add_typer(script_app, name="script")
 app.add_typer(storyboard_app, name="storyboard")
+app.add_typer(cover_app, name="cover")
 app.add_typer(audio_app, name="audio")
 app.add_typer(captions_app, name="captions")
 console = Console()
@@ -396,6 +406,34 @@ def storyboard_generate(
         fail(str(exc))
 
 
+@cover_app.command("generate")
+def cover_generate(slug: str) -> None:
+    """Generate three deterministic cover candidates from the selected angle."""
+
+    try:
+        covers = generate_fixture_covers(store(slug))
+        console.print(f"Generated {len(covers.candidates)} evidence-linked cover candidates")
+        for candidate in covers.candidates:
+            console.print(
+                f"- {candidate.candidate_id}: {candidate.headline} "
+                f"({candidate.layout}, {candidate.palette})"
+            )
+        console.print(f"Select one with `techshort cover select {slug} <candidate-id>`")
+    except (OSError, ValueError) as exc:
+        fail(str(exc))
+
+
+@cover_app.command("select")
+def cover_select(slug: str, candidate_id: str) -> None:
+    """Persist the cover candidate reviewed by the user."""
+
+    try:
+        selection = select_cover(store(slug), candidate_id)
+        console.print(f"Selected {selection.selected_candidate_id} as {selection.selection_id}")
+    except (OSError, ValueError) as exc:
+        fail(str(exc))
+
+
 @app.command()
 def review(
     slug: str,
@@ -458,6 +496,19 @@ def audio_import(
             console.print(
                 "[yellow]Rights review will block embedding until metadata is corrected.[/yellow]"
             )
+    except (OSError, ValueError) as exc:
+        fail(str(exc))
+
+
+@audio_app.command("mode")
+def audio_mode(slug: str, mode: str) -> None:
+    """Explicitly require narration or approve a silent production workflow."""
+
+    try:
+        if mode not in {"narrated", "silent-reviewed"}:
+            raise ValueError("mode must be narrated or silent-reviewed")
+        set_narration_mode(store(slug), mode)  # type: ignore[arg-type]
+        console.print(f"Narration mode set to {mode}")
     except (OSError, ValueError) as exc:
         fail(str(exc))
 
@@ -662,6 +713,7 @@ def demo(
     reviewer = "demo-reviewer"
     try:
         target.initialize("Rolling-Shutter Distortion")
+        set_narration_mode(target, "silent-reviewed")
         ingest_source(target, Path("examples/rolling-shutter/rolling-shutter.md"))
         generate_claims(target, "fixture").require_artifact()
         approve_claims(target, reviewer)
@@ -670,6 +722,8 @@ def demo(
         generate_script(target, "fixture", angle="everyday-mechanism").require_artifact()
         approve_script(target, reviewer)
         generate_storyboard(target, "fixture").require_artifact()
+        generate_fixture_covers(target)
+        select_cover(target, "cover-scanline")
         approve_storyboard(target, reviewer)
         approve_rights(target, reviewer)
         _generate_captions(target)
