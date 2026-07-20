@@ -9,6 +9,13 @@ from typing import Generic, Literal, TypeVar, cast
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from techshort.assets import ensure_builtin_assets
+from techshort.domain.creative import (
+    BeatPlan,
+    EditorialCritique,
+    NarrativeBrief,
+    StoryboardGuidance,
+    VisualCritique,
+)
 from techshort.domain.hashing import sha256_file, stable_hash
 from techshort.domain.models import (
     AngleKind,
@@ -36,7 +43,20 @@ from techshort.domain.storage import (
     load_model,
 )
 from techshort.evidence import unsupported_assertion_tokens
+from techshort.generation.editorial import (
+    build_rolling_shutter_beat_plan,
+    build_rolling_shutter_brief,
+    build_rolling_shutter_storyboard_guidance,
+    critique_editorial,
+    critique_visual,
+)
 from techshort.ingestion import get_active_source, get_source, verify_source_integrity
+from techshort.prompts.editorial import (
+    BEAT_PLAN_TEMPLATE,
+    EDITORIAL_CRITIQUE_TEMPLATE,
+    NARRATIVE_BRIEF_TEMPLATE,
+    VISUAL_CRITIQUE_TEMPLATE,
+)
 from techshort.providers.codex_cli import CodexCliProvider
 from techshort.providers.fixture import FixtureProvider
 from techshort.providers.manual import ManualPromptPacket, ManualProvider, ManualTask
@@ -161,6 +181,24 @@ def _archive_script_for_regeneration(store: ProjectStore) -> None:
         # Preserve legacy bytes without trusting fields the current schema rejects.
         version_id = f"legacy-script-{sha256_file(current)[:16]}"
     _archive(store, "script/script.json", version_id)
+
+
+def _write_creative_artifact(
+    store: ProjectStore,
+    relative: str,
+    artifact: BaseModel,
+) -> None:
+    path = store.path(relative)
+    if path.is_file():
+        try:
+            previous = json.loads(path.read_text(encoding="utf-8"))
+            previous_id = previous.get("version_id") or previous.get("critique_id")
+        except (OSError, UnicodeError, json.JSONDecodeError, AttributeError) as exc:
+            raise ValueError(f"existing creative artifact is invalid: {relative}") from exc
+        if not isinstance(previous_id, str):
+            raise ValueError(f"existing creative artifact has no version ID: {relative}")
+        _archive(store, relative, previous_id)
+    atomic_write_model(path, artifact)
 
 
 def _source(store: ProjectStore, source_id: str | None) -> tuple[SourceDocument, str]:
@@ -1141,16 +1179,27 @@ def generate_script(
         }
     )
     input_hash = stable_hash(excerpts)
+    brief: NarrativeBrief | None = None
+    beat_plan: BeatPlan | None = None
 
     if provider == "fixture":
+        brief = build_rolling_shutter_brief(claims, angles, selection)
+        beat_plan = build_rolling_shutter_beat_plan(brief)
         candidate = FixtureProvider().generate_script(
             claims,
             selected_angle,
             angles_version_id=angles.version_id,
             angle_selection_id=selection.selection_id,
         )
-        prompt_version = "fixture-v1"
-        prompt_hash = stable_hash("fixture rolling-shutter script v1")
+        prompt_version = "fixture-editorial-v2"
+        prompt_hash = stable_hash(
+            {
+                "fixture": "rolling-shutter script v2",
+                "brief_template": NARRATIVE_BRIEF_TEMPLATE.template_hash,
+                "beat_template": BEAT_PLAN_TEMPLATE.template_hash,
+            }
+        )
+        input_hash = stable_hash({"brief": brief, "beat_plan": beat_plan})
     elif provider == "manual":
         schema = ScriptManifest.model_json_schema()
         expected_prompt_hash = ManualProvider.template_hash("script", SCRIPT_INSTRUCTION, schema)
@@ -1196,6 +1245,16 @@ def generate_script(
     script_path = store.path("script/script.json")
     _archive_script_for_regeneration(store)
     atomic_write_model(script_path, script)
+    editorial_critique: EditorialCritique | None = None
+    if brief is not None and beat_plan is not None:
+        editorial_critique = critique_editorial(brief, beat_plan, script)
+        _write_creative_artifact(store, "script/narrative-brief.json", brief)
+        _write_creative_artifact(store, "script/beat-plan.json", beat_plan)
+        _write_creative_artifact(
+            store,
+            "script/editorial-critique.json",
+            editorial_critique,
+        )
     receipt = _receipt(
         "script",
         provider,
@@ -1204,19 +1263,37 @@ def generate_script(
         input_hash,
         script.version_id,
     )
+    versions = {
+        "angles": angles.version_id,
+        "angle_selection": selection.selection_id,
+        "script": script.version_id,
+    }
+    creative_dependencies: dict[str, str] = {
+        "script_angles": angles.version_id,
+        "script_angle_selection": selection.selection_id,
+    }
+    if brief is not None and beat_plan is not None and editorial_critique is not None:
+        versions.update(
+            {
+                "narrative_brief": brief.version_id,
+                "beat_plan": beat_plan.version_id,
+                "editorial_critique": editorial_critique.critique_id,
+            }
+        )
+        creative_dependencies.update(
+            {
+                "narrative_brief_template": NARRATIVE_BRIEF_TEMPLATE.template_hash,
+                "beat_plan_template": BEAT_PLAN_TEMPLATE.template_hash,
+                "editorial_critique_template": EDITORIAL_CRITIQUE_TEMPLATE.template_hash,
+                "editorial_critique_input": editorial_critique.input_hash,
+            }
+        )
     _save_project_state(
         store,
         "script",
-        {
-            "angles": angles.version_id,
-            "angle_selection": selection.selection_id,
-            "script": script.version_id,
-        },
+        versions,
         receipt,
-        dependency_hashes={
-            "script_angles": angles.version_id,
-            "script_angle_selection": selection.selection_id,
-        },
+        dependency_hashes=creative_dependencies,
     )
     return GenerationOutcome(provider=provider, artifact=script)
 
@@ -1243,12 +1320,38 @@ def generate_storyboard(
     if project.active_versions.get("script") != script.version_id:
         raise ValueError("script manifest is not the active script version")
     excerpts = _script_excerpts(script)
+    brief: NarrativeBrief | None = None
+    beat_plan: BeatPlan | None = None
+    guidance: StoryboardGuidance | None = None
+    if provider == "fixture":
+        brief = load_model(store.path("script/narrative-brief.json"), NarrativeBrief)
+        beat_plan = load_model(store.path("script/beat-plan.json"), BeatPlan)
+        if (
+            project.active_versions.get("narrative_brief") != brief.version_id
+            or project.active_versions.get("beat_plan") != beat_plan.version_id
+        ):
+            raise ValueError(
+                "fixture storyboard requires the current narrative brief and beat plan"
+            )
+        guidance = build_rolling_shutter_storyboard_guidance(brief, beat_plan, script)
+        excerpts.append(
+            {
+                "narrative_brief": brief.model_dump(mode="json"),
+                "beat_plan": beat_plan.model_dump(mode="json"),
+                "storyboard_guidance": guidance.model_dump(mode="json"),
+            }
+        )
     input_hash = stable_hash(excerpts)
 
     if provider == "fixture":
         candidate = FixtureProvider().generate_storyboard(script)
-        prompt_version = "fixture-v1"
-        prompt_hash = stable_hash("fixture rolling-shutter storyboard v1")
+        prompt_version = "fixture-visual-plan-v2"
+        prompt_hash = stable_hash(
+            {
+                "fixture": "rolling-shutter storyboard v2",
+                "visual_critique_template": VISUAL_CRITIQUE_TEMPLATE.template_hash,
+            }
+        )
     elif provider == "manual":
         schema = StoryboardManifest.model_json_schema()
         expected_prompt_hash = ManualProvider.template_hash(
@@ -1298,6 +1401,15 @@ def generate_storyboard(
         previous = load_model(storyboard_path, StoryboardManifest)
         _archive(store, "storyboard/storyboard.json", previous.version_id)
     atomic_write_model(storyboard_path, storyboard)
+    visual_critique: VisualCritique | None = None
+    if brief is not None and beat_plan is not None and guidance is not None:
+        visual_critique = critique_visual(brief, beat_plan, guidance, script)
+        _write_creative_artifact(store, "storyboard/guidance.json", guidance)
+        _write_creative_artifact(
+            store,
+            "storyboard/visual-critique.json",
+            visual_critique,
+        )
     ensure_builtin_assets(store)
     receipt = _receipt(
         "storyboard",
@@ -1307,7 +1419,29 @@ def generate_storyboard(
         input_hash,
         storyboard.version_id,
     )
-    _save_project_state(store, "storyboard", {"storyboard": storyboard.version_id}, receipt)
+    versions = {"storyboard": storyboard.version_id}
+    creative_dependencies: dict[str, str] = {}
+    if guidance is not None and visual_critique is not None:
+        versions.update(
+            {
+                "storyboard_guidance": guidance.version_id,
+                "visual_critique": visual_critique.critique_id,
+            }
+        )
+        creative_dependencies.update(
+            {
+                "storyboard_guidance_input": stable_hash(guidance),
+                "visual_critique_template": VISUAL_CRITIQUE_TEMPLATE.template_hash,
+                "visual_critique_input": visual_critique.input_hash,
+            }
+        )
+    _save_project_state(
+        store,
+        "storyboard",
+        versions,
+        receipt,
+        dependency_hashes=creative_dependencies,
+    )
     return GenerationOutcome(provider=provider, artifact=storyboard)
 
 
