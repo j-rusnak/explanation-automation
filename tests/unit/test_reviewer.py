@@ -5,7 +5,13 @@ from pathlib import Path
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from techshort.domain.models import AnglesManifest, ClaimsManifest
+from techshort.domain.models import (
+    AnglesManifest,
+    ClaimsManifest,
+    CoverManifest,
+    CoverSelection,
+    StoryboardManifest,
+)
 from techshort.domain.storage import ProjectStore, load_model
 from techshort.generation import (
     fixture_claims,
@@ -14,6 +20,7 @@ from techshort.generation import (
     generate_angles,
     select_angle,
 )
+from techshort.generation.design import generate_fixture_covers, select_cover
 from techshort.ingestion import ingest_source
 from techshort.review import approve_claims, approve_script
 
@@ -30,6 +37,8 @@ def _reviewable_project(tmp_path: Path) -> Path:
     fixture_script(store)
     approve_script(store, "test-reviewer")
     fixture_storyboard(store)
+    covers = generate_fixture_covers(store)
+    select_cover(store, covers.candidates[0].candidate_id)
     return projects
 
 
@@ -42,6 +51,10 @@ def test_reviewer_constructs_every_step_without_duplicate_widget_ids(
     monkeypatch.setenv("TECHSHORT_PROJECTS_ROOT", str(projects))
     app = AppTest.from_file("reviewer/streamlit_app.py", default_timeout=30).run()
     assert not app.exception
+    assert app.selectbox(key="project-theme")
+    assert app.button(key="project-theme-apply")
+    assert app.selectbox(key="project-narration-mode")
+    assert app.button(key="project-narration-mode-apply")
     steps = [
         "1 Project",
         "2 Sources",
@@ -92,6 +105,74 @@ def test_script_step_shows_all_angles_and_explicit_selection_controls(
     app.sidebar.radio(key="review-step").set_value("4 Script")
     app.run()
     assert not app.exception
+    assert any("Editorial critique" in item.value for item in app.subheader)
     for candidate in angles.candidates:
         assert any(candidate.title in item.value for item in app.markdown)
         assert app.button(key=f"angle-select-{candidate.angle}")
+
+
+def test_storyboard_step_shows_cover_directions_and_scene_art_direction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    projects = _reviewable_project(tmp_path)
+    store = ProjectStore(projects, "review-app")
+    covers = load_model(store.path("storyboard/covers.json"), CoverManifest)
+    storyboard = load_model(store.path("storyboard/storyboard.json"), StoryboardManifest)
+    monkeypatch.setenv("TECHSHORT_PROJECTS_ROOT", str(projects))
+    app = AppTest.from_file("reviewer/streamlit_app.py", default_timeout=30).run()
+    app.sidebar.radio(key="review-step").set_value("5 Storyboard and assets")
+    app.run()
+
+    assert not app.exception
+    assert app.button(key="covers-generate")
+    assert any("Visual critique" in item.value for item in app.subheader)
+    for candidate in covers.candidates:
+        assert any(candidate.headline in item.value for item in app.markdown)
+        assert app.button(key=f"cover-select-{candidate.candidate_id}")
+    for scene in storyboard.scenes:
+        assert app.text_input(key=f"scene-citation-label-{scene.scene_id}")
+        assert app.selectbox(key=f"scene-layout-{scene.scene_id}")
+        assert app.selectbox(key=f"scene-motion-{scene.scene_id}")
+
+
+def test_qa_step_surfaces_creative_quality_findings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    projects = _reviewable_project(tmp_path)
+    monkeypatch.setenv("TECHSHORT_PROJECTS_ROOT", str(projects))
+    app = AppTest.from_file("reviewer/streamlit_app.py", default_timeout=30).run()
+    app.sidebar.radio(key="review-step").set_value("8 QA")
+    app.run()
+
+    assert not app.exception
+    assert any("Creative quality review" in item.value for item in app.subheader)
+
+
+def test_project_preferences_and_cover_selection_persist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    projects = _reviewable_project(tmp_path)
+    store = ProjectStore(projects, "review-app")
+    covers = load_model(store.path("storyboard/covers.json"), CoverManifest)
+    monkeypatch.setenv("TECHSHORT_PROJECTS_ROOT", str(projects))
+    app = AppTest.from_file("reviewer/streamlit_app.py", default_timeout=30).run()
+
+    app.selectbox(key="project-theme").set_value("signal-lab")
+    app.run()
+    app.button(key="project-theme-apply").click()
+    app.run()
+    assert store.project().theme == "signal-lab"
+
+    app.selectbox(key="project-narration-mode").set_value("silent-reviewed")
+    app.run()
+    app.button(key="project-narration-mode-apply").click()
+    app.run()
+    assert store.project().narration_mode == "silent-reviewed"
+
+    app.sidebar.radio(key="review-step").set_value("5 Storyboard and assets")
+    app.run()
+    replacement = covers.candidates[1]
+    app.button(key=f"cover-select-{replacement.candidate_id}").click()
+    app.run()
+    selection = load_model(store.path("storyboard/cover-selection.json"), CoverSelection)
+    assert selection.selected_candidate_id == replacement.candidate_id

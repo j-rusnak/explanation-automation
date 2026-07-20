@@ -4,11 +4,13 @@ import json
 import os
 import subprocess
 import tempfile
+import textwrap
 from collections.abc import Callable
 from pathlib import Path
-from typing import TypeVar
+from typing import Literal, TypeVar, cast
 
 import streamlit as st
+from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel
 
 from techshort.alignment import cues_from_script, write_caption_files
@@ -18,7 +20,9 @@ from techshort.audio import (
     import_audio,
     import_transcript,
     probe_duration,
+    set_narration_mode,
 )
+from techshort.domain.creative import EditorialCritique, VisualCritique
 from techshort.domain.hashing import sha256_file, stable_hash
 from techshort.domain.models import (
     AngleSelection,
@@ -26,8 +30,12 @@ from techshort.domain.models import (
     AssetManifest,
     ClaimCritiqueReport,
     ClaimsManifest,
+    CoverCandidate,
+    CoverManifest,
+    CoverSelection,
     EvidenceManifest,
     QAReport,
+    RenderManifest,
     ReviewLog,
     ReviewStatus,
     ScriptManifest,
@@ -37,7 +45,24 @@ from techshort.domain.models import (
 from techshort.domain.storage import ProjectStore, load_model, sanitize_filename
 from techshort.export import export_project, generate_evidence_page
 from techshort.generation import select_angle
+from techshort.generation.design import (
+    generate_fixture_covers,
+    select_cover,
+    selected_cover_payload,
+)
+from techshort.generation.editorial import (
+    build_rolling_shutter_beat_plan,
+    build_rolling_shutter_brief,
+    build_rolling_shutter_storyboard_guidance,
+    critique_editorial,
+    critique_visual,
+)
 from techshort.qa import run_qa
+from techshort.qa.creative import (
+    CreativeCoverInput,
+    creative_input_from_manifests,
+    evaluate_creative_quality,
+)
 from techshort.rendering import render_video
 from techshort.review import (
     approve_asset,
@@ -93,6 +118,13 @@ AUDIO_RIGHTS_STATUSES = (
     "citation-only",
     "restricted",
 )
+THEMES = ("blueprint", "signal-lab", "technical-editorial")
+NARRATION_MODES = ("narrated", "silent-reviewed")
+LAYOUT_PRESETS = ("hero", "full-diagram", "split", "evidence", "numeric", "limitation")
+MOTION_PRESETS = ("calm", "precise", "energetic")
+
+ArtTheme = Literal["midnight", "blueprint", "signal-lab", "technical-editorial"]
+NarrationMode = Literal["narrated", "silent-reviewed"]
 
 st.set_page_config(page_title="techshort reviewer", page_icon="TS", layout="wide")
 st.title("techshort reviewer")
@@ -130,6 +162,257 @@ def _perform(
         return
     st.success(f"Saved: {label}")
     st.rerun()
+
+
+def _set_project_theme(store: ProjectStore, theme: str) -> None:
+    if theme not in THEMES:
+        raise ValueError(f"unsupported art direction: {theme}")
+    project = store.project()
+    if project.theme == theme:
+        return
+    project = store.invalidate_from("storyboard", f"art direction changed to {theme}")
+    project.theme = cast(ArtTheme, theme)
+    store.save_project(project)
+
+
+def _set_narration_mode(store: ProjectStore, mode: str) -> None:
+    if mode not in NARRATION_MODES:
+        raise ValueError(f"unsupported narration mode: {mode}")
+    set_narration_mode(store, cast(NarrationMode, mode))
+
+
+def _cover_preview(candidate: CoverCandidate) -> Image.Image:
+    """Create a safe, deterministic reviewer still from validated cover data."""
+
+    palettes = {
+        "blueprint": {
+            "background": "#071726",
+            "surface": "#0F3046",
+            "text": "#F3FAFF",
+            "muted": "#A7C2D4",
+            "accent": "#27D3E2",
+            "signal": "#FFCA58",
+        },
+        "signal-lab": {
+            "background": "#061916",
+            "surface": "#10352D",
+            "text": "#F0FFF9",
+            "muted": "#A9D4C5",
+            "accent": "#37E6A0",
+            "signal": "#FFCF5B",
+        },
+        "technical-editorial": {
+            "background": "#F2EBDD",
+            "surface": "#FFF9EF",
+            "text": "#18242B",
+            "muted": "#5E6C70",
+            "accent": "#D74E32",
+            "signal": "#187A8C",
+        },
+    }
+    colors = palettes[candidate.palette]
+    image = Image.new("RGB", (360, 640), colors["background"])
+    draw = ImageDraw.Draw(image)
+    small = ImageFont.load_default(size=14)
+    body = ImageFont.load_default(size=18)
+    headline = ImageFont.load_default(size=31)
+
+    draw.rounded_rectangle((22, 24, 338, 356), radius=22, fill=colors["surface"])
+    draw.text((30, 38), candidate.palette.upper(), fill=colors["accent"], font=small)
+    hero = candidate.hero
+    if hero.kind == "scanline":
+        draw.line((102, 96, 102, 310), fill=colors["muted"], width=5)
+        for index in range(15):
+            y = 94 + index * 14
+            progress = index / 14
+            shift = int(hero.distortion * progress * progress * 74)
+            draw.line(
+                (218 + shift, y, 278 + shift, y),
+                fill=colors["signal"] if index % 3 == 0 else colors["accent"],
+                width=7,
+            )
+        draw.line((46, 204, 160, 204), fill=colors["accent"], width=8)
+        draw.text((40, 322), "STRAIGHT", fill=colors["muted"], font=small)
+        draw.text((215, 322), "ROW SAMPLES", fill=colors["muted"], font=small)
+    elif hero.kind == "comparison":
+        draw.rounded_rectangle((42, 90, 172, 308), radius=14, outline=colors["muted"], width=2)
+        draw.rounded_rectangle((188, 90, 318, 308), radius=14, outline=colors["accent"], width=3)
+        draw.line((76, 120, 136, 278), fill=colors["text"], width=9)
+        draw.line((205, 120, 292, 278), fill=colors["signal"], width=9)
+        draw.text((54, 320), hero.before_label.upper(), fill=colors["muted"], font=small)
+        draw.text((202, 320), hero.after_label.upper(), fill=colors["accent"], font=small)
+    else:
+        positions = {
+            node.id: (int(40 + node.x * 280), int(78 + node.y * 226)) for node in hero.nodes
+        }
+        for edge in hero.edges:
+            draw.line(
+                (*positions[edge.source], *positions[edge.target]), fill=colors["muted"], width=3
+            )
+        for node in hero.nodes:
+            x, y = positions[node.id]
+            fill = colors["signal"] if node.state == "active" else colors["accent"]
+            draw.ellipse((x - 22, y - 22, x + 22, y + 22), fill=fill)
+            label = "\n".join(textwrap.wrap(node.label, width=12))
+            draw.multiline_text(
+                (x - 35, y + 28), label, fill=colors["text"], font=small, align="center"
+            )
+
+    y = 386
+    for line in textwrap.wrap(candidate.headline, width=20):
+        draw.text((28, y), line, fill=colors["text"], font=headline)
+        y += 38
+    if candidate.subheadline:
+        y += 8
+        for line in textwrap.wrap(candidate.subheadline, width=34)[:3]:
+            draw.text((30, y), line, fill=colors["muted"], font=body)
+            y += 24
+    draw.text((30, 606), candidate.layout.upper(), fill=colors["accent"], font=small)
+    return image
+
+
+def _editorial_reviews(
+    store: ProjectStore,
+) -> tuple[EditorialCritique, VisualCritique] | None:
+    claims = _load_if(store, "claims/claims.json", ClaimsManifest)
+    angles = _load_if(store, "script/angles.json", AnglesManifest)
+    selection = _load_if(store, "script/angle-selection.json", AngleSelection)
+    script = _load_if(store, "script/script.json", ScriptManifest)
+    if claims is None or angles is None or selection is None or script is None:
+        return None
+    brief = build_rolling_shutter_brief(claims, angles, selection)
+    plan = build_rolling_shutter_beat_plan(brief)
+    guidance = build_rolling_shutter_storyboard_guidance(brief, plan, script)
+    return critique_editorial(brief, plan, script), critique_visual(brief, plan, guidance, script)
+
+
+def _show_editorial_findings(store: ProjectStore, kind: Literal["editorial", "visual"]) -> None:
+    try:
+        reviews = _editorial_reviews(store)
+    except (OSError, ValueError) as exc:
+        st.warning(f"{kind.title()} critique unavailable: {exc}")
+        return
+    if reviews is None:
+        st.info(f"{kind.title()} critique becomes available after angle and script generation.")
+        return
+    critique = reviews[0] if kind == "editorial" else reviews[1]
+    st.subheader(f"{kind.title()} critique")
+    st.caption("Deterministic production feedback; findings are advisory and never approval.")
+    if not critique.findings:
+        st.success(f"No {kind} critique findings for the current inputs.")
+        return
+    for finding in critique.findings:
+        object_id = getattr(finding, "segment_id", None) or getattr(finding, "scene_key", None)
+        message = f"{finding.category}: {finding.message}"
+        if object_id:
+            message += f" ({object_id})"
+        if finding.severity == "error":
+            st.error(message)
+        else:
+            st.warning(message)
+
+
+def _show_cover_candidates(store: ProjectStore) -> None:
+    st.subheader("Cover directions")
+    st.caption(
+        "Three evidence-linked directions are generated from the selected angle. The stills "
+        "below are deterministic reviewer schematics; Remotion produces the export cover."
+    )
+    _perform(
+        "Generate three cover directions",
+        "covers-generate",
+        generate_fixture_covers,
+        store,
+    )
+    covers = _load_if(store, "storyboard/covers.json", CoverManifest)
+    if covers is None:
+        st.info("Generate a storyboard and choose an angle before creating cover directions.")
+        return
+    selected_id: str | None = None
+    try:
+        selected_id = cast(str, selected_cover_payload(store)["selected_candidate_id"])
+    except (OSError, ValueError, KeyError):
+        st.warning("Choose one current cover direction before storyboard approval.")
+    columns = st.columns(3)
+    for column, candidate in zip(columns, covers.candidates, strict=True):
+        with column, st.container(border=True):
+            st.image(
+                _cover_preview(candidate),
+                caption=candidate.accessibility_description,
+                width="stretch",
+            )
+            st.markdown(f"#### {candidate.headline}")
+            if candidate.subheadline:
+                st.write(candidate.subheadline)
+            st.caption(f"{candidate.layout} · {candidate.palette} · hero: {candidate.hero.kind}")
+            st.caption(
+                f"{len(candidate.claim_ids)} claim link(s) · "
+                f"{len(candidate.evidence_ids)} evidence link(s)"
+            )
+            if selected_id == candidate.candidate_id:
+                st.success("Selected cover direction")
+            _perform(
+                "Select this cover",
+                f"cover-select-{candidate.candidate_id}",
+                select_cover,
+                store,
+                candidate.candidate_id,
+                disabled=selected_id == candidate.candidate_id,
+            )
+    st.warning(
+        "Selecting or regenerating a cover invalidates storyboard and final review so the new "
+        "visual direction is explicitly re-approved."
+    )
+
+
+def _show_creative_findings(store: ProjectStore) -> None:
+    storyboard = _load_if(store, "storyboard/storyboard.json", StoryboardManifest)
+    script = _load_if(store, "script/script.json", ScriptManifest)
+    covers = _load_if(store, "storyboard/covers.json", CoverManifest)
+    selection = _load_if(store, "storyboard/cover-selection.json", CoverSelection)
+    if storyboard is None or script is None or covers is None or selection is None:
+        st.info("Creative QA becomes available after script, storyboard, and cover selection.")
+        return
+    try:
+        selected_cover_payload(store)
+        candidate = next(
+            item
+            for item in covers.candidates
+            if item.candidate_id == selection.selected_candidate_id
+        )
+        cover = CreativeCoverInput(
+            cover_id=candidate.candidate_id,
+            headline=candidate.headline,
+            focal_visual=candidate.hero.kind,
+            layout=candidate.layout,
+            subtitle=candidate.subheadline,
+            citation="Evidence-linked source receipt",
+            factual=True,
+        )
+        snapshot = creative_input_from_manifests(
+            storyboard,
+            script,
+            cues_from_script(script),
+            cover,
+            case_id=store.project().project_id,
+            topic_kind="mechanism",
+        )
+        result = evaluate_creative_quality(snapshot)
+    except (OSError, StopIteration, ValueError) as exc:
+        st.warning(f"Creative QA unavailable: {exc}")
+        return
+    st.subheader("Creative quality review")
+    st.metric("Creative QA score", f"{result.score}/100", result.status.upper())
+    for check in result.checks:
+        message = f"{check.category} · {check.message}"
+        if check.remediation:
+            message += f" Next: {check.remediation}"
+        if check.status == "failure":
+            st.error(message)
+        elif check.status == "warning":
+            st.warning(message)
+        else:
+            st.success(message)
 
 
 def _generate_captions(store: ProjectStore) -> tuple[Path, Path]:
@@ -194,6 +477,9 @@ def _edit_scene_from_json(
     on_screen_text: str,
     accessibility_description: str,
     evidence_label: str,
+    citation_label: str,
+    layout: str,
+    motion: str,
     visual_json: str,
     reviewer: str,
 ) -> object:
@@ -207,6 +493,9 @@ def _edit_scene_from_json(
             "on_screen_text": on_screen_text,
             "accessibility_description": accessibility_description,
             "evidence_label": evidence_label.strip() or None,
+            "citation_label": citation_label.strip() or None,
+            "layout": layout,
+            "motion": motion,
             "visual": visual,
         },
         reviewer,
@@ -302,8 +591,56 @@ def _show_project(store: ProjectStore) -> None:
             "content risk": project.content_risk,
             "active source": project.active_source_id or "none",
             "theme": project.theme,
+            "narration mode": project.narration_mode,
         }
     )
+    st.subheader("Art direction and delivery")
+    st.caption(
+        "Art direction controls the renderer's color, typography, and graphic language. "
+        "Changing it invalidates storyboard approval because reviewers must see the result."
+    )
+    current_theme = project.theme if project.theme in THEMES else "blueprint"
+    theme = st.selectbox(
+        "Art direction",
+        THEMES,
+        index=THEMES.index(current_theme),
+        key="project-theme",
+        help=(
+            "Blueprint emphasizes diagrams, Signal Lab emphasizes active measurements, and "
+            "Technical Editorial uses a warmer publication-like treatment. Midnight is the "
+            "legacy compatibility theme."
+        ),
+    )
+    _perform(
+        "Apply art direction",
+        "project-theme-apply",
+        _set_project_theme,
+        store,
+        theme,
+        disabled=theme == project.theme,
+    )
+    narration_mode = st.selectbox(
+        "Narration mode",
+        NARRATION_MODES,
+        index=NARRATION_MODES.index(project.narration_mode),
+        key="project-narration-mode",
+        help=(
+            "Narrated requires reviewed imported audio. Silent-reviewed is an explicit human "
+            "choice for caption-led output, not an automatic fallback for missing audio."
+        ),
+    )
+    _perform(
+        "Apply narration mode",
+        "project-narration-mode-apply",
+        _set_narration_mode,
+        store,
+        narration_mode,
+        disabled=narration_mode == project.narration_mode,
+    )
+    if project.narration_mode == "silent-reviewed":
+        st.warning("This project is explicitly configured for a human-reviewed silent export.")
+    else:
+        st.info("This project requires reviewed narration before final export.")
     st.subheader("Human approval gates")
     st.dataframe(
         [
@@ -521,6 +858,7 @@ def _show_script(store: ProjectStore, reviewer: str) -> None:
     first, second = st.columns(2)
     first.metric("Spoken words", words)
     second.metric("Selected angle", script.angle)
+    _show_editorial_findings(store, "editorial")
     for segment in script.segments:
         with st.container(border=True):
             st.subheader(segment.segment_id)
@@ -583,16 +921,43 @@ def _show_script(store: ProjectStore, reviewer: str) -> None:
 def _show_storyboard_and_assets(store: ProjectStore, reviewer: str) -> None:
     storyboard = _load_if(store, "storyboard/storyboard.json", StoryboardManifest)
     assets = _load_if(store, "assets/asset-manifest.json", AssetManifest)
+    preview_manifest = _load_if(
+        store,
+        "renders/previews/render-manifest.json",
+        RenderManifest,
+    )
     st.subheader("Storyboard scenes")
     if storyboard is None:
         st.info("Generate a storyboard after approving the script.")
     else:
+        _show_cover_candidates(store)
+        _show_editorial_findings(store, "visual")
+        st.subheader("Scene review")
         for scene in storyboard.scenes:
             with st.container(border=True):
                 st.subheader(f"{scene.order + 1}. {scene.primitive}")
+                still = store.path(f"renders/previews/scene-still-{scene.scene_id}.png")
+                still_relative = still.relative_to(store.root).as_posix()
+                still_is_current = (
+                    preview_manifest is not None
+                    and preview_manifest.storyboard_hash == stable_hash(storyboard)
+                    and still.is_file()
+                    and preview_manifest.output_hashes.get(still_relative) == sha256_file(still)
+                )
+                if still_is_current:
+                    st.image(
+                        still,
+                        caption=f"Representative frame from {scene.scene_id}",
+                        width=270,
+                    )
+                else:
+                    st.caption(
+                        "Render a current preview to inspect this scene's representative still."
+                    )
                 st.caption(
                     f"{scene.scene_id} · starts {scene.start_time:g} s · {scene.duration:g} s · "
-                    f"{scene.transition} · review: {scene.review_status}"
+                    f"{scene.transition} · {scene.layout} layout · {scene.motion} motion · "
+                    f"review: {scene.review_status}"
                 )
                 on_screen = st.text_area(
                     "On-screen text",
@@ -608,6 +973,25 @@ def _show_storyboard_and_assets(store: ProjectStore, reviewer: str) -> None:
                     "Evidence label",
                     scene.evidence_label or "",
                     key=f"scene-evidence-label-{scene.scene_id}",
+                )
+                citation_label = st.text_input(
+                    "Human-readable citation label",
+                    scene.citation_label or "",
+                    key=f"scene-citation-label-{scene.scene_id}",
+                    help="Use a short source or evidence description; keep internal IDs hidden.",
+                )
+                layout_col, motion_col = st.columns(2)
+                layout = layout_col.selectbox(
+                    "Layout preset",
+                    LAYOUT_PRESETS,
+                    index=LAYOUT_PRESETS.index(scene.layout),
+                    key=f"scene-layout-{scene.scene_id}",
+                )
+                motion = motion_col.selectbox(
+                    "Motion treatment",
+                    MOTION_PRESETS,
+                    index=MOTION_PRESETS.index(scene.motion),
+                    key=f"scene-motion-{scene.scene_id}",
                 )
                 visual_json = st.text_area(
                     "Structured visual specification (validated JSON; never executed)",
@@ -642,6 +1026,9 @@ def _show_storyboard_and_assets(store: ProjectStore, reviewer: str) -> None:
                         on_screen,
                         accessibility,
                         evidence_label,
+                        citation_label,
+                        layout,
+                        motion,
                         visual_json,
                         reviewer,
                     )
@@ -767,6 +1154,29 @@ def _show_storyboard_and_assets(store: ProjectStore, reviewer: str) -> None:
 
 
 def _show_narration(store: ProjectStore) -> None:
+    project = store.project()
+    st.subheader("Narration mode")
+    selected_mode = st.selectbox(
+        "Delivery mode",
+        NARRATION_MODES,
+        index=NARRATION_MODES.index(project.narration_mode),
+        key="narration-step-mode",
+    )
+    _perform(
+        "Apply delivery mode",
+        "narration-step-mode-apply",
+        _set_narration_mode,
+        store,
+        selected_mode,
+        disabled=selected_mode == project.narration_mode,
+    )
+    if project.narration_mode == "silent-reviewed":
+        st.warning(
+            "Silent-reviewed is an explicit approval path. Captions and visual pacing still "
+            "require review."
+        )
+    else:
+        st.info("Narrated mode requires imported, rights-cleared narration for final export.")
     narration = None
     narration_error = None
     try:
@@ -906,6 +1316,8 @@ def _show_preview(store: ProjectStore) -> None:
 
 
 def _show_qa(store: ProjectStore) -> None:
+    _show_creative_findings(store)
+    st.subheader("Technical and export QA")
     first, second = st.columns(2)
     with first:
         _perform("Run preview QA", "qa-run-preview", _run_preview_qa, store)
