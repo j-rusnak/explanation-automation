@@ -1,10 +1,10 @@
 import React from "react";
 import { interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
+import { sceneProgressFor } from "../pacing/rhythm";
 import {
   Frame,
   Panel,
   SceneHeadline,
-  progressFor,
   sceneTheme,
   type PrimitiveProps,
 } from "./shared";
@@ -206,7 +206,11 @@ export const EvidenceHighlight: React.FC<PrimitiveProps> = ({
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const tokens = sceneTheme(scene, themeName);
-  const progress = progressFor(scene, frame, fps);
+  const progress = Math.min(
+    1,
+    sceneProgressFor(frame, Math.max(1, Math.round(scene.duration * fps))) *
+      1.2,
+  );
   const visual =
     "kind" in scene.visual && scene.visual.kind === "evidence-highlight"
       ? scene.visual

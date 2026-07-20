@@ -1,5 +1,6 @@
 import React from "react";
 import { useCurrentFrame, useVideoConfig } from "remotion";
+import { sceneProgressFor } from "../pacing/rhythm";
 import type { SceneData } from "../schemas/project";
 import type { ThemeTokens } from "../themes/tokens";
 import {
@@ -223,6 +224,11 @@ export const RasterScan: React.FC<PrimitiveProps> = ({ scene, themeName }) => {
   const { fps } = useVideoConfig();
   const tokens = sceneTheme(scene, themeName);
   const progress = progressFor(scene, frame, fps);
+  const scanProgress = Math.min(
+    1,
+    sceneProgressFor(frame, Math.max(1, Math.round(scene.duration * fps))) *
+      1.15,
+  );
   const visual =
     "kind" in scene.visual && scene.visual.kind === "raster-scan"
       ? scene.visual
@@ -276,8 +282,8 @@ export const RasterScan: React.FC<PrimitiveProps> = ({ scene, themeName }) => {
                   const ratio = row / Math.max(1, visual.rows - 1);
                   const active =
                     visual.direction === "bottom-to-top"
-                      ? ratio >= 1 - progress
-                      : ratio <= progress;
+                      ? ratio >= 1 - scanProgress
+                      : ratio <= scanProgress;
                   const horizontalScan = visual.direction !== "left-to-right";
                   return (
                     <div
@@ -294,7 +300,7 @@ export const RasterScan: React.FC<PrimitiveProps> = ({ scene, themeName }) => {
                           ? tokens.warning
                           : `${tokens.citation}26`,
                         boxShadow:
-                          active && Math.abs(ratio - progress) < 0.06
+                          active && Math.abs(ratio - scanProgress) < 0.06
                             ? `0 0 20px ${tokens.warning}`
                             : undefined,
                       }}
@@ -326,7 +332,11 @@ export const TimeSlice: React.FC<PrimitiveProps> = ({ scene, themeName }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const tokens = sceneTheme(scene, themeName);
-  const progress = progressFor(scene, frame, fps);
+  const progress = Math.min(
+    1,
+    sceneProgressFor(frame, Math.max(1, Math.round(scene.duration * fps))) *
+      1.2,
+  );
   const visual =
     "kind" in scene.visual && scene.visual.kind === "time-slice"
       ? scene.visual

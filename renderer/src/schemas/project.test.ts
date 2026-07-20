@@ -110,6 +110,28 @@ describe("renderer schema", () => {
     expect(parsed.layout).toBe("split");
   });
 
+  it("defaults to brisk pacing and rejects unbounded pacing modes", () => {
+    const parsed = projectSchema.parse({ ...base, scenes: [scene] });
+    expect(parsed.pacing).toBe("brisk");
+    expect(parsed.safeZone).toEqual({
+      top: 0.06,
+      right: 0.14,
+      bottom: 0.17,
+      left: 0.067,
+    });
+    expect(() =>
+      projectSchema.parse({
+        ...base,
+        scenes: [scene],
+        pacing: "viral-chaos",
+      }),
+    ).toThrow();
+    expect(
+      projectSchema.parse({ ...base, scenes: [scene], pacing: "measured" })
+        .pacing,
+    ).toBe("measured");
+  });
+
   it("rejects mismatched primitive and typed visual kinds", () =>
     expect(() =>
       sceneSchema.parse({

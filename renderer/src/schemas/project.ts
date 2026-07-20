@@ -32,6 +32,28 @@ export const layoutSchema = z.enum([
   "limitation",
 ]);
 export const motionSchema = z.enum(["calm", "precise", "energetic"]);
+export const pacingSchema = z.enum(["measured", "brisk", "high-retention"]);
+export const DEFAULT_SAFE_ZONE = {
+  top: 0.06,
+  right: 0.14,
+  bottom: 0.17,
+  left: 0.067,
+} as const;
+export const safeZoneSchema = z
+  .object({
+    top: z.number().min(0).max(0.25).default(DEFAULT_SAFE_ZONE.top),
+    right: z.number().min(0).max(0.25).default(DEFAULT_SAFE_ZONE.right),
+    bottom: z.number().min(0).max(0.25).default(DEFAULT_SAFE_ZONE.bottom),
+    left: z.number().min(0).max(0.25).default(DEFAULT_SAFE_ZONE.left),
+  })
+  .strict()
+  .refine((zone) => zone.left + zone.right <= 0.4, {
+    message:
+      "horizontal safe-zone insets may not consume over 40% of the frame",
+  })
+  .refine((zone) => zone.top + zone.bottom <= 0.4, {
+    message: "vertical safe-zone insets may not consume over 40% of the frame",
+  });
 
 const themeKeys = new Set([
   "background",
@@ -600,6 +622,8 @@ export const projectSchema = z
     fps: z.number().int().positive(),
     watermarked: z.boolean(),
     theme: themeNameSchema.default("blueprint"),
+    pacing: pacingSchema.default("brisk"),
+    safeZone: safeZoneSchema.default(DEFAULT_SAFE_ZONE),
     segments: z.array(segmentSchema),
     scenes: z.array(sceneSchema).min(1),
     captions: z.array(captionSchema),
@@ -618,3 +642,5 @@ export type ProjectData = z.infer<typeof projectSchema>;
 export type SceneData = z.infer<typeof sceneSchema>;
 export type TypedVisual = z.infer<typeof typedVisualSchema>;
 export type CoverCandidate = z.infer<typeof coverCandidateSchema>;
+export type PacingPreset = z.infer<typeof pacingSchema>;
+export type SafeZoneInsets = z.infer<typeof safeZoneSchema>;

@@ -1,5 +1,6 @@
 import React from "react";
 import { useCurrentFrame, useVideoConfig } from "remotion";
+import { sceneProgressFor } from "../pacing/rhythm";
 import type { SceneData } from "../schemas/project";
 import type { ThemeTokens } from "../themes/tokens";
 import {
@@ -92,6 +93,14 @@ export function AnnotatedChart({
   const { fps } = useVideoConfig();
   const tokens = sceneTheme(scene, themeName);
   const progress = progressFor(scene, frame, fps);
+  const sceneProgress = sceneProgressFor(
+    frame,
+    Math.max(1, Math.round(scene.duration * fps)),
+  );
+  const annotationProgress = Math.max(
+    0,
+    Math.min(1, (sceneProgress - 0.38) / 0.24),
+  );
   const visual =
     "kind" in scene.visual && scene.visual.kind === "annotated-chart"
       ? scene.visual
@@ -200,7 +209,10 @@ export function AnnotatedChart({
             const placeLeft = pointX > 650;
             const direction = placeLeft ? -1 : 1;
             return (
-              <g key={`${annotation.label}-${index}`} opacity={progress}>
+              <g
+                key={`${annotation.label}-${index}`}
+                opacity={annotationProgress}
+              >
                 <line
                   x1={pointX}
                   y1={pointY}
@@ -253,7 +265,11 @@ export const Timeline: React.FC<PrimitiveProps> = ({ scene, themeName }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const tokens = sceneTheme(scene, themeName);
-  const progress = progressFor(scene, frame, fps);
+  const progress = Math.min(
+    1,
+    sceneProgressFor(frame, Math.max(1, Math.round(scene.duration * fps))) *
+      1.2,
+  );
   const visual =
     "kind" in scene.visual && scene.visual.kind === "timeline"
       ? scene.visual

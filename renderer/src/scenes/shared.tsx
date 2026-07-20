@@ -1,7 +1,16 @@
 import React from "react";
-import { interpolate } from "remotion";
+import { interpolate, useCurrentFrame, useVideoConfig } from "remotion";
 import type { SceneData } from "../schemas/project";
 import { getTheme, type ThemeName, type ThemeTokens } from "../themes/tokens";
+import {
+  coldOpenSignal,
+  microBeatSignal,
+  pacingProfiles,
+  patternInterruptFor,
+  sceneProgressFor,
+  usePacing,
+} from "../pacing/rhythm";
+import { useSafeZone } from "../safe-zone";
 
 export type PrimitiveProps = { scene: SceneData; themeName: ThemeName };
 export type ColorToken =
@@ -77,36 +86,51 @@ export const SceneHeadline: React.FC<{
   scene: SceneData;
   tokens: ThemeTokens;
   eyebrow?: string;
-}> = ({ scene, tokens, eyebrow }) => (
-  <div style={{ maxWidth: scene.layout === "full-diagram" ? 930 : 890 }}>
-    {eyebrow ? (
-      <div
+}> = ({ scene, tokens, eyebrow }) => {
+  const frame = useCurrentFrame();
+  const introFrames = scene.order === 0 ? 8 : 14;
+  const accentProgress = Math.max(0, Math.min(1, frame / introFrames));
+  return (
+    <div style={{ maxWidth: scene.layout === "full-diagram" ? 930 : 890 }}>
+      {eyebrow ? (
+        <div
+          style={{
+            color: tokens.accent,
+            fontSize: 23,
+            fontWeight: 700,
+            letterSpacing: 4,
+            marginBottom: 15,
+            textTransform: "uppercase",
+          }}
+        >
+          {eyebrow}
+        </div>
+      ) : null}
+      <h1
         style={{
-          color: tokens.accent,
-          fontSize: 23,
-          fontWeight: 700,
-          letterSpacing: 4,
-          marginBottom: 15,
-          textTransform: "uppercase",
+          fontFamily: tokens.headingFont,
+          fontSize: scene.layout === "hero" ? 91 : 73,
+          lineHeight: 0.99,
+          margin: 0,
+          letterSpacing: scene.layout === "hero" ? -3 : -2,
+          textWrap: "balance",
         }}
       >
-        {eyebrow}
-      </div>
-    ) : null}
-    <h1
-      style={{
-        fontFamily: tokens.headingFont,
-        fontSize: scene.layout === "hero" ? 91 : 73,
-        lineHeight: 0.99,
-        margin: 0,
-        letterSpacing: scene.layout === "hero" ? -3 : -2,
-        textWrap: "balance",
-      }}
-    >
-      {scene.on_screen_text}
-    </h1>
-  </div>
-);
+        {scene.on_screen_text}
+      </h1>
+      <div
+        style={{
+          width: 72 + accentProgress * 188,
+          height: 6,
+          marginTop: 22,
+          borderRadius: 999,
+          background: `linear-gradient(90deg, ${tokens.accent}, ${tokens.warning})`,
+          boxShadow: `0 0 20px ${tokens.accent}44`,
+        }}
+      />
+    </div>
+  );
+};
 
 const titleCase = (value: string): string =>
   value.charAt(0) + value.slice(1).toLowerCase();
@@ -114,13 +138,14 @@ const titleCase = (value: string): string =>
 const EvidenceBadge: React.FC<{ scene: SceneData; tokens: ThemeTokens }> = ({
   scene,
   tokens,
-}) =>
-  scene.evidence_label ? (
+}) => {
+  const safeZone = useSafeZone();
+  return scene.evidence_label ? (
     <div
       style={{
         position: "absolute",
-        top: 76,
-        right: 62,
+        top: Math.max(76, safeZone.top),
+        right: Math.max(62, safeZone.right),
         display: "flex",
         alignItems: "center",
         gap: 12,
@@ -139,18 +164,141 @@ const EvidenceBadge: React.FC<{ scene: SceneData; tokens: ThemeTokens }> = ({
       {scene.citation_label ? ` · ${scene.citation_label}` : ""}
     </div>
   ) : null;
+};
+
+const PacingDecorations: React.FC<{
+  scene: SceneData;
+  tokens: ThemeTokens;
+}> = ({ scene, tokens }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const preset = usePacing();
+  const safeZone = useSafeZone();
+  const profile = pacingProfiles[preset];
+  const durationFrames = Math.max(1, Math.round(scene.duration * fps));
+  const progress = sceneProgressFor(frame, durationFrames);
+  const beat = microBeatSignal(frame, durationFrames, fps, preset);
+  const cold = scene.order === 0 ? coldOpenSignal(frame, fps) : 0;
+  const treatment = patternInterruptFor(scene.order);
+  const opacity = profile.decorationOpacity * (0.36 + beat * 0.64);
+  const shift = profile.decorationShift * beat;
+  return (
+    <div
+      aria-hidden="true"
+      style={{
+        position: "absolute",
+        inset: 0,
+        overflow: "hidden",
+        pointerEvents: "none",
+      }}
+    >
+      {cold > 0 ? (
+        <div
+          style={{
+            position: "absolute",
+            left: 0,
+            right: 0,
+            top: 0,
+            height: 960,
+            opacity: cold * 0.15,
+            background: `linear-gradient(125deg, ${tokens.accent}88, transparent 58%)`,
+          }}
+        />
+      ) : null}
+      <div
+        style={{
+          position: "absolute",
+          left: 20,
+          top: 215,
+          width: 7,
+          height: 790,
+          borderRadius: 99,
+          background: `${tokens.panelBorder}88`,
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            width: "100%",
+            height: `${progress * 100}%`,
+            borderRadius: 99,
+            background: tokens.accent,
+          }}
+        />
+      </div>
+      {treatment === "accent-rail" ? (
+        <div
+          style={{
+            position: "absolute",
+            top: 135 + shift,
+            left: 0,
+            width: `${24 + progress * 58}%`,
+            height: 4,
+            opacity: 0.28 + opacity,
+            background: `linear-gradient(90deg, ${tokens.accent}, transparent)`,
+          }}
+        />
+      ) : null}
+      {treatment === "corner-brackets" ? (
+        <>
+          <div
+            style={{
+              position: "absolute",
+              left: 44 + shift,
+              top: 145,
+              width: 92,
+              height: 92,
+              borderLeft: `5px solid ${tokens.citation}`,
+              borderTop: `5px solid ${tokens.citation}`,
+              opacity: 0.24 + opacity,
+            }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              right: Math.max(44, safeZone.right) + shift,
+              bottom: Math.max(355, safeZone.bottom + 24),
+              width: 92,
+              height: 92,
+              borderRight: `5px solid ${tokens.citation}`,
+              borderBottom: `5px solid ${tokens.citation}`,
+              opacity: 0.24 + opacity,
+            }}
+          />
+        </>
+      ) : null}
+      {treatment === "focus-ring" ? (
+        <div
+          style={{
+            position: "absolute",
+            left: "50%",
+            top: "46%",
+            width: 570 + shift * 3,
+            height: 570 + shift * 3,
+            transform: "translate(-50%, -50%)",
+            borderRadius: "50%",
+            border: `4px solid ${tokens.warning}`,
+            opacity,
+          }}
+        />
+      ) : null}
+    </div>
+  );
+};
 
 export const Frame: React.FC<{
   scene: SceneData;
   tokens: ThemeTokens;
   children: React.ReactNode;
 }> = ({ scene, tokens, children }) => {
-  const padding =
+  const safeZone = useSafeZone();
+  const basePadding =
     scene.layout === "full-diagram"
-      ? "155px 54px 345px"
+      ? { top: 155, right: 54, bottom: 345, left: 54 }
       : scene.layout === "evidence"
-        ? "170px 62px 360px"
-        : "175px 64px 370px";
+        ? { top: 170, right: 62, bottom: 360, left: 62 }
+        : { top: 175, right: 64, bottom: 370, left: 64 };
+  const padding = `${Math.max(basePadding.top, safeZone.top)}px ${Math.max(basePadding.right, safeZone.right)}px ${Math.max(basePadding.bottom, safeZone.bottom)}px ${Math.max(basePadding.left, safeZone.left)}px`;
   return (
     <div
       style={{
@@ -162,9 +310,11 @@ export const Frame: React.FC<{
         justifyContent: scene.layout === "hero" ? "center" : "flex-start",
         gap: scene.layout === "hero" ? 56 : 38,
         color: tokens.text,
+        isolation: "isolate",
         ...motifStyle(tokens),
       }}
     >
+      <PacingDecorations scene={scene} tokens={tokens} />
       <EvidenceBadge scene={scene} tokens={tokens} />
       {children}
     </div>
