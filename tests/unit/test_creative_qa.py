@@ -175,6 +175,6 @@ def test_current_manifest_adapter_preserves_quality_metadata() -> None:
     assert snapshot.scenes[0].narration == script.segments[0].text
     assert snapshot.scenes[0].layout == storyboard.scenes[0].layout
     checks = _checks(snapshot)
-    assert checks["exposed-internal-ids"] == "failure"
+    assert checks["exposed-internal-ids"] == "pass"
     assert checks["primitive-layout-diversity"] == "pass"
     assert checks["static-motion-budget"] == "pass"

@@ -19,8 +19,10 @@ from techshort.domain.models import (
 CREATIVE_QA_SCHEMA_VERSION: Literal["1.0.0"] = "1.0.0"
 
 _INTERNAL_ID = re.compile(
-    r"\b(?:claim|evidence|scene|segment|asset|render|review|source|script|storyboard)"
-    r"[-_][a-z0-9][a-z0-9_.:-]*\b",
+    r"\b(?:claim|scene|segment|asset|render|review|script|storyboard)"
+    r"[-_][a-z0-9][a-z0-9_.:-]*\b"
+    r"|\b(?:evidence|source)[-_](?!(?:linked|backed)\b)"
+    r"[a-z0-9][a-z0-9_.:-]*\b",
     re.IGNORECASE,
 )
 _HEX_COLOR = re.compile(r"#[0-9a-fA-F]{6}")

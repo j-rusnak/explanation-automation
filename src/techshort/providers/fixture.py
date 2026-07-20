@@ -392,7 +392,7 @@ class FixtureProvider:
                 text=copy[7],
                 segment_type="cta",
                 claim_ids=["claim-timing-interpretation", "claim-numeric-demo"],
-                approximate_duration=6,
+                approximate_duration=8,
             ),
         ]
         return ScriptManifest(
