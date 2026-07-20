@@ -9,6 +9,8 @@ from techshort.domain.creative import (
     BeatPlan,
     EditorialCritique,
     NarrativeBrief,
+    RetentionCritique,
+    RetentionPlan,
     StoryboardGuidance,
     VisualCritique,
 )
@@ -61,6 +63,7 @@ from techshort.domain.storage import (
     load_model,
 )
 from techshort.evidence import unsupported_assertion_tokens
+from techshort.generation.editorial.retention import critique_retention
 from techshort.ingestion import (
     get_active_source,
     resolve_evidence_text,
@@ -183,6 +186,12 @@ def current_artifact_hashes(store: ProjectStore) -> dict[str, str]:
     }
     if set(creative_paths).intersection(project.active_versions):
         paths.update(creative_paths)
+    retention_paths = {
+        "retention_plan": store.path("script/retention-plan.json"),
+        "retention_critique": store.path("script/retention-critique.json"),
+    }
+    if set(retention_paths).intersection(project.active_versions):
+        paths.update(retention_paths)
     missing = [key for key, path in paths.items() if not path.is_file()]
     if missing:
         raise ValueError(f"required artifact is missing: {missing[0]}")
@@ -802,7 +811,12 @@ def _validate_editorial_dependencies(
     project: ProjectManifest,
 ) -> None:
     keys = {"narrative_brief", "beat_plan", "editorial_critique"}
-    if not keys.intersection(project.active_versions):
+    retention_keys = {"retention_plan", "retention_critique"}
+    has_editorial_artifact = bool(keys.intersection(project.active_versions))
+    has_retention_artifact = bool(retention_keys.intersection(project.active_versions))
+    if not has_editorial_artifact:
+        if has_retention_artifact:
+            raise ValueError("retention planning requires the editorial planning artifacts")
         return
     if not keys.issubset(project.active_versions):
         raise ValueError("editorial planning artifacts are incomplete")
@@ -828,6 +842,38 @@ def _validate_editorial_dependencies(
     if critique.blocking:
         messages = [item.message for item in critique.findings if item.severity == "error"]
         raise ValueError("editorial critique blocks approval: " + "; ".join(messages[:3]))
+    if not has_retention_artifact:
+        return
+    if not retention_keys.issubset(project.active_versions):
+        raise ValueError("retention planning artifacts are incomplete")
+    retention = load_model(store.path("script/retention-plan.json"), RetentionPlan)
+    retention_critique = load_model(
+        store.path("script/retention-critique.json"), RetentionCritique
+    )
+    _ensure_active_versions(
+        project,
+        retention_plan=retention.version_id,
+        retention_critique=retention_critique.critique_id,
+    )
+    if (
+        retention.narrative_brief_version_id != brief.version_id
+        or retention.beat_plan_version_id != plan.version_id
+        or retention.script_version_id != script.version_id
+        or retention.claims_version_id != claims.version_id
+        or retention_critique.retention_plan_version_id != retention.version_id
+        or retention_critique.narrative_brief_version_id != brief.version_id
+        or retention_critique.beat_plan_version_id != plan.version_id
+        or retention_critique.script_version_id != script.version_id
+    ):
+        raise ValueError("retention planning artifacts are stale")
+    expected_retention_critique = critique_retention(retention, brief, plan, script)
+    if retention_critique != expected_retention_critique:
+        raise ValueError("retention critique no longer matches current script and plan")
+    if retention_critique.blocking:
+        messages = [
+            item.message for item in retention_critique.findings if item.severity == "error"
+        ]
+        raise ValueError("retention critique blocks approval: " + "; ".join(messages[:3]))
 
 
 def _validate_visual_critique_dependencies(
@@ -923,7 +969,9 @@ def _validate_storyboard_dependencies(
         if scene.evidence_label is None:
             raise ValueError(f"scene {scene.scene_id} requires an evidence label")
         if expected_label is not None and scene.evidence_label != expected_label:
-            raise ValueError(f"scene {scene.scene_id} understates inferred evidence")
+            raise ValueError(
+                f"scene {scene.scene_id} evidence label understates inferred evidence"
+            )
         if expected_label is None and scene.evidence_label not in labels:
             raise ValueError(f"scene {scene.scene_id} evidence label does not match its claims")
         support = [

@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from techshort.domain.creative import RetentionCritique, RetentionPlan
 from techshort.domain.hashing import sha256_file
 from techshort.domain.models import (
     AnglesManifest,
@@ -262,6 +263,18 @@ def test_three_angles_require_explicit_hash_bound_selection(tmp_path: Path) -> N
     assert script.angle_selection_id == selection.selection_id
     assert script.angle == "engineering-tradeoff"
     assert 130 <= sum(len(segment.text.split()) for segment in script.segments) <= 170
+    retention = load_model(store.path("script/retention-plan.json"), RetentionPlan)
+    retention_critique = load_model(
+        store.path("script/retention-critique.json"), RetentionCritique
+    )
+    assert retention.script_version_id == script.version_id
+    assert retention.cold_open.duration_seconds <= 5
+    assert max(beat.duration_seconds for beat in retention.cadence.beats) <= 7
+    assert not retention_critique.blocking
+    assert retention_critique.retention_plan_version_id == retention.version_id
+    project = store.project()
+    assert project.active_versions["retention_plan"] == retention.version_id
+    assert project.active_versions["retention_critique"] == retention_critique.critique_id
     with pytest.raises(ValueError, match="does not match explicit selection"):
         generate_script(store, "fixture", angle="everyday-mechanism")
 
@@ -296,6 +309,47 @@ def test_script_must_use_selected_angle_central_claims(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="omits selected angle central claims"):
         generate_script(store, "manual", manual_result="script/manual-result.json")
+
+
+def test_switching_from_fixture_to_manual_retires_fixture_creative_state(
+    tmp_path: Path,
+) -> None:
+    store = _rolling_store(tmp_path)
+    claims = generate_claims(store, "fixture").require_artifact()
+    approve_claims(store, "test")
+    angles = generate_angles(store, "fixture").require_artifact()
+    selection = select_angle(store, "everyday-mechanism")
+    generate_script(store, "fixture").require_artifact()
+    assert "retention_plan" in store.project().active_versions
+
+    pending = generate_script(store, "manual")
+    assert pending.requires_manual_import
+    candidate = FixtureProvider().generate_script(
+        claims,
+        selection.selected_angle,
+        angles_version_id=angles.version_id,
+        angle_selection_id=selection.selection_id,
+    )
+    result = store.path("script/manual-provider-switch-result.json")
+    result.write_text(candidate.model_dump_json(indent=2), encoding="utf-8")
+    imported = generate_script(
+        store,
+        "manual",
+        manual_result="script/manual-provider-switch-result.json",
+    ).require_artifact()
+
+    project = store.project()
+    for key in (
+        "narrative_brief",
+        "beat_plan",
+        "editorial_critique",
+        "retention_plan",
+        "retention_critique",
+    ):
+        assert key not in project.active_versions
+    assert store.path("script/retention-plan.json").is_file()
+    assert imported.version_id == project.active_versions["script"]
+    approve_script(store, "manual-reviewer")
 
 
 def test_script_regeneration_archives_pre_angle_schema_bytes(tmp_path: Path) -> None:

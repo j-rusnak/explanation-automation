@@ -6,6 +6,7 @@ import pytest
 
 from techshort.domain.hashing import sha256_file
 from techshort.domain.models import (
+    AngleKind,
     AnglesManifest,
     Asset,
     AssetManifest,
@@ -65,17 +66,25 @@ def _claims_store(tmp_path: Path, slug: str = "review") -> ProjectStore:
     return store
 
 
-def _script_store(tmp_path: Path, slug: str = "script-review") -> ProjectStore:
+def _script_store(
+    tmp_path: Path,
+    slug: str = "script-review",
+    angle: AngleKind = "everyday-mechanism",
+) -> ProjectStore:
     store = _claims_store(tmp_path, slug)
     approve_claims(store, "reviewer")
     generate_angles(store, "fixture")
-    select_angle(store, "everyday-mechanism")
-    fixture_script(store)
+    select_angle(store, angle)
+    fixture_script(store, angle)
     return store
 
 
-def _storyboard_store(tmp_path: Path, slug: str = "story-review") -> ProjectStore:
-    store = _script_store(tmp_path, slug)
+def _storyboard_store(
+    tmp_path: Path,
+    slug: str = "story-review",
+    angle: AngleKind = "everyday-mechanism",
+) -> ProjectStore:
+    store = _script_store(tmp_path, slug, angle)
     approve_script(store, "reviewer")
     fixture_storyboard(store)
     generate_fixture_covers(store)
@@ -128,6 +137,8 @@ def test_unused_legacy_source_does_not_block_current_evidence_snapshot(tmp_path:
 
     assert f"source:{current.source_id}" in hashes
     assert f"source:{legacy.source_id}" not in hashes
+    assert "retention_plan" in hashes
+    assert "retention_critique" in hashes
 
 
 def test_claim_approval_hashes_are_current_and_notes_do_not_replace_decision(
@@ -349,7 +360,12 @@ def test_storyboard_review_rejects_fabricated_labels_citations_and_receipts(
         "title": "Legacy visual citation",
         "citation": "doi-10.9999-fabricated",
     }
-    edit_scene(citation_store, scene.scene_id, {"visual": visual}, "reviewer")
+    edit_scene(
+        citation_store,
+        scene.scene_id,
+        {"primitive": "KineticText", "visual": visual},
+        "reviewer",
+    )
     with pytest.raises(ValueError, match="fabricated visual citation"):
         approve_scene(citation_store, scene.scene_id, "reviewer")
 
@@ -360,7 +376,11 @@ def test_storyboard_review_rejects_fabricated_labels_citations_and_receipts(
     with pytest.raises(ValueError, match="evidence label"):
         approve_scene(label_store, scene.scene_id, "reviewer")
 
-    receipt_store = _storyboard_store(tmp_path, "fake-evidence-highlight")
+    receipt_store = _storyboard_store(
+        tmp_path,
+        "fake-evidence-highlight",
+        "surprising-result",
+    )
     storyboard = load_model(receipt_store.path("storyboard/storyboard.json"), StoryboardManifest)
     receipt = next(item for item in storyboard.scenes if item.primitive == "EvidenceHighlight")
     visual = receipt.visual.model_dump(mode="json")
@@ -392,9 +412,13 @@ def test_storyboard_review_rejects_fabricated_labels_citations_and_receipts(
 def test_storyboard_review_checks_typed_chart_values_against_claim_evidence(
     tmp_path: Path,
 ) -> None:
-    store = _storyboard_store(tmp_path, "typed-chart-provenance")
+    store = _storyboard_store(
+        tmp_path,
+        "typed-chart-provenance",
+        "engineering-tradeoff",
+    )
     storyboard = load_model(store.path("storyboard/storyboard.json"), StoryboardManifest)
-    chart = next(item for item in storyboard.scenes if item.primitive == "AnnotatedChart")
+    chart = next(item for item in storyboard.scenes if item.primitive == "ChartReveal")
     visual = chart.visual.model_dump(mode="json")
     visual["series"][0]["points"][1]["y"] = 9999
     edit_scene(store, chart.scene_id, {"visual": visual}, "reviewer")

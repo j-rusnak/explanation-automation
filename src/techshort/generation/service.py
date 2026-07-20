@@ -13,6 +13,8 @@ from techshort.domain.creative import (
     BeatPlan,
     EditorialCritique,
     NarrativeBrief,
+    RetentionCritique,
+    RetentionPlan,
     StoryboardGuidance,
     VisualCritique,
 )
@@ -46,8 +48,10 @@ from techshort.evidence import unsupported_assertion_tokens
 from techshort.generation.editorial import (
     build_rolling_shutter_beat_plan,
     build_rolling_shutter_brief,
+    build_rolling_shutter_retention_plan,
     build_rolling_shutter_storyboard_guidance,
     critique_editorial,
+    critique_retention,
     critique_visual,
 )
 from techshort.ingestion import get_active_source, get_source, verify_source_integrity
@@ -55,6 +59,7 @@ from techshort.prompts.editorial import (
     BEAT_PLAN_TEMPLATE,
     EDITORIAL_CRITIQUE_TEMPLATE,
     NARRATIVE_BRIEF_TEMPLATE,
+    RETENTION_PLAN_TEMPLATE,
     VISUAL_CRITIQUE_TEMPLATE,
 )
 from techshort.providers.codex_cli import CodexCliProvider
@@ -90,10 +95,14 @@ CRITIQUE_INSTRUCTION = (
     "'codex', and set claims_version_id exactly to the supplied value."
 )
 SCRIPT_INSTRUCTION = (
-    "Write an evidence-linked 130 to 170 word explainer lasting 45 to 75 seconds. Use only "
-    "approved claim_id values supplied in the excerpts. Every factual, hook, analogy, caveat, "
-    "and limitation segment must cite supporting claims. Include one meaningful limitation, "
-    "plain language, honest uncertainty, and no engagement bait. Set claims_version_id, "
+    "Write an evidence-linked 130 to 170 word explainer lasting 45 to 75 seconds. Open with an "
+    "honest, evidence-linked hook no longer than five seconds; state or show the real subject "
+    "immediately instead of using deceptive withholding. Use only approved claim_id values "
+    "supplied in the excerpts. Every factual, hook, analogy, caveat, and limitation segment must "
+    "cite supporting claims. Build toward a visible evidence payoff, use a truthful midpoint "
+    "re-hook, and close the opening curiosity without false urgency, exaggerated certainty, or "
+    "engagement bait. Include one meaningful limitation, plain language, and honest uncertainty. "
+    "Keep individual segments at seven seconds or less when possible. Set claims_version_id, "
     "angles_version_id, angle_selection_id, and angle exactly to the supplied values and leave "
     "review fields pending."
 )
@@ -824,6 +833,41 @@ def _save_project_state(
     store.invalidate_from(stage, f"{stage} regenerated with {receipt.provider} provider")
     project = store.project()
     setattr(project.approvals, stage, ReviewStatus.PENDING)
+    optional_stage_state: dict[ManualTask, tuple[set[str], set[str]]] = {
+        "script": (
+            {
+                "narrative_brief",
+                "beat_plan",
+                "editorial_critique",
+                "retention_plan",
+                "retention_critique",
+            },
+            {
+                "narrative_brief_template",
+                "beat_plan_template",
+                "editorial_critique_template",
+                "editorial_critique_input",
+                "retention_plan_template",
+                "retention_critique_input",
+            },
+        ),
+        "storyboard": (
+            {"storyboard_guidance", "visual_critique"},
+            {
+                "storyboard_guidance_input",
+                "visual_critique_template",
+                "visual_critique_input",
+            },
+        ),
+        "claims": (set(), set()),
+        "angles": (set(), set()),
+    }
+    optional_versions, optional_dependencies = optional_stage_state[stage]
+    for key in optional_versions - versions.keys():
+        project.active_versions.pop(key, None)
+    dependency_updates = dependency_hashes or {}
+    for key in optional_dependencies - dependency_updates.keys():
+        project.dependency_hashes.pop(key, None)
     project.active_versions.update(versions)
     if "claims_critique" in versions:
         project.stale_artifacts = [
@@ -831,7 +875,7 @@ def _save_project_state(
         ]
     project.dependency_hashes[f"{stage}_prompt"] = receipt.prompt_hash
     project.dependency_hashes[f"{stage}_input"] = receipt.input_hash
-    project.dependency_hashes.update(dependency_hashes or {})
+    project.dependency_hashes.update(dependency_updates)
     store.save_project(project)
 
 
@@ -1191,12 +1235,13 @@ def generate_script(
             angles_version_id=angles.version_id,
             angle_selection_id=selection.selection_id,
         )
-        prompt_version = "fixture-editorial-v2"
+        prompt_version = "fixture-editorial-v3"
         prompt_hash = stable_hash(
             {
-                "fixture": "rolling-shutter script v2",
+                "fixture": "rolling-shutter script v3",
                 "brief_template": NARRATIVE_BRIEF_TEMPLATE.template_hash,
                 "beat_template": BEAT_PLAN_TEMPLATE.template_hash,
+                "retention_template": RETENTION_PLAN_TEMPLATE.template_hash,
             }
         )
         input_hash = stable_hash({"brief": brief, "beat_plan": beat_plan})
@@ -1246,14 +1291,24 @@ def generate_script(
     _archive_script_for_regeneration(store)
     atomic_write_model(script_path, script)
     editorial_critique: EditorialCritique | None = None
+    retention_plan: RetentionPlan | None = None
+    retention_critique: RetentionCritique | None = None
     if brief is not None and beat_plan is not None:
         editorial_critique = critique_editorial(brief, beat_plan, script)
+        retention_plan = build_rolling_shutter_retention_plan(brief, beat_plan, script)
+        retention_critique = critique_retention(retention_plan, brief, beat_plan, script)
         _write_creative_artifact(store, "script/narrative-brief.json", brief)
         _write_creative_artifact(store, "script/beat-plan.json", beat_plan)
         _write_creative_artifact(
             store,
             "script/editorial-critique.json",
             editorial_critique,
+        )
+        _write_creative_artifact(store, "script/retention-plan.json", retention_plan)
+        _write_creative_artifact(
+            store,
+            "script/retention-critique.json",
+            retention_critique,
         )
     receipt = _receipt(
         "script",
@@ -1272,12 +1327,20 @@ def generate_script(
         "script_angles": angles.version_id,
         "script_angle_selection": selection.selection_id,
     }
-    if brief is not None and beat_plan is not None and editorial_critique is not None:
+    if (
+        brief is not None
+        and beat_plan is not None
+        and editorial_critique is not None
+        and retention_plan is not None
+        and retention_critique is not None
+    ):
         versions.update(
             {
                 "narrative_brief": brief.version_id,
                 "beat_plan": beat_plan.version_id,
                 "editorial_critique": editorial_critique.critique_id,
+                "retention_plan": retention_plan.version_id,
+                "retention_critique": retention_critique.critique_id,
             }
         )
         creative_dependencies.update(
@@ -1286,6 +1349,8 @@ def generate_script(
                 "beat_plan_template": BEAT_PLAN_TEMPLATE.template_hash,
                 "editorial_critique_template": EDITORIAL_CRITIQUE_TEMPLATE.template_hash,
                 "editorial_critique_input": editorial_critique.input_hash,
+                "retention_plan_template": RETENTION_PLAN_TEMPLATE.template_hash,
+                "retention_critique_input": retention_critique.input_hash,
             }
         )
     _save_project_state(
