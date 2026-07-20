@@ -15,7 +15,9 @@ from techshort.generation import (
     fixture_script,
     fixture_storyboard,
     generate_angles,
+    generate_fixture_covers,
     select_angle,
+    select_cover,
 )
 from techshort.ingestion import ingest_source
 from techshort.rendering import renderer_payload
@@ -43,6 +45,8 @@ def fixture_store(tmp_path: Path) -> ProjectStore:
     fixture_script(store)
     approve_script(store, "renderer-test")
     fixture_storyboard(store)
+    generate_fixture_covers(store)
+    select_cover(store, "cover-scanline")
     return store
 
 
@@ -87,6 +91,8 @@ def test_preview_payload_keeps_full_layout_and_scales_all_timing(tmp_path: Path)
     assert payload["width"] == 1080
     assert payload["height"] == 1920
     assert payload["audioPath"] == "techshort-stage/narration.wav"
+    assert payload["theme"] == "blueprint"
+    assert payload["cover"]["selected_candidate_id"] == "cover-scanline"
     scenes = payload["scenes"]
     captions = payload["captions"]
     assert isinstance(scenes, list) and isinstance(scenes[-1], dict)

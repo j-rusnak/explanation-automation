@@ -17,13 +17,16 @@ from techshort.audio.service import active_audio, probe_duration
 from techshort.domain.hashing import sha256_file, stable_hash
 from techshort.domain.models import (
     AssetManifest,
+    EvidenceHighlightVisual,
     EvidenceManifest,
     ProjectManifest,
     RenderManifest,
     ReviewStatus,
     ScriptManifest,
     SourceIndex,
+    SourceReceiptVisual,
     StoryboardManifest,
+    VisualSpec,
     now_utc,
 )
 from techshort.domain.storage import (
@@ -85,23 +88,44 @@ def renderer_payload(
         item = scene.model_dump(mode="json", by_alias=True)
         item["start_time"] = scene.start_time * scene_timing_scale
         item["duration"] = scene.duration * scene_timing_scale
-        if scene.primitive == "SourceReceipt":
-            evidence_id = scene.visual.evidence_id
+        if scene.primitive in {"SourceReceipt", "EvidenceHighlight"}:
+            visual_model = scene.visual
+            evidence_id = (
+                visual_model.evidence_id
+                if isinstance(
+                    visual_model,
+                    (VisualSpec, SourceReceiptVisual, EvidenceHighlightVisual),
+                )
+                else None
+            )
             if evidence_id is None or evidence_id not in evidence_by_id:
                 raise ValueError(
-                    f"SourceReceipt scene {scene.scene_id} requires a resolvable evidence_id"
+                    f"evidence scene {scene.scene_id} requires a resolvable evidence_id"
                 )
             span = evidence_by_id[evidence_id]
             visual = item.get("visual")
             if not isinstance(visual, dict):
                 raise ValueError(f"scene {scene.scene_id} has an invalid visual specification")
-            visual["evidence_excerpt"] = span.excerpt
             location = span.section_heading or "source"
             if span.printed_page_label:
                 location = f"{location}, page {span.printed_page_label}"
             elif span.page_index is not None:
                 location = f"{location}, PDF index {span.page_index}"
-            visual["source_locator"] = f"{location} · {span.evidence_id}"
+            locator = f"{location} · {span.evidence_id}"
+            if isinstance(visual_model, VisualSpec):
+                # Archived V1 storyboards did not persist display-only evidence
+                # text. Inject it from the verified manifest at render time.
+                visual["evidence_excerpt"] = span.excerpt
+                visual["source_locator"] = locator
+            elif isinstance(
+                visual_model,
+                (SourceReceiptVisual, EvidenceHighlightVisual),
+            ) and visual_model.excerpt != span.excerpt:
+                # Typed evidence visuals are immutable factual inputs. Refuse to
+                # render provider-authored text that drifted from its evidence.
+                raise ValueError(
+                    f"evidence scene {scene.scene_id} excerpt no longer matches {evidence_id}"
+                )
         scenes.append(item)
     captions = [asdict(cue) for cue in cues_from_script(script, target_duration=target_duration)]
     payload: dict[str, object] = {
@@ -111,10 +135,17 @@ def renderer_payload(
         "height": project.height,
         "fps": project.fps,
         "watermarked": watermarked,
+        "theme": "blueprint" if project.theme == "midnight" else project.theme,
         "segments": segments,
         "scenes": scenes,
         "captions": captions,
     }
+    covers_path = store.path("storyboard/covers.json")
+    cover_selection_path = store.path("storyboard/cover-selection.json")
+    if covers_path.is_file() and cover_selection_path.is_file():
+        from techshort.generation.design import selected_cover_payload
+
+        payload["cover"] = selected_cover_payload(store)
     if audio_public_path is not None:
         payload["audioPath"] = audio_public_path
     return payload
@@ -135,6 +166,13 @@ def render_video(store: ProjectStore, preview: bool) -> Path:
         raise ValueError("renderer is not installed in this checkout")
 
     narration = active_audio(store)
+    if project.narration_mode == "narrated" and narration is None:
+        raise ValueError(
+            "narration mode is narrated but no active audio is present; import audio or "
+            "explicitly choose silent-reviewed mode"
+        )
+    if project.narration_mode == "silent-reviewed" and narration is not None:
+        raise ValueError("silent-reviewed mode conflicts with active narration audio")
     narration_duration = probe_duration(narration) if narration is not None else None
     storyboard = load_model(store.path("storyboard/storyboard.json"), StoryboardManifest)
     expected_duration = narration_duration or _storyboard_duration(storyboard)
@@ -198,8 +236,32 @@ def render_video(store: ProjectStore, preview: bool) -> Path:
                 raise RuntimeError("renderer reported success but produced no video")
 
             metadata = probe_render_metadata(staged_video)
+            payload_scenes = payload.get("scenes")
+            scene_midpoints: list[tuple[str, float]] = []
+            if isinstance(payload_scenes, list):
+                for item in payload_scenes:
+                    if not isinstance(item, dict):
+                        continue
+                    scene_id = item.get("scene_id")
+                    start_time = item.get("start_time")
+                    scene_duration = item.get("duration")
+                    if (
+                        isinstance(scene_id, str)
+                        and isinstance(start_time, (int, float))
+                        and isinstance(scene_duration, (int, float))
+                    ):
+                        scene_midpoints.append(
+                            (scene_id, float(start_time) + float(scene_duration) / 2)
+                        )
             derivative_names = _generate_derivatives(
-                staged_video, output_stage, metadata.duration if metadata else expected_duration
+                staged_video,
+                output_stage,
+                metadata.duration if metadata else expected_duration,
+                repository=repository,
+                npm=npm,
+                props_path=props_path,
+                scale=scale,
+                scene_midpoints=scene_midpoints,
             )
             output_paths = [output.relative_to(store.root).as_posix()]
             staged_outputs = {output_paths[0]: staged_video}
@@ -471,24 +533,35 @@ def _require_final_render_approval(store: ProjectStore, project: ProjectManifest
         raise ValueError("final render is blocked because reviewed preview inputs changed")
 
 
-def _generate_derivatives(video: Path, directory: Path, duration: float) -> list[str]:
+def _generate_derivatives(
+    video: Path,
+    directory: Path,
+    duration: float,
+    *,
+    repository: Path,
+    npm: str,
+    props_path: Path,
+    scale: float,
+    scene_midpoints: list[tuple[str, float]],
+) -> list[str]:
     ffmpeg = media_tool("ffmpeg")
     if not ffmpeg:
         return []
     cover = directory / "cover.png"
-    cover_time = min(2.0, max(0.0, duration / 2))
     still = subprocess.run(
         [
-            ffmpeg,
-            "-y",
-            "-ss",
-            f"{cover_time:.3f}",
-            "-i",
-            str(video),
-            "-frames:v",
-            "1",
-            str(cover),
+            npm,
+            "run",
+            "render:cover",
+            "--",
+            "--output",
+            str(cover.resolve()),
+            "--props",
+            str(props_path.resolve()),
+            "--scale",
+            repr(scale),
         ],
+        cwd=repository,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -497,11 +570,41 @@ def _generate_derivatives(video: Path, directory: Path, duration: float) -> list
         check=False,
     )
     if still.returncode or not cover.is_file() or cover.stat().st_size == 0:
-        raise RuntimeError(f"cover generation failed: {still.stderr[-1000:]}")
+        details = (still.stderr + "\n" + still.stdout)[-2000:]
+        raise RuntimeError(f"cover generation failed: {details}")
 
     contact_sheet = directory / "contact-sheet.png"
     _generate_contact_sheet(ffmpeg, video, contact_sheet, duration, directory)
-    return [cover.name, contact_sheet.name]
+    outputs = [cover.name, contact_sheet.name]
+    for scene_id, timestamp in scene_midpoints:
+        if not SAFE_RENDER_ID.fullmatch(scene_id):
+            raise ValueError(f"unsafe scene ID for still rendering: {scene_id}")
+        destination = directory / f"scene-still-{scene_id}.png"
+        result = subprocess.run(
+            [
+                ffmpeg,
+                "-y",
+                "-ss",
+                f"{min(max(0.0, timestamp), max(0.0, duration - 0.05)):.3f}",
+                "-i",
+                str(video),
+                "-frames:v",
+                "1",
+                str(destination),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+            check=False,
+        )
+        if result.returncode or not destination.is_file() or destination.stat().st_size == 0:
+            raise RuntimeError(
+                f"scene still generation failed for {scene_id}: {result.stderr[-1000:]}"
+            )
+        outputs.append(destination.name)
+    return outputs
 
 
 def _generate_contact_sheet(

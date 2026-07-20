@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from techshort.alignment import cues_from_script, write_caption_files
+from techshort.audio import set_narration_mode
 from techshort.domain.models import RenderManifest, ScriptManifest
 from techshort.domain.storage import ProjectStore, load_model
 from techshort.export import export_project, generate_evidence_page
@@ -14,7 +15,9 @@ from techshort.generation import (
     fixture_script,
     fixture_storyboard,
     generate_angles,
+    generate_fixture_covers,
     select_angle,
+    select_cover,
 )
 from techshort.ingestion import ingest_source
 from techshort.qa import run_qa
@@ -36,6 +39,7 @@ pytestmark = pytest.mark.skipif(
 def test_complete_real_render_and_export(tmp_path: Path) -> None:
     store = ProjectStore(tmp_path / "projects", "rolling-shutter-e2e")
     store.initialize("Rolling-Shutter Distortion")
+    set_narration_mode(store, "silent-reviewed")
     ingest_source(store, Path("examples/rolling-shutter/rolling-shutter.md"))
     fixture_claims(store)
     approve_claims(store, "e2e-reviewer")
@@ -44,6 +48,8 @@ def test_complete_real_render_and_export(tmp_path: Path) -> None:
     fixture_script(store)
     approve_script(store, "e2e-reviewer")
     fixture_storyboard(store)
+    generate_fixture_covers(store)
+    select_cover(store, "cover-scanline")
     approve_storyboard(store, "e2e-reviewer")
     approve_rights(store, "e2e-reviewer")
     script = load_model(store.path("script/script.json"), ScriptManifest)
