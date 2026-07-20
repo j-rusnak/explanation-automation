@@ -464,7 +464,7 @@ export const engagementDeviceSchema = z.enum([
 export const retentionEventSchema = z
   .object({
     eventId: stableId,
-    scheduledAtSeconds: z.number().nonnegative().max(300),
+    scheduledAtSeconds: z.number().nonnegative().max(75),
     eventKind: retentionEventKindSchema,
     device: engagementDeviceSchema,
   })
@@ -473,9 +473,9 @@ export const retentionSchema = z
   .object({
     schemaVersion: z.literal("1.0.0"),
     planVersionId: z.string().regex(/^retention-[0-9a-f]{16}$/),
-    timingScale: z.number().positive().max(4),
-    totalDurationSeconds: z.number().positive().max(300),
-    events: z.array(retentionEventSchema).min(1).max(12),
+    timingScale: z.number().min(0.5).max(2),
+    totalDurationSeconds: z.number().min(45).max(75),
+    events: z.array(retentionEventSchema).min(5).max(15),
   })
   .strict()
   .superRefine((retention, context) => {
@@ -713,6 +713,17 @@ export const projectSchema = z
         path: ["retention", "totalDurationSeconds"],
         message: "retention runtime must match the rendered scene runtime",
       });
+    }
+    const renderedFrames = Math.ceil(runtime * project.fps);
+    for (const [index, event] of project.retention.events.entries()) {
+      if (Math.ceil(event.scheduledAtSeconds * project.fps) >= renderedFrames) {
+        context.addIssue({
+          code: "custom",
+          path: ["retention", "events", index, "scheduledAtSeconds"],
+          message:
+            "retention events must activate before the final rendered frame",
+        });
+      }
     }
   });
 

@@ -62,19 +62,19 @@ describe("renderer schema", () => {
     review_status: "pending",
     dependency_hash: "a".repeat(64),
   };
+  const retentionScene = { ...scene, duration: 75 };
+  const retentionEvents = Array.from({ length: 15 }, (_, index) => ({
+    eventId: `retention-event-${String(index + 1).padStart(2, "0")}`,
+    scheduledAtSeconds: index === 14 ? 74.25 : 0.75 + index * 5,
+    eventKind: "pattern-interrupt",
+    device: "visual-mode-change",
+  }));
   const retention = {
     schemaVersion: "1.0.0",
     planVersionId: "retention-aaaaaaaaaaaaaaaa",
     timingScale: 1,
-    totalDurationSeconds: 5,
-    events: [
-      {
-        eventId: "retention-event-01",
-        scheduledAtSeconds: 2,
-        eventKind: "pattern-interrupt",
-        device: "visual-mode-change",
-      },
-    ],
+    totalDurationSeconds: 75,
+    events: retentionEvents,
   };
   it("rejects active content in scene text", () =>
     expect(() =>
@@ -149,42 +149,87 @@ describe("renderer schema", () => {
   it("accepts an allowlisted frame-ready retention schedule", () => {
     const parsed = projectSchema.parse({
       ...base,
-      scenes: [scene],
+      scenes: [retentionScene],
       retention,
     });
-    expect(parsed.retention?.events[0]?.scheduledAtSeconds).toBe(2);
+    expect(parsed.retention?.events).toHaveLength(15);
+    expect(parsed.retention?.events[14]?.scheduledAtSeconds).toBe(74.25);
     expect(parsed.retention?.events[0]?.device).toBe("visual-mode-change");
   });
+
+  it("accepts the 45-second lower retention boundary", () => {
+    const parsed = projectSchema.parse({
+      ...base,
+      scenes: [{ ...retentionScene, duration: 45 }],
+      retention: {
+        ...retention,
+        timingScale: 0.6,
+        totalDurationSeconds: 45,
+        events: retention.events.map((item) => ({
+          ...item,
+          scheduledAtSeconds: item.scheduledAtSeconds * 0.6,
+        })),
+      },
+    });
+    expect(parsed.retention?.totalDurationSeconds).toBe(45);
+  });
+
+  it("rejects more than fifteen retention events", () =>
+    expect(() =>
+      projectSchema.parse({
+        ...base,
+        scenes: [retentionScene],
+        retention: {
+          ...retention,
+          events: [
+            ...retention.events,
+            {
+              ...retention.events[14],
+              eventId: "retention-event-16",
+              scheduledAtSeconds: 74.5,
+            },
+          ],
+        },
+      }),
+    ).toThrow());
 
   it("rejects unknown, executable, and sound-rendering retention data", () => {
     const declaredEvent = retention.events[0]!;
     expect(() =>
       projectSchema.parse({
         ...base,
-        scenes: [scene],
+        scenes: [retentionScene],
         retention: {
           ...retention,
-          events: [{ ...declaredEvent, execute: "javascript:steal()" }],
+          events: retention.events.map((item, index) =>
+            index === 0
+              ? { ...declaredEvent, execute: "javascript:steal()" }
+              : item,
+          ),
         },
       }),
     ).toThrow();
     expect(() =>
       projectSchema.parse({
         ...base,
-        scenes: [scene],
+        scenes: [retentionScene],
         retention: {
           ...retention,
-          events: [{ ...declaredEvent, soundPath: "secret.wav" }],
+          events: retention.events.map((item, index) =>
+            index === 0 ? { ...declaredEvent, soundPath: "secret.wav" } : item,
+          ),
         },
       }),
     ).toThrow();
     expect(() =>
       projectSchema.parse({
         ...base,
-        scenes: [scene],
+        scenes: [retentionScene],
         retention: {
           ...retention,
-          events: [{ ...declaredEvent, device: "eval(source)" }],
+          events: retention.events.map((item, index) =>
+            index === 0 ? { ...declaredEvent, device: "eval(source)" } : item,
+          ),
         },
       }),
     ).toThrow();
@@ -194,10 +239,24 @@ describe("renderer schema", () => {
     expect(() =>
       projectSchema.parse({
         ...base,
-        scenes: [scene],
-        retention: { ...retention, totalDurationSeconds: 6 },
+        scenes: [retentionScene],
+        retention: { ...retention, totalDurationSeconds: 74.5 },
       }),
     ).toThrow(/retention runtime/));
+
+  it("rejects an event scheduled beyond the last renderable frame", () =>
+    expect(() =>
+      projectSchema.parse({
+        ...base,
+        scenes: [retentionScene],
+        retention: {
+          ...retention,
+          events: retention.events.map((item, index) =>
+            index === 14 ? { ...item, scheduledAtSeconds: 75 } : item,
+          ),
+        },
+      }),
+    ).toThrow(/final rendered frame/));
 
   it("rejects mismatched primitive and typed visual kinds", () =>
     expect(() =>

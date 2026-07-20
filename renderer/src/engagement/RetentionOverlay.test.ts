@@ -28,6 +28,15 @@ describe("declared retention events", () => {
     expect(activeRetentionEvent([scheduled], start, 30)).toBe(scheduled);
   });
 
+  it("activates a final event near 75 seconds on its exact renderable frame", () => {
+    const scheduled = event("retention-event-15", 74.25);
+    const start = retentionEventStartFrame(scheduled, 30);
+
+    expect(start).toBe(2228);
+    expect(activeRetentionEvent([scheduled], 2227, 30)).toBeNull();
+    expect(activeRetentionEvent([scheduled], 2228, 30)).toBe(scheduled);
+  });
+
   it("does not invent events at scene positions or pacing microbeats", () => {
     expect(activeRetentionEvent([], 0, 30)).toBeNull();
     expect(activeRetentionEvent([], 90, 30)).toBeNull();
