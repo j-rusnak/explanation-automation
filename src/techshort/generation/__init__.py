@@ -1,3 +1,8 @@
+from techshort.generation.design import (
+    generate_fixture_covers,
+    select_cover,
+    selected_cover_payload,
+)
 from techshort.generation.service import (
     GenerationOutcome,
     build_evidence_candidates,
@@ -17,9 +22,12 @@ __all__ = [
     "fixture_claims",
     "fixture_script",
     "fixture_storyboard",
+    "generate_fixture_covers",
     "generate_angles",
     "generate_claims",
     "generate_script",
     "generate_storyboard",
     "select_angle",
+    "select_cover",
+    "selected_cover_payload",
 ]
