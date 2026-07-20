@@ -62,6 +62,20 @@ describe("renderer schema", () => {
     review_status: "pending",
     dependency_hash: "a".repeat(64),
   };
+  const retention = {
+    schemaVersion: "1.0.0",
+    planVersionId: "retention-aaaaaaaaaaaaaaaa",
+    timingScale: 1,
+    totalDurationSeconds: 5,
+    events: [
+      {
+        eventId: "retention-event-01",
+        scheduledAtSeconds: 2,
+        eventKind: "pattern-interrupt",
+        device: "visual-mode-change",
+      },
+    ],
+  };
   it("rejects active content in scene text", () =>
     expect(() =>
       sceneSchema.parse({ ...scene, on_screen_text: "<svg onload=steal>" }),
@@ -131,6 +145,59 @@ describe("renderer schema", () => {
         .pacing,
     ).toBe("measured");
   });
+
+  it("accepts an allowlisted frame-ready retention schedule", () => {
+    const parsed = projectSchema.parse({
+      ...base,
+      scenes: [scene],
+      retention,
+    });
+    expect(parsed.retention?.events[0]?.scheduledAtSeconds).toBe(2);
+    expect(parsed.retention?.events[0]?.device).toBe("visual-mode-change");
+  });
+
+  it("rejects unknown, executable, and sound-rendering retention data", () => {
+    const declaredEvent = retention.events[0]!;
+    expect(() =>
+      projectSchema.parse({
+        ...base,
+        scenes: [scene],
+        retention: {
+          ...retention,
+          events: [{ ...declaredEvent, execute: "javascript:steal()" }],
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      projectSchema.parse({
+        ...base,
+        scenes: [scene],
+        retention: {
+          ...retention,
+          events: [{ ...declaredEvent, soundPath: "secret.wav" }],
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      projectSchema.parse({
+        ...base,
+        scenes: [scene],
+        retention: {
+          ...retention,
+          events: [{ ...declaredEvent, device: "eval(source)" }],
+        },
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a retention schedule that does not match rendered runtime", () =>
+    expect(() =>
+      projectSchema.parse({
+        ...base,
+        scenes: [scene],
+        retention: { ...retention, totalDurationSeconds: 6 },
+      }),
+    ).toThrow(/retention runtime/));
 
   it("rejects mismatched primitive and typed visual kinds", () =>
     expect(() =>

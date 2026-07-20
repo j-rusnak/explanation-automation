@@ -14,6 +14,12 @@ from pathlib import Path
 
 from techshort.alignment import cues_from_script, write_caption_files
 from techshort.audio.service import active_audio, probe_duration
+from techshort.domain.creative import (
+    BeatPlan,
+    NarrativeBrief,
+    RetentionCritique,
+    RetentionPlan,
+)
 from techshort.domain.hashing import sha256_file, stable_hash
 from techshort.domain.models import (
     AssetManifest,
@@ -35,6 +41,7 @@ from techshort.domain.storage import (
     atomic_write_model,
     load_model,
 )
+from techshort.generation.editorial.retention import critique_retention
 from techshort.rendering.tools import media_tool
 
 PREVIEW_WIDTH = 360
@@ -117,10 +124,13 @@ def renderer_payload(
                 # text. Inject it from the verified manifest at render time.
                 visual["evidence_excerpt"] = span.excerpt
                 visual["source_locator"] = locator
-            elif isinstance(
-                visual_model,
-                (SourceReceiptVisual, EvidenceHighlightVisual),
-            ) and visual_model.excerpt != span.excerpt:
+            elif (
+                isinstance(
+                    visual_model,
+                    (SourceReceiptVisual, EvidenceHighlightVisual),
+                )
+                and visual_model.excerpt != span.excerpt
+            ):
                 # Typed evidence visuals are immutable factual inputs. Refuse to
                 # render provider-authored text that drifted from its evidence.
                 raise ValueError(
@@ -142,6 +152,10 @@ def renderer_payload(
         "scenes": scenes,
         "captions": captions,
     }
+    render_duration = target_duration if target_duration is not None else source_duration
+    retention = _current_retention_payload(store, project, script, render_duration)
+    if retention is not None:
+        payload["retention"] = retention
     covers_path = store.path("storyboard/covers.json")
     cover_selection_path = store.path("storyboard/cover-selection.json")
     if covers_path.is_file() and cover_selection_path.is_file():
@@ -151,6 +165,85 @@ def renderer_payload(
     if audio_public_path is not None:
         payload["audioPath"] = audio_public_path
     return payload
+
+
+def _current_retention_payload(
+    store: ProjectStore,
+    project: ProjectManifest,
+    script: ScriptManifest,
+    render_duration: float,
+) -> dict[str, object] | None:
+    """Return inert, frame-ready retention events only for the current artifact chain.
+
+    Retention planning is additive, so archived projects without the two active
+    artifacts remain renderable. If a project declares the full chain, each
+    content-addressed artifact must still bind the active brief, beat plan, and
+    current script. The renderer deliberately omits purpose copy, sound-design
+    metadata, claims, and any path-like value.
+    """
+
+    active = project.active_versions
+    retention_keys = {"retention_plan", "retention_critique"}
+    if not retention_keys.intersection(active):
+        return None
+    required = {
+        "script",
+        "narrative_brief",
+        "beat_plan",
+        "retention_plan",
+        "retention_critique",
+    }
+    if not required.issubset(active):
+        missing = ", ".join(sorted(required - set(active)))
+        raise ValueError(f"renderer retention chain is incomplete; missing active {missing}")
+    retention_path = store.path("script/retention-plan.json")
+    critique_path = store.path("script/retention-critique.json")
+    brief_path = store.path("script/narrative-brief.json")
+    beat_plan_path = store.path("script/beat-plan.json")
+    if not all(
+        path.is_file() for path in (retention_path, critique_path, brief_path, beat_plan_path)
+    ):
+        raise ValueError("renderer retention chain declares an active artifact that is missing")
+
+    retention = load_model(retention_path, RetentionPlan)
+    critique = load_model(critique_path, RetentionCritique)
+    brief = load_model(brief_path, NarrativeBrief)
+    beat_plan = load_model(beat_plan_path, BeatPlan)
+    if (
+        active["narrative_brief"] != brief.version_id
+        or active["beat_plan"] != beat_plan.version_id
+        or active["script"] != script.version_id
+        or active["retention_plan"] != retention.version_id
+        or active["retention_critique"] != critique.critique_id
+        or retention.narrative_brief_version_id != brief.version_id
+        or retention.beat_plan_version_id != beat_plan.version_id
+        or retention.script_version_id != script.version_id
+        or retention.claims_version_id != script.claims_version_id
+        or critique.retention_plan_version_id != retention.version_id
+        or critique.narrative_brief_version_id != brief.version_id
+        or critique.beat_plan_version_id != beat_plan.version_id
+        or critique.script_version_id != script.version_id
+    ):
+        raise ValueError("renderer retention chain is stale or does not bind the current script")
+    if critique != critique_retention(retention, brief, beat_plan, script):
+        raise ValueError("renderer retention critique no longer matches the current plan")
+
+    timing_scale = render_duration / retention.cadence.total_duration_seconds
+    return {
+        "schemaVersion": "1.0.0",
+        "planVersionId": retention.version_id,
+        "timingScale": timing_scale,
+        "totalDurationSeconds": render_duration,
+        "events": [
+            {
+                "eventId": event.event_id,
+                "scheduledAtSeconds": event.scheduled_at_seconds * timing_scale,
+                "eventKind": event.event_kind,
+                "device": event.device,
+            }
+            for event in retention.attention_events
+        ],
+    }
 
 
 def render_video(store: ProjectStore, preview: bool) -> Path:

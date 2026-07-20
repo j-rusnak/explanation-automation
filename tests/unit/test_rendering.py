@@ -7,9 +7,10 @@ from pathlib import Path
 
 import pytest
 
+from techshort.domain.creative import RetentionPlan
 from techshort.domain.hashing import sha256_file, stable_hash
 from techshort.domain.models import RenderManifest
-from techshort.domain.storage import ProjectStore, atomic_write_model
+from techshort.domain.storage import ProjectStore, atomic_write_model, load_model
 from techshort.generation import (
     fixture_claims,
     fixture_script,
@@ -107,6 +108,58 @@ def test_preview_payload_keeps_full_layout_and_scales_all_timing(tmp_path: Path)
     assert scenes[-1]["start_time"] + scenes[-1]["duration"] == pytest.approx(51.25)
     assert captions[-1]["end"] == 51.25
     assert all(len(str(cue["text"])) <= 42 for cue in captions)
+    retention_plan = load_model(store.path("script/retention-plan.json"), RetentionPlan)
+    retention = payload["retention"]
+    assert isinstance(retention, dict)
+    expected_scale = 51.25 / retention_plan.cadence.total_duration_seconds
+    assert retention["planVersionId"] == retention_plan.version_id
+    assert retention["timingScale"] == pytest.approx(expected_scale)
+    assert retention["totalDurationSeconds"] == 51.25
+    events = retention["events"]
+    assert isinstance(events, list) and isinstance(events[0], dict)
+    assert events[0]["scheduledAtSeconds"] == pytest.approx(
+        retention_plan.attention_events[0].scheduled_at_seconds * expected_scale
+    )
+    assert set(events[0]) == {
+        "eventId",
+        "scheduledAtSeconds",
+        "eventKind",
+        "device",
+    }
+
+
+def test_renderer_omits_retention_only_for_a_legacy_project_without_active_chain(
+    tmp_path: Path,
+) -> None:
+    store = fixture_store(tmp_path)
+    project = store.project()
+    project.active_versions.pop("retention_plan")
+    project.active_versions.pop("retention_critique")
+    store.save_project(project)
+
+    payload = renderer_payload(store, watermarked=True, preview=True)
+
+    assert "retention" not in payload
+
+
+def test_renderer_rejects_a_partially_active_retention_chain(tmp_path: Path) -> None:
+    store = fixture_store(tmp_path)
+    project = store.project()
+    project.active_versions.pop("retention_critique")
+    store.save_project(project)
+
+    with pytest.raises(ValueError, match="retention chain is incomplete"):
+        renderer_payload(store, watermarked=True, preview=True)
+
+
+def test_renderer_rejects_a_stale_active_retention_chain(tmp_path: Path) -> None:
+    store = fixture_store(tmp_path)
+    project = store.project()
+    project.active_versions["retention_plan"] = "retention-0000000000000000"
+    store.save_project(project)
+
+    with pytest.raises(ValueError, match="retention chain is stale"):
+        renderer_payload(store, watermarked=True, preview=True)
 
 
 def test_preview_scale_requires_vertical_project_ratio() -> None:

@@ -445,6 +445,69 @@ export const captionSchema = z
     message: "caption end must be after its start",
   });
 
+export const retentionEventKindSchema = z.enum([
+  "re-hook",
+  "pattern-interrupt",
+  "evidence-payoff",
+  "limitation-reframe",
+  "final-payoff",
+]);
+export const engagementDeviceSchema = z.enum([
+  "question-pivot",
+  "visual-mode-change",
+  "source-receipt",
+  "parameter-change",
+  "comparison-switch",
+  "misconception-correction",
+  "callback",
+]);
+export const retentionEventSchema = z
+  .object({
+    eventId: stableId,
+    scheduledAtSeconds: z.number().nonnegative().max(300),
+    eventKind: retentionEventKindSchema,
+    device: engagementDeviceSchema,
+  })
+  .strict();
+export const retentionSchema = z
+  .object({
+    schemaVersion: z.literal("1.0.0"),
+    planVersionId: z.string().regex(/^retention-[0-9a-f]{16}$/),
+    timingScale: z.number().positive().max(4),
+    totalDurationSeconds: z.number().positive().max(300),
+    events: z.array(retentionEventSchema).min(1).max(12),
+  })
+  .strict()
+  .superRefine((retention, context) => {
+    const ids = retention.events.map((event) => event.eventId);
+    if (new Set(ids).size !== ids.length) {
+      context.addIssue({
+        code: "custom",
+        message: "retention event IDs must be unique",
+      });
+    }
+    for (const [index, event] of retention.events.entries()) {
+      if (event.scheduledAtSeconds > retention.totalDurationSeconds) {
+        context.addIssue({
+          code: "custom",
+          path: ["events", index, "scheduledAtSeconds"],
+          message: "retention events must fit inside the rendered runtime",
+        });
+      }
+      if (
+        index > 0 &&
+        event.scheduledAtSeconds <
+          retention.events[index - 1]!.scheduledAtSeconds
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["events", index, "scheduledAtSeconds"],
+          message: "retention events must be ordered",
+        });
+      }
+    }
+  });
+
 const primitiveSchema = z.enum([
   "KineticText",
   "SourceReceipt",
@@ -627,6 +690,7 @@ export const projectSchema = z
     segments: z.array(segmentSchema),
     scenes: z.array(sceneSchema).min(1),
     captions: z.array(captionSchema),
+    retention: retentionSchema.optional(),
     cover: coverSpecSchema.optional(),
     audioPath: z
       .string()
@@ -636,7 +700,21 @@ export const projectSchema = z
       })
       .optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((project, context) => {
+    if (!project.retention) return;
+    const runtime = project.scenes.reduce(
+      (maximum, scene) => Math.max(maximum, scene.start_time + scene.duration),
+      0,
+    );
+    if (Math.abs(project.retention.totalDurationSeconds - runtime) > 0.000001) {
+      context.addIssue({
+        code: "custom",
+        path: ["retention", "totalDurationSeconds"],
+        message: "retention runtime must match the rendered scene runtime",
+      });
+    }
+  });
 
 export type ProjectData = z.infer<typeof projectSchema>;
 export type SceneData = z.infer<typeof sceneSchema>;
@@ -644,3 +722,4 @@ export type TypedVisual = z.infer<typeof typedVisualSchema>;
 export type CoverCandidate = z.infer<typeof coverCandidateSchema>;
 export type PacingPreset = z.infer<typeof pacingSchema>;
 export type SafeZoneInsets = z.infer<typeof safeZoneSchema>;
+export type RetentionEventData = z.infer<typeof retentionEventSchema>;

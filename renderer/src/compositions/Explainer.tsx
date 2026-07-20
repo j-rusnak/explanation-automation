@@ -14,6 +14,7 @@ import {
   transitionFramesFor,
   transitionPresentationFor,
 } from "../pacing/rhythm";
+import { RetentionOverlay } from "../engagement/RetentionOverlay";
 import { Primitive } from "../scenes/primitives";
 import { SafeZoneProvider, useSafeZone } from "../safe-zone";
 import { getTheme } from "../themes/tokens";
@@ -137,6 +138,7 @@ export const Explainer: React.FC<ProjectData> = (data) => {
               </SceneTransition>
             </Sequence>
           ))}
+          <RetentionOverlay retention={data.retention} themeName={data.theme} />
           {activeCue ? (
             <CaptionCard
               cue={activeCue}
