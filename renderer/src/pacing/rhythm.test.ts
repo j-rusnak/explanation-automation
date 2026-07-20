@@ -86,6 +86,12 @@ describe("retention pacing", () => {
       transitionPresentationFor(frames, frames, "slide", "precise", false),
     ).toEqual({ opacity: 1, translateX: 0 });
     expect(
+      transitionPresentationFor(0, frames, "fade", "precise", false),
+    ).toEqual({ opacity: 1, translateX: 0 });
+    expect(
+      transitionPresentationFor(0, frames, "slide", "precise", false),
+    ).toEqual({ opacity: 1, translateX: 48 });
+    expect(
       transitionPresentationFor(frames * 8, frames, "fade", "precise", false)
         .opacity,
     ).toBe(1);

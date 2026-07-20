@@ -150,7 +150,10 @@ export const transitionPresentationFor = (
     Math.min(1, frame / Math.max(1, transitionFrames)),
   );
   return {
-    opacity: entrance,
+    // Adjacent sequences do not overlap, so fading a whole scene from zero
+    // exposes a bare-background flash at every cut. Keep the scene opaque and
+    // reserve the bounded entrance motion for slide transitions.
+    opacity: 1,
     translateX:
       transition === "slide"
         ? (1 - entrance) * (motion === "energetic" ? 36 : 48)

@@ -1,7 +1,25 @@
 import React from "react";
 import { AbsoluteFill } from "remotion";
+import { safeZonePixels } from "../safe-zone";
 import type { CoverCandidate, ProjectData } from "../schemas/project";
 import { getTheme } from "../themes/tokens";
+
+export const coverPaddingFor = (
+  data: Pick<ProjectData, "safeZone" | "width" | "height">,
+  layout: CoverCandidate["layout"],
+): { top: number; right: number; bottom: number; left: number } => {
+  const safe = safeZonePixels(data.safeZone, data.width, data.height);
+  const minimum =
+    layout === "editorial"
+      ? { top: 165, right: 72, bottom: 135, left: 72 }
+      : { top: 125, right: 64, bottom: 120, left: 64 };
+  return {
+    top: Math.max(minimum.top, safe.top),
+    right: Math.max(minimum.right, safe.right),
+    bottom: Math.max(minimum.bottom, safe.bottom),
+    left: Math.max(minimum.left, safe.left),
+  };
+};
 
 const CoverShape: React.FC<{
   feature: "straight-edge" | "grid" | "rotor" | "signal";
@@ -288,16 +306,14 @@ export const Cover: React.FC<ProjectData> = (data) => {
   }
   const candidate = selected;
   const tokens = getTheme(candidate.palette);
+  const padding = coverPaddingFor(data, candidate.layout);
   return (
     <AbsoluteFill
       style={{
         background: tokens.backgroundCss,
         color: tokens.text,
         fontFamily: tokens.font,
-        padding:
-          candidate.layout === "editorial"
-            ? "165px 72px 135px"
-            : "125px 64px 120px",
+        padding: `${padding.top}px ${padding.right}px ${padding.bottom}px ${padding.left}px`,
         display: "flex",
         flexDirection: "column",
         justifyContent: "flex-start",
