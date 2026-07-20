@@ -11,6 +11,7 @@ from techshort.audio import (
     import_audio,
     import_transcript,
     probe_duration,
+    set_narration_mode,
 )
 from techshort.domain.hashing import sha256_file
 from techshort.domain.models import AssetManifest
@@ -73,6 +74,20 @@ def test_audio_import_registers_unknown_rights_and_active_asset(
     assert active_audio(store) == imported
     assert project.approvals.rights == "stale"
     assert probe_duration(imported) == pytest.approx(0.25, abs=0.02)
+
+
+def test_silent_mode_is_explicit_and_audio_import_restores_narrated_mode(
+    tmp_path: Path, generated_audio: Path
+) -> None:
+    store = _store(tmp_path, "audio-mode")
+    set_narration_mode(store, "silent-reviewed")
+    assert store.project().narration_mode == "silent-reviewed"
+
+    import_audio(store, generated_audio, rights_status="user-owned")
+    assert store.project().narration_mode == "narrated"
+
+    with pytest.raises(ValueError, match="while narration audio is active"):
+        set_narration_mode(store, "silent-reviewed")
 
 
 def test_audio_import_can_record_explicit_user_owned_status(

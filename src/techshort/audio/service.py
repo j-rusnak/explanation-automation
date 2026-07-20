@@ -4,6 +4,7 @@ import json
 import math
 import subprocess
 from pathlib import Path
+from typing import Literal
 
 from techshort.domain.hashing import sha256_file, stable_hash
 from techshort.domain.models import Asset, AssetManifest, ReviewStatus
@@ -27,6 +28,22 @@ AUDIO_RIGHTS = {
 }
 EMBEDDABLE_AUDIO_RIGHTS = {"original", "user-owned", "permissively-licensed"}
 MAX_TRANSCRIPT_BYTES = 128 * 1024
+
+
+def set_narration_mode(
+    store: ProjectStore,
+    mode: Literal["narrated", "silent-reviewed"],
+) -> None:
+    """Explicitly choose whether the approved export is expected to contain narration."""
+
+    project = store.project()
+    if project.narration_mode == mode:
+        return
+    if mode == "silent-reviewed" and active_audio(store) is not None:
+        raise ValueError("silent-reviewed mode cannot be selected while narration audio is active")
+    project.narration_mode = mode
+    store.save_project(project)
+    store.invalidate_from("final", f"narration mode changed to {mode}")
 
 
 def _probe_audio_duration(path: Path, *, require_tool: bool) -> float | None:
@@ -182,6 +199,7 @@ def import_audio(
     )
 
     project = store.project()
+    project.narration_mode = "narrated"
     audio_changed = project.dependency_hashes.get("audio") != digest
     unchanged = (
         project.active_versions.get("audio_asset") == asset_id

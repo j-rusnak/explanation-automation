@@ -4,6 +4,7 @@ from techshort.audio.service import (
     import_audio,
     import_transcript,
     probe_duration,
+    set_narration_mode,
 )
 from techshort.audio.transcription import (
     TranscriptionAttempt,
@@ -17,6 +18,7 @@ __all__ = [
     "import_audio",
     "import_transcript",
     "probe_duration",
+    "set_narration_mode",
     "TranscriptionAttempt",
     "resolve_narration_transcript",
     "transcribe_with_local_whisper",
