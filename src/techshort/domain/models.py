@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from techshort.domain.hashing import stable_hash
 
 SCHEMA_VERSION: Literal["1.0.0"] = "1.0.0"
+PacingProfile = Literal["measured", "brisk", "high-retention"]
 
 _ACTIVE_CONTENT_PATTERNS = (
     re.compile(r"<\s*/?\s*[a-z!][^>]*>", re.IGNORECASE),
@@ -73,6 +74,7 @@ class ProjectManifest(StrictModel):
     height: int = 1920
     fps: int = 30
     theme: Literal["midnight", "blueprint", "signal-lab", "technical-editorial"] = "blueprint"
+    pacing: PacingProfile = "high-retention"
     narration_mode: Literal["narrated", "silent-reviewed"] = "narrated"
     source_ids: list[str] = Field(default_factory=list)
     active_source_id: str | None = None

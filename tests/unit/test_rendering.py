@@ -92,6 +92,7 @@ def test_preview_payload_keeps_full_layout_and_scales_all_timing(tmp_path: Path)
     assert payload["height"] == 1920
     assert payload["audioPath"] == "techshort-stage/narration.wav"
     assert payload["theme"] == "blueprint"
+    assert payload["pacing"] == "high-retention"
     assert payload["cover"]["selected_candidate_id"] == "cover-scanline"
     scenes = payload["scenes"]
     captions = payload["captions"]

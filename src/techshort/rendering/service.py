@@ -136,6 +136,7 @@ def renderer_payload(
         "fps": project.fps,
         "watermarked": watermarked,
         "theme": "blueprint" if project.theme == "midnight" else project.theme,
+        "pacing": project.pacing,
         "segments": segments,
         "scenes": scenes,
         "captions": captions,
@@ -370,6 +371,7 @@ def _build_render_manifest(
         "script": stable_hash(script),
         "storyboard": stable_hash(storyboard),
         "watermarked": payload["watermarked"],
+        "pacing": payload["pacing"],
         "audio": sha256_file(narration) if narration else None,
         "dimensions": [fallback_width, fallback_height],
         "fps": metadata.fps if metadata else project.fps,
@@ -485,6 +487,7 @@ def _activate_render(store: ProjectStore, *, preview: bool, manifest: RenderMani
             "sources": manifest.source_hashes,
             "dimensions": [manifest.width, manifest.height, manifest.fps],
             "watermarked": manifest.watermarked,
+            "pacing": project.pacing,
         }
     )
     store.save_project(project)

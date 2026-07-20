@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Annotated, Any, NoReturn
+from typing import Annotated, Any, NoReturn, cast
 
 import typer
 from rich.console import Console
@@ -21,9 +21,11 @@ from techshort.audio import (
     probe_duration,
     set_narration_mode,
 )
+from techshort.configuration import PACING_PROFILES, set_pacing_profile
 from techshort.domain.hashing import sha256_file, stable_hash
 from techshort.domain.models import (
     ClaimCritiqueReport,
+    PacingProfile,
     QAReport,
     ReviewStatus,
     ScriptManifest,
@@ -63,12 +65,14 @@ storyboard_app = typer.Typer(help="Generate allowlisted structured storyboards."
 cover_app = typer.Typer(help="Generate and select evidence-linked cover designs.")
 audio_app = typer.Typer(help="Import user-recorded narration.")
 captions_app = typer.Typer(help="Generate deterministic SRT, VTT, and burned-caption cues.")
+style_app = typer.Typer(help="Configure reviewed visual delivery and pacing.")
 app.add_typer(claims_app, name="claims")
 app.add_typer(script_app, name="script")
 app.add_typer(storyboard_app, name="storyboard")
 app.add_typer(cover_app, name="cover")
 app.add_typer(audio_app, name="audio")
 app.add_typer(captions_app, name="captions")
+app.add_typer(style_app, name="style")
 console = Console()
 PROVIDERS = {"fixture", "manual", "codex"}
 ANGLES = {"surprising-result", "everyday-mechanism", "engineering-tradeoff"}
@@ -80,6 +84,26 @@ RIGHTS_STATUSES = {
     "unknown",
     "restricted",
 }
+
+
+@style_app.command("pacing")
+def style_pacing(slug: str, profile: str) -> None:
+    """Select measured, brisk, or high-retention visual pacing."""
+
+    try:
+        if profile not in PACING_PROFILES:
+            raise ValueError("pacing must be measured, brisk, or high-retention")
+        target = store(slug)
+        previous = target.project().pacing
+        set_pacing_profile(target, cast(PacingProfile, profile))
+        if previous == profile:
+            console.print(f"Pacing already set to {profile}")
+        else:
+            console.print(
+                f"Pacing set to {profile}; storyboard and downstream review are now stale"
+            )
+    except (OSError, ValueError) as exc:
+        fail(str(exc))
 
 
 def projects_root() -> Path:
