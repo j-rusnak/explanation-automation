@@ -37,6 +37,41 @@ describe("renderer schema", () => {
     expect(() =>
       projectSchema.parse({ ...base, audioPath: "stage/../secret.wav" }),
     ).toThrow());
+  it("accepts only traversal-free staged sound-design paths", () => {
+    expect(() =>
+      projectSchema.parse({
+        ...base,
+        scenes: [
+          {
+            schema_version: "1.0.0",
+            scene_id: "scene-safe",
+            order: 0,
+            start_time: 0,
+            duration: 1,
+            transition: "cut",
+            primitive: "KineticText",
+            script_segment_ids: ["segment-safe"],
+            claim_ids: ["claim-safe"],
+            on_screen_text: "Safe",
+            visual: { title: "Safe" },
+            asset_ids: [],
+            accessibility_description: "Safe text",
+            evidence_label: "DOCUMENTED",
+            theme_overrides: {},
+            review_status: "pending",
+            dependency_hash: "a".repeat(64),
+          },
+        ],
+        soundDesignPath: "stage/sound-design.wav",
+      }),
+    ).not.toThrow();
+    expect(() =>
+      projectSchema.parse({
+        ...base,
+        soundDesignPath: "stage/../secret.wav",
+      }),
+    ).toThrow();
+  });
   const scene = {
     schema_version: "1.0.0",
     scene_id: "scene-1",

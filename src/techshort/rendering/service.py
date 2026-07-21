@@ -14,6 +14,7 @@ from pathlib import Path
 
 from techshort.alignment import cues_from_script, write_caption_files
 from techshort.audio.service import active_audio, probe_duration
+from techshort.audio.sound_design import active_sound_design
 from techshort.domain.creative import (
     BeatPlan,
     NarrativeBrief,
@@ -64,6 +65,7 @@ def renderer_payload(
     preview: bool,
     *,
     audio_public_path: str | None = None,
+    sound_design_public_path: str | None = None,
     target_duration: float | None = None,
 ) -> dict[str, object]:
     """Build validated renderer props on the full logical composition canvas.
@@ -164,6 +166,8 @@ def renderer_payload(
         payload["cover"] = selected_cover_payload(store)
     if audio_public_path is not None:
         payload["audioPath"] = audio_public_path
+    if sound_design_public_path is not None:
+        payload["soundDesignPath"] = sound_design_public_path
     return payload
 
 
@@ -269,6 +273,7 @@ def render_video(store: ProjectStore, preview: bool) -> Path:
     if project.narration_mode == "silent-reviewed" and narration is not None:
         raise ValueError("silent-reviewed mode conflicts with active narration audio")
     narration_duration = probe_duration(narration) if narration is not None else None
+    sound_design = active_sound_design(store)
     storyboard = load_model(store.path("storyboard/storyboard.json"), StoryboardManifest)
     expected_duration = narration_duration or _storyboard_duration(storyboard)
     watermarked = preview
@@ -284,11 +289,17 @@ def render_video(store: ProjectStore, preview: bool) -> Path:
             staged_audio = input_directory / f"narration{narration.suffix.lower()}"
             shutil.copyfile(narration, staged_audio)
             audio_public_path = staged_audio.relative_to(public_root).as_posix()
+        sound_design_public_path: str | None = None
+        if sound_design is not None:
+            staged_sound_design = input_directory / "sound-design.wav"
+            shutil.copyfile(sound_design, staged_sound_design)
+            sound_design_public_path = staged_sound_design.relative_to(public_root).as_posix()
         payload = renderer_payload(
             store,
             watermarked=watermarked,
             preview=preview,
             audio_public_path=audio_public_path,
+            sound_design_public_path=sound_design_public_path,
             target_duration=narration_duration,
         )
         props_path = input_directory / "project-data.json"

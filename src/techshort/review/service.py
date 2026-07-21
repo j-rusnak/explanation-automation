@@ -5,6 +5,7 @@ from typing import Literal
 from uuid import uuid4
 
 from techshort.audio import active_audio, active_transcript
+from techshort.audio.sound_design import active_sound_design
 from techshort.domain.creative import (
     BeatPlan,
     EditorialCritique,
@@ -235,6 +236,10 @@ def current_artifact_hashes(store: ProjectStore) -> dict[str, str]:
         transcript = active_transcript(store)
         if transcript is not None:
             hashes["narration-transcript"] = sha256_file(transcript[1])
+    sound_design = active_sound_design(store)
+    if sound_design is not None:
+        hashes["sound-design-audio"] = sha256_file(sound_design)
+        hashes["sound-design-receipt"] = sha256_file(store.path("audio/sound-design.json"))
     for indexed_source in source_index.sources:
         if indexed_source.source_id not in referenced_source_ids:
             continue

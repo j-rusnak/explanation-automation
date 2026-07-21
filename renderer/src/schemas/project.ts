@@ -700,6 +700,13 @@ export const projectSchema = z
         message: "audio path must be public-relative and traversal-free",
       })
       .optional(),
+    soundDesignPath: z
+      .string()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._/-]*$/)
+      .refine((value) => !value.split("/").includes(".."), {
+        message: "sound-design path must be public-relative and traversal-free",
+      })
+      .optional(),
   })
   .strict()
   .superRefine((project, context) => {

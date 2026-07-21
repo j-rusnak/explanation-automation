@@ -123,6 +123,9 @@ export const Explainer: React.FC<ProjectData> = (data) => {
       <PacingProvider preset={data.pacing}>
         <SafeZoneProvider insets={data.safeZone}>
           {data.audioPath ? <Audio src={staticFile(data.audioPath)} /> : null}
+          {data.soundDesignPath ? (
+            <Audio src={staticFile(data.soundDesignPath)} />
+          ) : null}
           {data.scenes.map((scene) => (
             <Sequence
               key={scene.scene_id}

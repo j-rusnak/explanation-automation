@@ -19,6 +19,7 @@ from techshort.alignment import (
 )
 from techshort.assets import BUILTIN_FONT_ASSET_IDS
 from techshort.audio import active_audio, probe_duration, resolve_narration_transcript
+from techshort.audio.sound_design import active_sound_design
 from techshort.domain.creative import (
     BeatPlan,
     EditorialCritique,
@@ -851,6 +852,28 @@ def run_qa(
                     f"Narration transcript could not be validated: {exc}",
                 )
             )
+
+    try:
+        sound_design = active_sound_design(store)
+        checks.append(
+            _check(
+                "sound-design-validity",
+                True,
+                "Procedural sound design is current and hash-verified"
+                if sound_design is not None
+                else "No optional sound-design track is active",
+                "Procedural sound design is stale or invalid",
+            )
+        )
+    except (OSError, ValueError) as exc:
+        checks.append(
+            _check(
+                "sound-design-validity",
+                False,
+                "Procedural sound design is current and hash-verified",
+                f"Procedural sound design is missing, stale, or invalid: {exc}",
+            )
+        )
 
     expected_duration = narration_duration or storyboard_duration
     duration_valid = 45 <= expected_duration <= 75
