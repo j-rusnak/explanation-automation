@@ -44,10 +44,12 @@ from techshort.experiments import (
     apply_approved_cover_recommendation,
     approve_experiment,
     approve_recommendation,
+    build_metrics_template,
     create_cover_experiment,
     experiment_status,
     import_manual_observations,
     list_experiment_ids,
+    write_metrics_template,
 )
 from techshort.export import export_project, generate_evidence_page
 from techshort.generation import (
@@ -1021,6 +1023,40 @@ def experiment_status_command(
         else:
             console.print("No experiment blockers.")
     except (OSError, ValueError) as exc:
+        fail(str(exc))
+
+
+@experiment_app.command("metrics-template")
+def experiment_metrics_template(
+    slug: str,
+    experiment_id: str,
+    format_name: Annotated[str, typer.Option("--format", help="csv or json")] = "csv",
+    output: Annotated[
+        str | None,
+        typer.Option(
+            "--output",
+            help="Safe filename stored under the experiment templates directory; stdout if omitted.",
+        ),
+    ] = None,
+) -> None:
+    """Create blank aggregate-metrics rows for current approved variants."""
+
+    try:
+        if format_name not in {"csv", "json"}:
+            raise ValueError("metrics template format must be json or csv")
+        experiment_store = _experiment_store(slug, experiment_id)
+        template = build_metrics_template(
+            experiment_store,
+            cast(Literal["json", "csv"], format_name),
+        )
+        if output is None:
+            typer.echo(template.content, nl=False)
+            typer.echo(f"Guidance: {template.guidance}", err=True)
+        else:
+            path = write_metrics_template(experiment_store, template, output)
+            console.print(f"Wrote {template.variant_count} blank aggregate row(s): {path}")
+            console.print(template.guidance)
+    except (OSError, UnicodeError, ValueError) as exc:
         fail(str(exc))
 
 

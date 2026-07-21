@@ -37,21 +37,25 @@ from techshort.experiments.models import (
     variant_review_hash,
 )
 from techshort.experiments.service import (
+    AggregateMetricsTemplate,
     analyze_experiment,
     append_observations,
     approve_experiment,
     approve_recommendation,
+    build_metrics_template,
     build_observation,
     build_variant,
     experiment_status,
     import_manual_observations,
     initialize_experiment,
     parse_manual_observations,
+    write_metrics_template,
 )
 from techshort.experiments.storage import ExperimentStore, list_experiment_ids
 
 __all__ = [
     "ComparisonStatus",
+    "AggregateMetricsTemplate",
     "ConfidenceInterval",
     "ExperimentManifest",
     "ExperimentReviewDecision",
@@ -82,6 +86,7 @@ __all__ = [
     "approve_recommendation",
     "build_observation",
     "build_variant",
+    "build_metrics_template",
     "create_cover_experiment",
     "default_metric_definitions",
     "derive_experiment_id",
@@ -95,6 +100,7 @@ __all__ = [
     "list_experiment_ids",
     "metric_definition",
     "parse_manual_observations",
+    "write_metrics_template",
     "recommendation_review_hash",
     "variant_review_hash",
 ]

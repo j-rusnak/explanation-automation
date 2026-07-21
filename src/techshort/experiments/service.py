@@ -4,6 +4,8 @@ import csv
 import io
 import json
 import math
+import re
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from statistics import NormalDist
@@ -13,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from techshort.domain.hashing import sha256_file
 from techshort.domain.models import ReviewStatus, now_utc
-from techshort.domain.storage import ProjectStore
+from techshort.domain.storage import ProjectStore, atomic_write_text
 from techshort.experiments.models import (
     ComparisonStatus,
     ConfidenceInterval,
@@ -46,6 +48,13 @@ from techshort.experiments.storage import ExperimentStore
 
 MAX_IMPORT_BYTES = 256 * 1024
 MAX_IMPORT_ROWS = 100
+METRICS_TEMPLATE_GUIDANCE = (
+    "Use one cumulative aggregate row per approved variant. Replace every REQUIRED_ placeholder "
+    "and enter only aggregate metrics. Use the same start time and equal observation-window "
+    "duration for every variant whenever possible; analysis rejects materially noncomparable "
+    "windows. Never enter person-level data."
+)
+_SAFE_TEMPLATE_FILENAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _COUNT_FIELDS = (
     "view_count",
     "completed_view_count",
@@ -99,6 +108,115 @@ class ObservationDraft(BaseModel):
     share_count: int | None = Field(default=None, ge=0)
     save_count: int | None = Field(default=None, ge=0)
     follow_count: int | None = Field(default=None, ge=0)
+
+
+@dataclass(frozen=True)
+class AggregateMetricsTemplate:
+    format: Literal["json", "csv"]
+    content: str
+    variant_count: int
+    guidance: str = METRICS_TEMPLATE_GUIDANCE
+
+
+def _approved_template_manifest(experiment_store: ExperimentStore) -> ExperimentManifest:
+    manifest = experiment_store.manifest()
+    if manifest.review_status is not ReviewStatus.APPROVED:
+        raise ValueError("experiment and variants require human approval before template export")
+    if any(variant.review_status is not ReviewStatus.APPROVED for variant in manifest.variants):
+        raise ValueError("every template variant requires current human approval")
+    blockers = _variant_integrity_blockers(experiment_store, manifest)
+    if blockers:
+        raise ValueError(blockers[0])
+    reviews = experiment_store.reviews().decisions
+    expected = {
+        ("experiment", manifest.experiment_id, manifest.approval_hash),
+        *{("variant", variant.variant_id, variant.approval_hash) for variant in manifest.variants},
+    }
+    approved = {
+        (decision.object_type, decision.object_id, decision.object_hash)
+        for decision in reviews
+        if decision.decision == "approve"
+    }
+    if not expected.issubset(approved):
+        raise ValueError("experiment or variant approval record is missing or stale")
+    return manifest
+
+
+def build_metrics_template(
+    experiment_store: ExperimentStore,
+    format: Literal["json", "csv"] = "csv",
+) -> AggregateMetricsTemplate:
+    """Build blank aggregate-only rows for current approved experiment variants."""
+
+    if format not in {"json", "csv"}:
+        raise ValueError("metrics template format must be json or csv")
+    manifest = _approved_template_manifest(experiment_store)
+    fields = tuple(ObservationDraft.model_fields)
+    rows: list[dict[str, object | None]] = []
+    for variant in manifest.variants:
+        row: dict[str, object | None] = dict.fromkeys(fields)
+        row.update(
+            {
+                "schema_version": "1.0.0",
+                "experiment_id": manifest.experiment_id,
+                "variant_id": variant.variant_id,
+                "platform": manifest.platform.value,
+                "source": "manual-organic",
+                "publication_reference": (
+                    f"<REQUIRED_PUBLIC_POST_REFERENCE_FOR_{variant.variant_id}>"
+                ),
+                "window_started_at": "REQUIRED_COMPARABLE_WINDOW_START_UTC",
+                "window_ended_at": "REQUIRED_EQUAL_DURATION_WINDOW_END_UTC",
+                "captured_at": "REQUIRED_CAPTURE_TIME_UTC",
+            }
+        )
+        rows.append(row)
+    if format == "json":
+        content = json.dumps(rows, indent=2, ensure_ascii=False) + "\n"
+    else:
+        output = io.StringIO(newline="")
+        writer = csv.DictWriter(output, fieldnames=fields, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
+        content = output.getvalue()
+    return AggregateMetricsTemplate(
+        format=format,
+        content=content,
+        variant_count=len(rows),
+    )
+
+
+def write_metrics_template(
+    experiment_store: ExperimentStore,
+    template: AggregateMetricsTemplate,
+    filename: str,
+) -> Path:
+    """Atomically persist a template inside the experiment without replacing differences."""
+
+    if template.format not in {"json", "csv"}:
+        raise ValueError("metrics template format must be json or csv")
+    candidate = Path(filename)
+    expected_suffix = f".{template.format}"
+    if (
+        candidate.name != filename
+        or _SAFE_TEMPLATE_FILENAME.fullmatch(filename) is None
+        or candidate.suffix.casefold() != expected_suffix
+    ):
+        raise ValueError(
+            f"metrics template output must be a simple safe {expected_suffix} filename"
+        )
+    directory = experiment_store.root / "templates"
+    if directory.is_symlink():
+        raise ValueError("metrics template directory cannot be a symbolic link")
+    destination = directory / filename
+    if destination.is_symlink():
+        raise ValueError("metrics template output cannot be a symbolic link")
+    if destination.is_file():
+        if destination.read_text(encoding="utf-8") != template.content:
+            raise ValueError("existing metrics template differs; choose a new output filename")
+        return destination
+    atomic_write_text(destination, template.content)
+    return destination
 
 
 def build_variant(

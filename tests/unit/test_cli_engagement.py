@@ -110,6 +110,7 @@ def test_engagement_commands_are_discoverable() -> None:
         "approve",
         "status",
         "import-observations",
+        "metrics-template",
         "analyze",
         "approve-recommendation",
         "apply-recommendation",
@@ -376,6 +377,65 @@ def test_experiment_cli_runs_approval_import_analysis_and_recommendation_review(
     status = runner.invoke(app, ["experiment", "status", "cli-experiment", experiment_id, "--json"])
     assert status.exit_code == 0
     assert json.loads(status.stdout)["blockers"] == []
+
+
+def test_experiment_cli_emits_and_scopes_blank_metrics_templates(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    _, experiment_store = _experiment(tmp_path, monkeypatch)
+    experiment_id = experiment_store.experiment_id
+    approved = runner.invoke(app, ["experiment", "approve", "cli-experiment", experiment_id])
+    assert approved.exit_code == 0, approved.stdout
+
+    stdout_template = runner.invoke(
+        app,
+        [
+            "experiment",
+            "metrics-template",
+            "cli-experiment",
+            experiment_id,
+            "--format",
+            "json",
+        ],
+    )
+    assert stdout_template.exit_code == 0, stdout_template.stdout
+    rows = json.loads(stdout_template.stdout)
+    assert len(rows) == 2
+    assert all(row["view_count"] is None for row in rows)
+    assert all("COMPARABLE" in row["window_started_at"] for row in rows)
+    assert "comparable" in stdout_template.stderr
+
+    persisted = runner.invoke(
+        app,
+        [
+            "experiment",
+            "metrics-template",
+            "cli-experiment",
+            experiment_id,
+            "--format",
+            "csv",
+            "--output",
+            "organic-metrics.csv",
+        ],
+    )
+    assert persisted.exit_code == 0, persisted.stdout
+    path = experiment_store.root / "templates" / "organic-metrics.csv"
+    assert path.is_file()
+    path.write_text("do not replace\n", encoding="utf-8")
+    blocked = runner.invoke(
+        app,
+        [
+            "experiment",
+            "metrics-template",
+            "cli-experiment",
+            experiment_id,
+            "--output",
+            "organic-metrics.csv",
+        ],
+    )
+    assert blocked.exit_code == 1
+    assert "differs" in blocked.stdout
+    assert path.read_text(encoding="utf-8") == "do not replace\n"
 
 
 def test_publication_diagnostics_never_claim_automated_upload() -> None:

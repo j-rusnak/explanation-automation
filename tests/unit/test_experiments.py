@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -25,6 +27,7 @@ from techshort.experiments import (
     append_observations,
     approve_experiment,
     approve_recommendation,
+    build_metrics_template,
     build_observation,
     build_variant,
     derive_experiment_id,
@@ -33,6 +36,7 @@ from techshort.experiments import (
     initialize_experiment,
     list_experiment_ids,
     parse_manual_observations,
+    write_metrics_template,
 )
 
 START = datetime(2026, 7, 1, 12, tzinfo=UTC)
@@ -159,6 +163,101 @@ def test_initialize_approves_strict_atomic_experiment(tmp_path: Path) -> None:
     payload["schema_version"] = "2.0.0"
     with pytest.raises(ValidationError, match="schema_version"):
         ExperimentManifest.model_validate(payload)
+
+
+def test_metrics_templates_are_deterministic_blank_and_aggregate_only(tmp_path: Path) -> None:
+    _, store, manifest = _experiment(tmp_path)
+    csv_template = build_metrics_template(store, "csv")
+    repeated = build_metrics_template(store, "csv")
+
+    assert csv_template == repeated
+    assert csv_template.variant_count == len(manifest.variants)
+    assert "comparable" in csv_template.guidance
+    rows = list(csv.DictReader(io.StringIO(csv_template.content)))
+    assert [row["variant_id"] for row in rows] == [
+        variant.variant_id for variant in manifest.variants
+    ]
+    assert {row["platform"] for row in rows} == {manifest.platform.value}
+    assert {row["window_started_at"] for row in rows} == {"REQUIRED_COMPARABLE_WINDOW_START_UTC"}
+    assert {row["window_ended_at"] for row in rows} == {"REQUIRED_EQUAL_DURATION_WINDOW_END_UTC"}
+    aggregate_fields = {
+        "view_count",
+        "total_watch_time_seconds",
+        "completed_view_count",
+        "skipped_view_count",
+        "like_count",
+        "comment_count",
+        "share_count",
+        "save_count",
+        "follow_count",
+    }
+    assert all(row[field] == "" for row in rows for field in aggregate_fields)
+    assert not any(
+        forbidden in csv_template.content.casefold()
+        for forbidden in ("viewer_id", "user_id", "email", "device_id")
+    )
+
+    json_template = build_metrics_template(store, "json")
+    json_rows = json.loads(json_template.content)
+    assert [row["variant_id"] for row in json_rows] == [
+        variant.variant_id for variant in manifest.variants
+    ]
+    assert all(row[field] is None for row in json_rows for field in aggregate_fields)
+    assert all(row["snapshot_id"] is None for row in json_rows)
+    with pytest.raises(ValidationError):
+        parse_manual_observations(json_template.content, "json")
+
+
+def test_metrics_template_requires_current_approval_and_variant_bytes(tmp_path: Path) -> None:
+    project = _project(tmp_path)
+    variants = [
+        _variant(project, role=VariantRole.CONTROL, value="control", body=b"control"),
+        _variant(project, role=VariantRole.TREATMENT, value="treatment", body=b"treatment"),
+    ]
+    manifest = initialize_experiment(
+        project,
+        name="Pending template test",
+        hypothesis="Approved variants are required before metrics collection begins.",
+        platform=OrganicPlatform.TIKTOK,
+        variable=ExperimentVariable.HOOK,
+        variants=variants,
+    )
+    store = ExperimentStore(project, manifest.experiment_id)
+    with pytest.raises(ValueError, match="human approval"):
+        build_metrics_template(store)
+
+    approve_experiment(store, "template-reviewer")
+    reviews = store.reviews()
+    reviews.decisions.clear()
+    store.save_reviews(reviews)
+    with pytest.raises(ValueError, match="approval record"):
+        build_metrics_template(store)
+
+    current_project, current_store, current = _experiment(tmp_path / "current")
+    current_project.path(current.variants[0].media_path).write_bytes(b"changed")
+    with pytest.raises(ValueError, match="variant media is missing or changed"):
+        build_metrics_template(current_store)
+
+
+def test_metrics_template_write_is_scoped_idempotent_and_never_overwrites(
+    tmp_path: Path,
+) -> None:
+    _, store, _ = _experiment(tmp_path)
+    template = build_metrics_template(store, "csv")
+
+    written = write_metrics_template(store, template, "blank-aggregate-metrics.csv")
+    assert written == store.root / "templates" / "blank-aggregate-metrics.csv"
+    assert write_metrics_template(store, template, "blank-aggregate-metrics.csv") == written
+    original = written.read_text(encoding="utf-8")
+    written.write_text("different existing template\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="differs"):
+        write_metrics_template(store, template, "blank-aggregate-metrics.csv")
+    assert written.read_text(encoding="utf-8") == "different existing template\n"
+    with pytest.raises(ValueError, match="simple safe"):
+        write_metrics_template(store, template, "../escape.csv")
+    with pytest.raises(ValueError, match="simple safe"):
+        write_metrics_template(store, template, "wrong.json")
+    assert original.startswith("schema_version,snapshot_id,experiment_id")
 
 
 def test_experiment_rejects_multiple_variables_and_changed_facts(tmp_path: Path) -> None:
