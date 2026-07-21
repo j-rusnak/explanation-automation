@@ -98,6 +98,16 @@ describe("renderer schema", () => {
     dependency_hash: "a".repeat(64),
   };
   const retentionScene = { ...scene, duration: 75 };
+  it("defaults new payloads to kinetic-pop while accepting stored themes", () => {
+    const defaulted = projectSchema.parse({ ...base, scenes: [scene] });
+    expect(defaulted.theme).toBe("kinetic-pop");
+
+    for (const theme of ["blueprint", "signal-lab", "technical-editorial"]) {
+      expect(
+        projectSchema.parse({ ...base, scenes: [scene], theme }).theme,
+      ).toBe(theme);
+    }
+  });
   const retentionEvents = Array.from({ length: 15 }, (_, index) => ({
     eventId: `retention-event-${String(index + 1).padStart(2, "0")}`,
     scheduledAtSeconds: index === 14 ? 74.25 : 0.75 + index * 5,

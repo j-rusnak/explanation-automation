@@ -19,6 +19,7 @@ const paletteRole = z.enum([
   "muted",
 ]);
 export const themeNameSchema = z.enum([
+  "kinetic-pop",
   "blueprint",
   "signal-lab",
   "technical-editorial",
@@ -759,7 +760,7 @@ export const projectSchema = z
     height: z.number().int().positive(),
     fps: z.number().int().positive(),
     watermarked: z.boolean(),
-    theme: themeNameSchema.default("blueprint"),
+    theme: themeNameSchema.default("kinetic-pop"),
     pacing: pacingSchema.default("brisk"),
     safeZone: safeZoneSchema.default(DEFAULT_SAFE_ZONE),
     segments: z.array(segmentSchema),

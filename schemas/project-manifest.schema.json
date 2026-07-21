@@ -207,9 +207,10 @@
       "type": "number"
     },
     "theme": {
-      "default": "blueprint",
+      "default": "kinetic-pop",
       "enum": [
         "midnight",
+        "kinetic-pop",
         "blueprint",
         "signal-lab",
         "technical-editorial"

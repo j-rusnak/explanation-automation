@@ -10,6 +10,7 @@ from techshort.domain.models import (
     AnglesManifest,
     Asset,
     ComparisonSide,
+    ProjectManifest,
     Scene,
     ScriptManifest,
     ScriptSegment,
@@ -17,6 +18,19 @@ from techshort.domain.models import (
     derive_angle_selection_id,
 )
 from techshort.domain.storage import sanitize_filename, validate_slug
+
+
+def test_new_projects_default_to_kinetic_pop_without_breaking_stored_themes() -> None:
+    project = ProjectManifest(project_id="project-new", slug="new", title="New")
+
+    assert project.theme == "kinetic-pop"
+    for theme in ("midnight", "blueprint", "signal-lab", "technical-editorial"):
+        stored = ProjectManifest.model_validate({**project.model_dump(mode="json"), "theme": theme})
+        assert stored.theme == theme
+    with pytest.raises(ValidationError):
+        ProjectManifest.model_validate(
+            {**project.model_dump(mode="json"), "theme": "untrusted-theme"}
+        )
 
 
 def test_schema_rejects_unknown_version_and_fields() -> None:

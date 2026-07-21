@@ -71,12 +71,12 @@ def _selected_angle(
 def _headlines(angle: str) -> tuple[str, str, str]:
     return {
         "surprising-result": (
-            "Why Straight Blades Look Bent",
+            "Why Straight Lines Look Skewed",
             "The Camera Effect Hidden in One Frame",
             "A Straight Blade, Rebuilt as a Curve",
         ),
         "everyday-mechanism": (
-            "One Frame, Many Moments",
+            "One Frame Is Not One Instant",
             "How a Sensor Scans Time",
             "Why Motion Turns Into Skew",
         ),
@@ -108,12 +108,12 @@ def generate_fixture_covers(store: ProjectStore) -> CoverManifest:
             headline=first,
             subheadline="A moving subject is sampled row by row across time.",
             layout="split-hero",
-            palette="signal-lab",
-            hero={"kind": "scanline", "subject": "blade", "distortion": 0.72},
+            palette="kinetic-pop",
+            hero={"kind": "scanline", "subject": "grid", "distortion": 0.72},
             claim_ids=claim_ids[:6],
             evidence_ids=evidence_ids[:6],
             accessibility_description=(
-                "A straight blade and a scanline-distorted blade appear side by side."
+                "A straight grid and a scanline-skewed grid appear side by side."
             ),
         ),
         CoverCandidate(

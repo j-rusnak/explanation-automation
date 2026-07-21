@@ -44,6 +44,11 @@ def test_fixture_cover_candidates_are_distinct_linked_and_selectable(tmp_path: P
     assert len({item.headline for item in covers.candidates}) == 3
     assert len({item.layout for item in covers.candidates}) == 3
     assert all(item.claim_ids and item.evidence_ids for item in covers.candidates)
+    proof_first = covers.candidates[0]
+    assert proof_first.palette == "kinetic-pop"
+    assert proof_first.headline == "One Frame Is Not One Instant"
+    assert proof_first.hero.kind == "scanline"
+    assert proof_first.hero.subject == "grid"
 
     selected = select_cover(store, "cover-scanline")
     payload = selected_cover_payload(store)

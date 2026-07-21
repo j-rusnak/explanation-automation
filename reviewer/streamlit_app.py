@@ -176,7 +176,7 @@ AUDIO_RIGHTS_STATUSES = (
     "citation-only",
     "restricted",
 )
-THEMES = ("blueprint", "signal-lab", "technical-editorial")
+THEMES = ("kinetic-pop", "blueprint", "signal-lab", "technical-editorial")
 NARRATION_MODES = ("narrated", "silent-reviewed")
 SYNTHESIS_PROVIDERS = (
     "Kokoro (recommended)",
@@ -185,7 +185,13 @@ SYNTHESIS_PROVIDERS = (
 LAYOUT_PRESETS = ("hero", "full-diagram", "split", "evidence", "numeric", "limitation")
 MOTION_PRESETS = ("calm", "precise", "energetic")
 
-ArtTheme = Literal["midnight", "blueprint", "signal-lab", "technical-editorial"]
+ArtTheme = Literal[
+    "midnight",
+    "kinetic-pop",
+    "blueprint",
+    "signal-lab",
+    "technical-editorial",
+]
 NarrationMode = Literal["narrated", "silent-reviewed"]
 SoundDesignPreset = Literal["subtle", "present"]
 
@@ -306,6 +312,16 @@ def _cover_preview(candidate: CoverCandidate) -> Image.Image:
     """Create a safe, deterministic reviewer still from validated cover data."""
 
     palettes = {
+        "kinetic-pop": {
+            "background": "#0B0D17",
+            "surface": "#171A2E",
+            "text": "#FFF8E7",
+            "muted": "#D4CEE3",
+            "accent": "#24E5FF",
+            "signal": "#FFD84A",
+            "impact": "#FF4F6D",
+            "secondary": "#7657FF",
+        },
         "blueprint": {
             "background": "#071726",
             "surface": "#0F3046",
@@ -342,19 +358,44 @@ def _cover_preview(candidate: CoverCandidate) -> Image.Image:
     draw.text((30, 38), candidate.palette.upper(), fill=colors["accent"], font=small)
     hero = candidate.hero
     if hero.kind == "scanline":
-        draw.line((102, 96, 102, 310), fill=colors["muted"], width=5)
-        for index in range(15):
-            y = 94 + index * 14
-            progress = index / 14
-            shift = int(hero.distortion * progress * progress * 74)
-            draw.line(
-                (218 + shift, y, 278 + shift, y),
-                fill=colors["signal"] if index % 3 == 0 else colors["accent"],
-                width=7,
-            )
-        draw.line((46, 204, 160, 204), fill=colors["accent"], width=8)
-        draw.text((40, 322), "STRAIGHT", fill=colors["muted"], font=small)
-        draw.text((215, 322), "ROW SAMPLES", fill=colors["muted"], font=small)
+        if hero.subject == "grid":
+            for index in range(7):
+                x = 45 + index * 17
+                draw.line((x, 112, x, 278), fill=colors["accent"], width=2)
+                draw.line(
+                    (194 + index * 17, 112, 194 + index * 17 + 46, 278),
+                    fill=colors.get("impact", colors["signal"]),
+                    width=2,
+                )
+            for index in range(10):
+                y = 112 + index * 18
+                shift = int(hero.distortion * (index / 9) * 46)
+                draw.line((45, y, 147, y), fill=colors["accent"], width=2)
+                draw.line(
+                    (194 + shift, y, 296 + shift, y),
+                    fill=(
+                        colors["signal"]
+                        if index % 3 == 0
+                        else colors.get("secondary", colors["accent"])
+                    ),
+                    width=3,
+                )
+            draw.text((42, 306), "MOVING GRID", fill=colors["muted"], font=small)
+            draw.text((196, 306), "SCANNED FRAME", fill=colors["muted"], font=small)
+        else:
+            draw.line((102, 96, 102, 310), fill=colors["muted"], width=5)
+            for index in range(15):
+                y = 94 + index * 14
+                progress = index / 14
+                shift = int(hero.distortion * progress * progress * 74)
+                draw.line(
+                    (218 + shift, y, 278 + shift, y),
+                    fill=colors["signal"] if index % 3 == 0 else colors["accent"],
+                    width=7,
+                )
+            draw.line((46, 204, 160, 204), fill=colors["accent"], width=8)
+            draw.text((40, 322), "STRAIGHT", fill=colors["muted"], font=small)
+            draw.text((215, 322), "ROW SAMPLES", fill=colors["muted"], font=small)
     elif hero.kind == "comparison":
         draw.rounded_rectangle((42, 90, 172, 308), radius=14, outline=colors["muted"], width=2)
         draw.rounded_rectangle((188, 90, 318, 308), radius=14, outline=colors["accent"], width=3)
@@ -1079,9 +1120,10 @@ def _show_project(store: ProjectStore) -> None:
         index=THEMES.index(current_theme),
         key="project-theme",
         help=(
-            "Blueprint emphasizes diagrams, Signal Lab emphasizes active measurements, and "
-            "Technical Editorial uses a warmer publication-like treatment. Midnight is the "
-            "legacy compatibility theme."
+            "Kinetic Pop is the recommended high-energy, evidence-first treatment. Blueprint "
+            "emphasizes diagrams, Signal Lab emphasizes active measurements, and Technical "
+            "Editorial uses a warmer publication-like treatment. Midnight remains a legacy "
+            "compatibility theme."
         ),
     )
     _perform(

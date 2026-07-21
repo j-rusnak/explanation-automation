@@ -68,6 +68,7 @@
         },
         "palette": {
           "enum": [
+            "kinetic-pop",
             "blueprint",
             "signal-lab",
             "technical-editorial"

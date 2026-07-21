@@ -1,4 +1,8 @@
-export type ThemeName = "blueprint" | "signal-lab" | "technical-editorial";
+export type ThemeName =
+  | "kinetic-pop"
+  | "blueprint"
+  | "signal-lab"
+  | "technical-editorial";
 
 export type ThemeTokens = {
   background: string;
@@ -14,10 +18,27 @@ export type ThemeTokens = {
   font: string;
   headingFont: string;
   radius: number;
-  motif: "grid" | "signal" | "paper";
+  motif: "pop" | "grid" | "signal" | "paper";
 };
 
 export const themes: Record<ThemeName, ThemeTokens> = {
+  "kinetic-pop": {
+    background: "#0B0D17",
+    backgroundCss:
+      "radial-gradient(circle at 86% 8%, #7657FFaa 0, transparent 34%), radial-gradient(circle at 10% 82%, #FF4F6D77 0, transparent 28%), linear-gradient(145deg, #0B0D17 0%, #171A2E 58%, #0B0D17 100%)",
+    panel: "#171A2E",
+    panelBorder: "#7657FF",
+    text: "#FFF8E7",
+    muted: "#D4CEE3",
+    accent: "#24E5FF",
+    warning: "#FFD84A",
+    danger: "#FF4F6D",
+    citation: "#B8AAFF",
+    font: '"Atkinson Hyperlegible", Arial, Helvetica, sans-serif',
+    headingFont: '"Atkinson Hyperlegible", Arial, Helvetica, sans-serif',
+    radius: 18,
+    motif: "pop",
+  },
   blueprint: {
     background: "#071124",
     backgroundCss:

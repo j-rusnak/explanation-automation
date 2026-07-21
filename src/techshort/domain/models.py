@@ -89,7 +89,13 @@ class ProjectManifest(StrictModel):
     width: int = 1080
     height: int = 1920
     fps: int = 30
-    theme: Literal["midnight", "blueprint", "signal-lab", "technical-editorial"] = "blueprint"
+    theme: Literal[
+        "midnight",
+        "kinetic-pop",
+        "blueprint",
+        "signal-lab",
+        "technical-editorial",
+    ] = "kinetic-pop"
     pacing: PacingProfile = "high-retention"
     safe_zone: SafeZoneInsets = Field(default_factory=SafeZoneInsets)
     narration_mode: Literal["narrated", "silent-reviewed"] = "narrated"
@@ -429,7 +435,7 @@ class VisualSpec(BaseModel):
         return self
 
 
-ThemeName = Literal["blueprint", "signal-lab", "technical-editorial"]
+ThemeName = Literal["kinetic-pop", "blueprint", "signal-lab", "technical-editorial"]
 LayoutPreset = Literal["hero", "full-diagram", "split", "evidence", "numeric", "limitation"]
 MotionPreset = Literal["calm", "precise", "energetic"]
 
