@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from techshort.alignment import active_narration_timing
 from techshort.audio.local_tts import (
     LocalNarrationUnavailable,
     WindowsSapiNarrationProvider,
@@ -41,21 +42,21 @@ def test_repository_sapi_helper_produces_real_local_wav() -> None:
         )
         metadata = json.loads(
             _run_sapi(
-            [
-                "-Action",
-                "synthesize",
-                "-InputText",
-                str(text),
-                "-OutputWav",
-                str(output),
-                "-Voice",
-                voice.name,
-                "-Rate",
-                "1",
-                "-Volume",
-                "100",
-            ],
-            timeout=30,
+                [
+                    "-Action",
+                    "synthesize",
+                    "-InputText",
+                    str(text),
+                    "-OutputWav",
+                    str(output),
+                    "-Voice",
+                    voice.name,
+                    "-Rate",
+                    "1",
+                    "-Volume",
+                    "100",
+                ],
+                timeout=30,
             )
         )
 
@@ -106,3 +107,11 @@ def test_full_approved_script_synthesis_registers_media_and_receipt(tmp_path: Pa
     assert receipt.output_duration_seconds == pytest.approx(result.duration_seconds, abs=0.01)
     assert receipt.rights_status == "unknown"
     assert active_synthesis_receipt(store) == (receipt, result.receipt_path)
+    assert all(segment.engine_events for segment in receipt.segments)
+    timing = active_narration_timing(store)
+    assert timing is not None
+    assert timing[0].synthesis_id == receipt.synthesis_id
+    assert timing[0].source == "sapi-speak-progress"
+    assert timing[0].quality in {"engine-reported", "mixed"}
+    assert timing[0].alignment.observation_source == "sapi-speak-progress"
+    assert timing[0].alignment.coverage >= 0.9

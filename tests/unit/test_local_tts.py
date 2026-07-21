@@ -21,7 +21,9 @@ from techshort.audio import (
 from techshort.audio.local_tts import (
     SEGMENT_PAUSE_FRAMES,
     _concatenate_pcm,
+    _fit_sapi_progress_positions,
     _parse_sapi_synthesis_output,
+    _RawEngineEvent,
     _silence_trim_bounds,
     _verify_engine_event_text,
     _write_synthesis_receipt,
@@ -213,6 +215,73 @@ def test_sapi_progress_parser_uses_raw_utf16_ranges_and_rejects_truncation() -> 
             expected_output_name="segment.wav",
             approved_text=text,
         )
+
+
+def test_sapi_progress_parser_maps_promptbuilder_offsets_to_approved_text() -> None:
+    text = "A rolling-shutter frame is one frozen instant."
+    payload = {
+        "voice": "Fixture Voice",
+        "rate": 2,
+        "volume": 100,
+        "output": "segment.wav",
+        "progress": [
+            {
+                "spokenText": "A",
+                "audioPositionSeconds": 0.0,
+                "characterPosition": 82,
+                "characterCount": 1,
+            },
+            {
+                "spokenText": "instant",
+                "audioPositionSeconds": 1.0,
+                "characterPosition": 123,
+                "characterCount": 7,
+            },
+            {
+                "spokenText": "instant",
+                "audioPositionSeconds": 1.2,
+                "characterPosition": 123,
+                "characterCount": 7,
+            },
+        ],
+        "progressTruncated": False,
+    }
+
+    events = _parse_sapi_synthesis_output(
+        json.dumps(payload),
+        expected_voice="Fixture Voice",
+        expected_rate=2,
+        expected_volume=100,
+        expected_output_name="segment.wav",
+        approved_text=text,
+    )
+
+    expected_instant = len(text[: text.index("instant")].encode("utf-16-le")) // 2
+    assert [(event.raw_character_position, event.raw_character_count) for event in events] == [
+        (0, 1),
+        (expected_instant, 7),
+        (expected_instant, 7),
+    ]
+
+
+def test_sapi_progress_clock_is_fitted_inside_verified_pcm_duration() -> None:
+    events = [
+        _RawEngineEvent(word, start, index, len(word))
+        for index, (word, start) in enumerate(
+            [("one", 0.1), ("two", 0.5), ("three", 0.9), ("four", 1.3), ("five", 6.5)]
+        )
+    ]
+
+    positions = _fit_sapi_progress_positions(
+        events,
+        trim_start_seconds=0.05,
+        pcm_duration_seconds=5.0,
+    )
+
+    assert positions == sorted(positions)
+    assert positions[-1] < 5.0
+    assert positions[0] > 0
+    assert (positions[2] - positions[1]) / (positions[1] - positions[0]) == pytest.approx(1)
 
 
 def test_segment_receipt_rejects_traversal_and_event_text_mismatch() -> None:
@@ -446,7 +515,8 @@ def test_synthesis_registers_hash_bound_transcript_and_unresolved_voice_rights(
     timing = active_narration_timing(store)
     assert timing is not None
     assert timing[0].synthesis_id == receipt.synthesis_id
-    assert timing[0].quality == "proportional-fallback"
+    assert timing[0].quality == "engine-reported"
+    assert timing[0].alignment.coverage == 1
     assert result.duration_seconds == pytest.approx(expected_frames / 48_000, abs=1e-9)
     asset = load_model(store.path("assets/asset-manifest.json"), AssetManifest).assets[0]
     assert asset.origin == "local synthetic narration (windows-sapi)"

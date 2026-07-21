@@ -6,6 +6,7 @@ import os
 import platform
 import re
 import shutil
+import statistics
 import subprocess
 import tempfile
 import wave
@@ -301,6 +302,68 @@ def _verify_engine_event_text(
             raise ValueError("speech progress text does not match its approved character range")
 
 
+def _approved_text_event_ranges(
+    approved_text: str,
+    events: list[_RawEngineEvent],
+) -> list[tuple[int, int]]:
+    """Resolve progress events to exact approved-text UTF-16 ranges.
+
+    ``SpeechSynthesizer`` normally reports offsets into the supplied text, but
+    some installed voices report offsets into the SSML generated internally by
+    ``PromptBuilder``. Preserve direct ranges only when every event verifies.
+    Otherwise remap the complete ordered sequence by exact event text. This
+    never adopts engine prose: an event that cannot be found monotonically in
+    the approved segment remains a hard failure.
+    """
+
+    direct_ranges: list[tuple[int, int]] = []
+    direct_valid = True
+    for event in events:
+        try:
+            selected = _utf16_slice(
+                approved_text,
+                event.raw_character_position,
+                event.raw_character_count,
+            )
+        except ValueError:
+            direct_valid = False
+            break
+        if selected != event.spoken_text:
+            direct_valid = False
+            break
+        direct_ranges.append((event.raw_character_position, event.raw_character_count))
+    if direct_valid:
+        return direct_ranges
+
+    mapped: list[tuple[int, int]] = []
+    codepoint_cursor = 0
+    utf16_cursor = 0
+    for index, event in enumerate(events):
+        if (
+            index
+            and event.spoken_text == events[index - 1].spoken_text
+            and event.raw_character_position == events[index - 1].raw_character_position
+            and event.raw_character_count == events[index - 1].raw_character_count
+        ):
+            # Some SAPI voices emit one SpeakProgress callback per spoken part
+            # of a hyphenated token while repeating the compound text and SSML
+            # range. Preserve both audio observations against the same verified
+            # approved-text range; downstream alignment accounts for duplicates.
+            mapped.append(mapped[-1])
+            continue
+        start = approved_text.find(event.spoken_text, codepoint_cursor)
+        if start < 0:
+            raise LocalNarrationUnavailable(
+                "System.Speech progress text cannot be mapped to the approved segment"
+            )
+        utf16_cursor += len(approved_text[codepoint_cursor:start].encode("utf-16-le")) // 2
+        count = len(event.spoken_text.encode("utf-16-le")) // 2
+        mapped.append((utf16_cursor, count))
+        codepoint_cursor = start + len(event.spoken_text)
+        utf16_cursor += count
+    return mapped
+
+
 def _parse_sapi_synthesis_output(
     output: str,
     *,
@@ -371,14 +434,6 @@ def _parse_sapi_synthesis_output(
             or character_count <= 0
         ):
             raise LocalNarrationUnavailable("System.Speech returned invalid progress metadata")
-        try:
-            selected = _utf16_slice(approved_text, character_position, character_count)
-        except ValueError as exc:
-            raise LocalNarrationUnavailable(str(exc)) from exc
-        if selected != spoken_text:
-            raise LocalNarrationUnavailable(
-                "System.Speech progress text does not match the approved segment"
-            )
         events.append(
             _RawEngineEvent(
                 spoken_text=spoken_text,
@@ -393,7 +448,51 @@ def _parse_sapi_synthesis_output(
         event.raw_character_position for event in events
     ):
         raise LocalNarrationUnavailable("System.Speech progress metadata is out of order")
-    return events
+    approved_ranges = _approved_text_event_ranges(approved_text, events)
+    return [
+        _RawEngineEvent(
+            spoken_text=event.spoken_text,
+            audio_position_seconds=event.audio_position_seconds,
+            raw_character_position=position,
+            raw_character_count=count,
+        )
+        for event, (position, count) in zip(events, approved_ranges, strict=True)
+    ]
+
+
+def _fit_sapi_progress_positions(
+    events: list[_RawEngineEvent],
+    *,
+    trim_start_seconds: float,
+    pcm_duration_seconds: float,
+) -> list[float]:
+    """Fit a voice engine's monotonic clock into the verified PCM interval.
+
+    Some Windows voices report ``AudioPosition`` in an internal clock that can
+    run longer than the WAV they emit. When that happens, preserve the engine's
+    relative cadence and apply one deterministic affine scale. A median positive
+    event gap reserves room for the final spoken token instead of pinning it to
+    the PCM boundary.
+    """
+
+    if pcm_duration_seconds <= 0:
+        raise ValueError("normalized narration segment duration must be positive")
+    positions = [max(0.0, event.audio_position_seconds - trim_start_seconds) for event in events]
+    if not positions or positions[-1] < pcm_duration_seconds:
+        return positions
+    positive_gaps = [
+        right - left
+        for left, right in zip(positions, positions[1:], strict=False)
+        if right - left > 1e-7
+    ]
+    tail = (
+        statistics.median(positive_gaps) if positive_gaps else max(0.05, pcm_duration_seconds * 0.1)
+    )
+    engine_end = positions[-1] + tail
+    if engine_end <= 0:
+        raise ValueError("System.Speech event clock cannot be normalized")
+    scale = pcm_duration_seconds / engine_end
+    return [min(max(0.0, pcm_duration_seconds - 1e-6), position * scale) for position in positions]
 
 
 def active_synthesis_receipt(
@@ -773,20 +872,19 @@ class WindowsSapiNarrationProvider:
                 trim_start = _normalize_audio(raw_path, normalized_path)
                 info = _pcm_info(normalized_path)
                 output_hash = sha256_file(normalized_path)
+                fitted_positions = _fit_sapi_progress_positions(
+                    raw_events,
+                    trim_start_seconds=trim_start,
+                    pcm_duration_seconds=info.duration_seconds,
+                )
                 events = [
                     NarrationEngineEvent(
                         spoken_text=event.spoken_text,
-                        normalized_start_seconds=round(
-                            min(
-                                info.duration_seconds,
-                                max(0.0, event.audio_position_seconds - trim_start),
-                            ),
-                            6,
-                        ),
+                        normalized_start_seconds=round(position, 6),
                         raw_character_position=event.raw_character_position,
                         raw_character_count=event.raw_character_count,
                     )
-                    for event in raw_events
+                    for event, position in zip(raw_events, fitted_positions, strict=True)
                 ]
                 segment_receipts.append(
                     NarrationSegmentReceipt(

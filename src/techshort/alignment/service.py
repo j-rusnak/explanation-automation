@@ -193,19 +193,16 @@ def verify_narration_timing(
     if synthesis is None:
         if manifest.synthesis_id is not None or manifest.synthesis_receipt_hash is not None:
             raise ValueError("narration timing references an inactive synthesis receipt")
-    elif (
-        manifest.synthesis_id != synthesis[0].synthesis_id
-        or manifest.synthesis_receipt_hash != sha256_file(synthesis[1])
-    ):
+    elif manifest.synthesis_id != synthesis[
+        0
+    ].synthesis_id or manifest.synthesis_receipt_hash != sha256_file(synthesis[1]):
         raise ValueError("narration timing does not match the active synthesis receipt")
     if manifest.alignment.observation_source == "sapi-speak-progress" and synthesis is None:
         raise ValueError("SAPI narration timing requires current synthesis provenance")
     return manifest
 
 
-def register_narration_timing(
-    store: ProjectStore, manifest: NarrationTimingManifest
-) -> Path:
+def register_narration_timing(store: ProjectStore, manifest: NarrationTimingManifest) -> Path:
     """Validate, archive, atomically persist, and activate narration timing."""
 
     verify_narration_timing(store, manifest)
@@ -293,16 +290,30 @@ def register_active_synthesis_timing(store: ProjectStore) -> NarrationTimingMani
     if has_complete_events:
         offset = 0.0
         for segment_index, segment in enumerate(segments):
-            for event in segment.engine_events:
+            events = list(segment.engine_events)
+            for event_index, event in enumerate(events):
                 absolute_start = min(
                     max(0.0, total_duration - 1e-6),
                     offset + event.normalized_start_seconds,
+                )
+                next_later_start = next(
+                    (
+                        later.normalized_start_seconds
+                        for later in events[event_index + 1 :]
+                        if later.normalized_start_seconds > event.normalized_start_seconds + 1e-7
+                    ),
+                    segment.duration_seconds,
+                )
+                absolute_end = min(
+                    offset + segment.duration_seconds,
+                    offset + next_later_start,
                 )
                 observations.append(
                     EngineWordObservation(
                         sequence_index=len(observations),
                         text=event.spoken_text,
                         start_seconds=absolute_start,
+                        end_seconds=(absolute_end if absolute_end > absolute_start else None),
                         character_position=event.raw_character_position,
                         character_count=event.raw_character_count,
                     )
@@ -364,7 +375,7 @@ def _surface_token_groups(tokens: list[str]) -> list[int]:
     for token in tokens:
         groups.append(group)
         group_size += 1
-        if group_size >= 3 or token.rstrip('"\'\u2019\u201d)]}').endswith(
+        if group_size >= 3 or token.rstrip("\"'\u2019\u201d)]}").endswith(
             (",", ";", ":", ".", "?", "!")
         ):
             group = min(19, group + 1)
@@ -384,7 +395,11 @@ def _proportional_caption_tokens(cue: CaptionCue, tokens: list[str]) -> list[dic
     for index, (token, weight) in enumerate(zip(tokens, weights, strict=True)):
         start = cue.start + duration * elapsed_weight / total_weight
         elapsed_weight += weight
-        end = cue.end if index == len(tokens) - 1 else cue.start + duration * elapsed_weight / total_weight
+        end = (
+            cue.end
+            if index == len(tokens) - 1
+            else cue.start + duration * elapsed_weight / total_weight
+        )
         result.append({"text": token, "start": start, "end": end, "group": groups[index]})
     return result
 
@@ -417,9 +432,7 @@ def _timed_caption_tokens(
             return _proportional_caption_tokens(cue, tokens), cursor, False
         payload.append({"text": token, "start": start, "end": end, "group": groups[index]})
         candidate_cursor += len(token_words)
-    uses_verified_observations = all(
-        word.quality != "proportional-fallback" for word in candidate
-    )
+    uses_verified_observations = all(word.quality != "proportional-fallback" for word in candidate)
     return payload, cursor + len(normalized), uses_verified_observations
 
 
