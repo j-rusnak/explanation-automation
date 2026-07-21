@@ -1,10 +1,184 @@
 {
+  "$defs": {
+    "NarrationConcatenationReceipt": {
+      "additionalProperties": false,
+      "description": "Deterministic PCM concatenation parameters for normalized segments.",
+      "properties": {
+        "algorithm": {
+          "const": "pcm-s16le-zero-pause-v1",
+          "default": "pcm-s16le-zero-pause-v1",
+          "title": "Algorithm",
+          "type": "string"
+        },
+        "channels": {
+          "const": 1,
+          "default": 1,
+          "title": "Channels",
+          "type": "integer"
+        },
+        "output_duration_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Output Duration Seconds",
+          "type": "number"
+        },
+        "output_frame_count": {
+          "exclusiveMinimum": 0,
+          "title": "Output Frame Count",
+          "type": "integer"
+        },
+        "pause_frames": {
+          "const": 6720,
+          "default": 6720,
+          "title": "Pause Frames",
+          "type": "integer"
+        },
+        "pause_milliseconds": {
+          "const": 140,
+          "default": 140,
+          "title": "Pause Milliseconds",
+          "type": "integer"
+        },
+        "sample_rate_hz": {
+          "const": 48000,
+          "default": 48000,
+          "title": "Sample Rate Hz",
+          "type": "integer"
+        },
+        "sample_width_bytes": {
+          "const": 2,
+          "default": 2,
+          "title": "Sample Width Bytes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "output_frame_count",
+        "output_duration_seconds"
+      ],
+      "title": "NarrationConcatenationReceipt",
+      "type": "object"
+    },
+    "NarrationEngineEvent": {
+      "additionalProperties": false,
+      "description": "One bounded word-progress event emitted by the local speech engine.",
+      "properties": {
+        "normalized_start_seconds": {
+          "minimum": 0,
+          "title": "Normalized Start Seconds",
+          "type": "number"
+        },
+        "raw_character_count": {
+          "exclusiveMinimum": 0,
+          "title": "Raw Character Count",
+          "type": "integer"
+        },
+        "raw_character_position": {
+          "minimum": 0,
+          "title": "Raw Character Position",
+          "type": "integer"
+        },
+        "spoken_text": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Spoken Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "spoken_text",
+        "normalized_start_seconds",
+        "raw_character_position",
+        "raw_character_count"
+      ],
+      "title": "NarrationEngineEvent",
+      "type": "object"
+    },
+    "NarrationSegmentReceipt": {
+      "additionalProperties": false,
+      "description": "Exact normalized audio and engine provenance for one approved segment.",
+      "properties": {
+        "approval_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Approval Hash",
+          "type": "string"
+        },
+        "duration_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Duration Seconds",
+          "type": "number"
+        },
+        "engine_events": {
+          "items": {
+            "$ref": "#/$defs/NarrationEngineEvent"
+          },
+          "maxItems": 4096,
+          "minItems": 1,
+          "title": "Engine Events",
+          "type": "array"
+        },
+        "frame_count": {
+          "exclusiveMinimum": 0,
+          "title": "Frame Count",
+          "type": "integer"
+        },
+        "order": {
+          "minimum": 0,
+          "title": "Order",
+          "type": "integer"
+        },
+        "output_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Output Hash",
+          "type": "string"
+        },
+        "output_path": {
+          "title": "Output Path",
+          "type": "string"
+        },
+        "segment_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Segment Id",
+          "type": "string"
+        },
+        "text_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Text Hash",
+          "type": "string"
+        }
+      },
+      "required": [
+        "segment_id",
+        "order",
+        "text_hash",
+        "approval_hash",
+        "output_path",
+        "output_hash",
+        "frame_count",
+        "duration_seconds",
+        "engine_events"
+      ],
+      "title": "NarrationSegmentReceipt",
+      "type": "object"
+    }
+  },
   "additionalProperties": false,
   "description": "Strict provenance record for one registered synthetic narration.",
   "properties": {
     "audio_asset_id": {
       "title": "Audio Asset Id",
       "type": "string"
+    },
+    "concatenation": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NarrationConcatenationReceipt"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "created_at": {
       "format": "date-time",
@@ -73,8 +247,11 @@
       "type": "string"
     },
     "schema_version": {
-      "const": "1.0.0",
       "default": "1.0.0",
+      "enum": [
+        "1.0.0",
+        "1.1.0"
+      ],
       "title": "Schema Version",
       "type": "string"
     },
@@ -104,6 +281,14 @@
       "default": 140,
       "title": "Segment Pause Milliseconds",
       "type": "integer"
+    },
+    "segments": {
+      "items": {
+        "$ref": "#/$defs/NarrationSegmentReceipt"
+      },
+      "maxItems": 4096,
+      "title": "Segments",
+      "type": "array"
     },
     "synthesis_id": {
       "pattern": "^synthesis-[0-9a-f]{16}$",

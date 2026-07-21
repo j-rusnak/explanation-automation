@@ -7,7 +7,10 @@ from techshort.audio.local_tts import (
     synthesize_local_narration,
 )
 from techshort.audio.providers import (
+    NarrationConcatenationReceipt,
+    NarrationEngineEvent,
     NarrationProvider,
+    NarrationSegmentReceipt,
     NarrationSynthesisReceipt,
     NarrationVoice,
     SynthesizedNarration,
@@ -36,6 +39,9 @@ __all__ = [
     "set_narration_mode",
     "LocalNarrationUnavailable",
     "NarrationProvider",
+    "NarrationEngineEvent",
+    "NarrationSegmentReceipt",
+    "NarrationConcatenationReceipt",
     "NarrationSynthesisReceipt",
     "NarrationVoice",
     "SynthesizedNarration",

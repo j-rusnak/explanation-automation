@@ -62,4 +62,9 @@ def test_new_persisted_workflow_models_are_strict_and_exported(
     assert model in MODELS
     schema = model.model_json_schema()
     assert schema["additionalProperties"] is False
-    assert schema["properties"]["schema_version"]["const"] == "1.0.0"
+    version = schema["properties"]["schema_version"]
+    if model is NarrationSynthesisReceipt:
+        assert version["enum"] == ["1.0.0", "1.1.0"]
+        assert version["default"] == "1.0.0"
+    else:
+        assert version["const"] == "1.0.0"
