@@ -46,9 +46,15 @@ def test_offline_pipeline_through_pre_render_export_gate(tmp_path: Path) -> None
     approve_script(store, "test")
     storyboard = fixture_storyboard(store)
     assert len({scene.primitive for scene in storyboard.scenes}) >= 7
-    assert {"RasterScan", "EvidenceHighlight", "AnnotatedChart"}.issubset(
-        {scene.primitive for scene in storyboard.scenes}
-    )
+    assert {
+        "RasterScan",
+        "MechanismDiagram",
+        "GridWarp",
+        "SourceReceipt",
+        "ParameterSimulation",
+        "Comparison",
+        "LimitationCard",
+    }.issubset({scene.primitive for scene in storyboard.scenes})
     covers = generate_fixture_covers(store)
     assert len(covers.candidates) == 3
     select_cover(store, "cover-scanline")
