@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SAFE_ZONE } from "../schemas/project";
-import { coverPaddingFor } from "./Cover";
+import { kineticChapterFor } from "../scenes/shared";
+import { KINETIC_COVER_CHAPTER, coverPaddingFor } from "./Cover";
 
 describe("short-form cover layout", () => {
   it("keeps every cover footer and badge inside the shared platform safe zone", () => {
@@ -22,5 +23,15 @@ describe("short-form cover layout", () => {
       bottom: 327,
       left: 73,
     });
+  });
+
+  it("shares the first scene's semantic backdrop for visual continuity", () => {
+    expect(KINETIC_COVER_CHAPTER).toEqual(
+      kineticChapterFor({
+        layout: "hero",
+        order: 0,
+        primitive: "KineticText",
+      }),
+    );
   });
 });

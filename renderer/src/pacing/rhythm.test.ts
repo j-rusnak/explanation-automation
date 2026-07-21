@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   coldOpenSignal,
   captionMotionFor,
+  kineticEntrancePresentationFor,
+  kineticMicroBeatFrames,
+  kineticMicroBeatSignal,
+  kineticScenePresentationFor,
   microBeatFrames,
   microBeatSignal,
   pacingProfiles,
@@ -42,6 +46,50 @@ describe("retention pacing", () => {
     expect(microBeatSignal(beat, 180, 30, "brisk")).toBe(1);
     expect(microBeatSignal(beat - 1, 180, 30, "brisk")).toBeGreaterThan(0.8);
     expect(microBeatSignal(beat - 8, 180, 30, "brisk")).toBe(0);
+  });
+
+  it("spaces Kinetic Pop camera beats between 1.5 and 3 seconds", () => {
+    for (const durationSeconds of [3, 4, 5, 6, 7, 9, 12]) {
+      const durationFrames = durationSeconds * 30;
+      const beats = kineticMicroBeatFrames(durationFrames, 30);
+      const boundaries = [0, ...beats, durationFrames];
+      for (let index = 1; index < boundaries.length; index += 1) {
+        const gapSeconds = (boundaries[index]! - boundaries[index - 1]!) / 30;
+        expect(gapSeconds).toBeGreaterThanOrEqual(1.5);
+        expect(gapSeconds).toBeLessThanOrEqual(3);
+      }
+    }
+    expect(kineticMicroBeatFrames(75, 30)).toEqual([]);
+  });
+
+  it("uses broad bounded Kinetic Pop reframes without opacity flashes", () => {
+    const beat = kineticMicroBeatFrames(180, 30)[0]!;
+    expect(kineticMicroBeatSignal(beat, 180, 30)).toBe(1);
+    expect(kineticMicroBeatSignal(beat - 1, 180, 30)).toBeGreaterThan(0.9);
+    expect(kineticMicroBeatSignal(beat - 11, 180, 30)).toBe(0);
+
+    const presentation = kineticScenePresentationFor(
+      beat,
+      180,
+      30,
+      "energetic",
+      0,
+    );
+    expect(presentation.scale).toBeGreaterThan(1);
+    expect(presentation.scale).toBeLessThanOrEqual(1.028);
+    expect(Math.abs(presentation.translateX)).toBeLessThanOrEqual(17);
+    expect(Math.abs(presentation.translateY)).toBeLessThanOrEqual(11);
+
+    expect(kineticEntrancePresentationFor(0, 6, 1)).toEqual({
+      scale: 0.972,
+      translateX: -28,
+      translateY: 18,
+    });
+    expect(kineticEntrancePresentationFor(6, 6, 1)).toEqual({
+      scale: 1,
+      translateX: -0,
+      translateY: 0,
+    });
   });
 
   it("makes the cold open immediate and deterministic", () => {

@@ -96,6 +96,86 @@ export const microBeatSignal = (
   );
 };
 
+/**
+ * Kinetic Pop uses fewer, larger state changes than the ambient pacing
+ * decorations. Dividing the scene into equal sections keeps every interior
+ * beat 1.5–2.5 seconds from its neighbours for normal explainer scenes while
+ * avoiding a gratuitous beat in shots shorter than three seconds.
+ */
+export const kineticMicroBeatFrames = (
+  durationFrames: number,
+  fps: number,
+): number[] => {
+  if (durationFrames < Math.round(fps * 3)) return [];
+  const sections = Math.max(2, Math.ceil(durationFrames / (fps * 2.5)));
+  return Array.from({ length: sections - 1 }, (_, index) =>
+    Math.round((durationFrames * (index + 1)) / sections),
+  );
+};
+
+export const kineticMicroBeatSignal = (
+  frame: number,
+  durationFrames: number,
+  fps: number,
+): number => {
+  // A broad 0.72-second focus movement reads as a camera reframe, not a flash.
+  const halfWidth = Math.max(1, Math.round(fps * 0.36));
+  return kineticMicroBeatFrames(durationFrames, fps).reduce(
+    (strongest, beat) => {
+      const distance = Math.abs(frame - beat);
+      const linear = Math.max(0, 1 - distance / halfWidth);
+      const eased = linear * linear * (3 - 2 * linear);
+      return Math.max(strongest, eased);
+    },
+    0,
+  );
+};
+
+export type KineticScenePresentation = {
+  scale: number;
+  translateX: number;
+  translateY: number;
+  beat: number;
+};
+
+export const kineticScenePresentationFor = (
+  frame: number,
+  durationFrames: number,
+  fps: number,
+  motion: SceneData["motion"],
+  sceneOrder: number,
+): KineticScenePresentation => {
+  const progress = sceneProgressFor(frame, durationFrames);
+  const beat = kineticMicroBeatSignal(frame, durationFrames, fps);
+  const direction = sceneOrder % 2 === 0 ? 1 : -1;
+  const intensity =
+    motion === "calm" ? 0.56 : motion === "energetic" ? 1 : 0.78;
+  return {
+    scale: 1 + (progress * 0.012 + beat * 0.016) * intensity,
+    translateX: direction * (progress * 8 + beat * 9) * intensity,
+    translateY: -(progress * 5 + beat * 6) * intensity,
+    beat,
+  };
+};
+
+export const kineticEntrancePresentationFor = (
+  frame: number,
+  transitionFrames: number,
+  sceneOrder: number,
+): Pick<KineticScenePresentation, "scale" | "translateX" | "translateY"> => {
+  const linear = Math.max(
+    0,
+    Math.min(1, frame / Math.max(1, transitionFrames)),
+  );
+  const entrance = linear * linear * (3 - 2 * linear);
+  const direction = sceneOrder % 2 === 0 ? 1 : -1;
+  return {
+    scale: 0.972 + entrance * 0.028,
+    translateX: direction * (1 - entrance) * 28,
+    translateY: (1 - entrance) * 18,
+  };
+};
+
 export const coldOpenSignal = (frame: number, fps: number): number =>
   Math.max(0, Math.min(1, 1 - frame / Math.max(1, Math.round(fps * 0.7))));
 

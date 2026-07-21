@@ -1,9 +1,10 @@
-import React from "react";
+import React, { createContext, useContext } from "react";
 import { interpolate, useCurrentFrame, useVideoConfig } from "remotion";
 import type { SceneData } from "../schemas/project";
 import { getTheme, type ThemeName, type ThemeTokens } from "../themes/tokens";
 import {
   coldOpenSignal,
+  kineticScenePresentationFor,
   microBeatSignal,
   pacingProfiles,
   patternInterruptFor,
@@ -24,6 +25,23 @@ export type ColorToken =
   | "citation";
 
 const SAFE_COLOR = /^#[0-9a-f]{6}$/i;
+
+const ThemeGrammarContext = createContext<ThemeName>("blueprint");
+
+export const ThemeGrammarProvider: React.FC<{
+  themeName: ThemeName;
+  children: React.ReactNode;
+}> = ({ themeName, children }) => (
+  <ThemeGrammarContext.Provider value={themeName}>
+    {children}
+  </ThemeGrammarContext.Provider>
+);
+
+export const useThemeGrammar = (): ThemeName => useContext(ThemeGrammarContext);
+
+export const isKineticPopTheme = (name: ThemeName): boolean =>
+  name === "kinetic-pop";
+
 export const sceneTheme = (scene: SceneData, name: ThemeName): ThemeTokens => {
   const base = getTheme(name);
   const override = scene.theme_overrides;
@@ -39,6 +57,41 @@ export const sceneTheme = (scene: SceneData, name: ThemeName): ThemeTokens => {
 
 export const color = (tokens: ThemeTokens, token: ColorToken): string =>
   tokens[token];
+
+export type KineticChapter = {
+  primary: ColorToken;
+  secondary: ColorToken;
+  anchor: "left" | "right";
+};
+
+type KineticChapterInput = Pick<SceneData, "layout" | "order" | "primitive">;
+
+export const kineticChapterFor = (
+  scene: KineticChapterInput,
+): KineticChapter => {
+  if (scene.order === 0) {
+    return { primary: "warning", secondary: "accent", anchor: "right" };
+  }
+  if (scene.layout === "limitation" || scene.primitive === "LimitationCard") {
+    return { primary: "danger", secondary: "warning", anchor: "left" };
+  }
+  if (
+    scene.layout === "evidence" ||
+    scene.primitive === "SourceReceipt" ||
+    scene.primitive === "EvidenceHighlight"
+  ) {
+    return { primary: "citation", secondary: "warning", anchor: "right" };
+  }
+  if (scene.layout === "numeric") {
+    return { primary: "warning", secondary: "accent", anchor: "left" };
+  }
+  const chapters: KineticChapter[] = [
+    { primary: "accent", secondary: "citation", anchor: "left" },
+    { primary: "citation", secondary: "accent", anchor: "right" },
+    { primary: "warning", secondary: "accent", anchor: "left" },
+  ];
+  return chapters[(scene.order - 1) % chapters.length]!;
+};
 
 const revealWindow = (scene: SceneData, fps: number): [number, number] => {
   const factor =
@@ -82,24 +135,133 @@ const motifStyle = (tokens: ThemeTokens): React.CSSProperties => {
   };
 };
 
+export const KineticBackdrop: React.FC<{
+  chapter: KineticChapter;
+  durationSeconds: number;
+  motion: SceneData["motion"];
+  sceneOrder: number;
+  tokens: ThemeTokens;
+}> = ({ chapter, durationSeconds, motion, sceneOrder, tokens }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const durationFrames = Math.max(1, Math.round(durationSeconds * fps));
+  const camera = kineticScenePresentationFor(
+    frame,
+    durationFrames,
+    fps,
+    motion,
+    sceneOrder,
+  );
+  const primary = color(tokens, chapter.primary);
+  const secondary = color(tokens, chapter.secondary);
+  const rightAnchored = chapter.anchor === "right";
+  return (
+    <div
+      aria-hidden="true"
+      data-kinetic-chapter={`${chapter.primary}-${chapter.secondary}`}
+      style={{
+        position: "absolute",
+        inset: -80,
+        zIndex: 0,
+        overflow: "hidden",
+        pointerEvents: "none",
+        background: `linear-gradient(145deg, ${tokens.background} 0%, ${tokens.panel} 56%, ${tokens.background} 100%)`,
+      }}
+    >
+      <div
+        style={{
+          position: "absolute",
+          width: 900,
+          height: 900,
+          top: -260 + camera.translateY * 1.4,
+          [rightAnchored ? "right" : "left"]: -320 + camera.translateX * 1.8,
+          borderRadius: "50%",
+          background: `radial-gradient(circle, ${primary}d9 0%, ${primary}73 34%, ${primary}00 72%)`,
+          transform: `scale(${1 + camera.beat * 0.035})`,
+        }}
+      />
+      <div
+        style={{
+          position: "absolute",
+          width: 760,
+          height: 760,
+          left: rightAnchored ? -310 : 650,
+          bottom: -280 - camera.translateY,
+          borderRadius: "42% 58% 63% 37%",
+          background: `radial-gradient(circle, ${secondary}a8 0%, ${secondary}52 38%, ${secondary}00 72%)`,
+          transform: `rotate(${rightAnchored ? -12 : 12}deg) scale(${1 + camera.beat * 0.025})`,
+        }}
+      />
+      <div
+        style={{
+          position: "absolute",
+          left: -250,
+          right: -250,
+          top: 780 + camera.translateY * 2,
+          height: 210,
+          background: `linear-gradient(90deg, transparent 0%, ${primary}9c 34%, ${secondary}7d 72%, transparent 100%)`,
+          transform: `rotate(${rightAnchored ? -9 : 9}deg) translateX(${camera.translateX * 2}px)`,
+          clipPath: "polygon(0 42%, 100% 0, 100% 58%, 0 100%)",
+        }}
+      />
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          opacity: 0.16,
+          backgroundImage: `radial-gradient(${tokens.text} 1.4px, transparent 1.4px)`,
+          backgroundSize: "34px 34px",
+          transform: `translate(${camera.translateX * 0.45}px, ${camera.translateY * 0.45}px)`,
+          maskImage:
+            "linear-gradient(125deg, transparent 6%, #000 35%, #000 66%, transparent 94%)",
+        }}
+      />
+    </div>
+  );
+};
+
 export const SceneHeadline: React.FC<{
   scene: SceneData;
   tokens: ThemeTokens;
   eyebrow?: string;
 }> = ({ scene, tokens, eyebrow }) => {
   const frame = useCurrentFrame();
+  const themeName = useThemeGrammar();
+  const kinetic = isKineticPopTheme(themeName);
+  const chapter = kineticChapterFor(scene);
+  const chapterColor = color(tokens, chapter.primary);
   const introFrames = scene.order === 0 ? 8 : 14;
   const accentProgress = Math.max(0, Math.min(1, frame / introFrames));
   return (
-    <div style={{ maxWidth: scene.layout === "full-diagram" ? 930 : 890 }}>
+    <div
+      style={{
+        maxWidth: kinetic
+          ? scene.layout === "full-diagram"
+            ? 970
+            : 920
+          : scene.layout === "full-diagram"
+            ? 930
+            : 890,
+        alignSelf: kinetic && scene.order % 2 === 1 ? "flex-end" : undefined,
+        transform:
+          kinetic && scene.order % 2 === 1 ? "translateX(22px)" : undefined,
+        position: "relative",
+      }}
+    >
       {eyebrow ? (
         <div
           style={{
-            color: tokens.accent,
-            fontSize: 23,
-            fontWeight: 700,
-            letterSpacing: 4,
-            marginBottom: 15,
+            color: kinetic ? tokens.background : tokens.accent,
+            background: kinetic ? chapterColor : undefined,
+            display: kinetic ? "inline-flex" : undefined,
+            clipPath: kinetic
+              ? "polygon(0 0, calc(100% - 18px) 0, 100% 50%, calc(100% - 18px) 100%, 0 100%)"
+              : undefined,
+            padding: kinetic ? "11px 32px 11px 18px" : undefined,
+            fontSize: kinetic ? 21 : 23,
+            fontWeight: kinetic ? 800 : 700,
+            letterSpacing: kinetic ? 3 : 4,
+            marginBottom: kinetic ? 20 : 15,
             textTransform: "uppercase",
           }}
         >
@@ -109,23 +271,46 @@ export const SceneHeadline: React.FC<{
       <h1
         style={{
           fontFamily: tokens.headingFont,
-          fontSize: scene.layout === "hero" ? 91 : 73,
-          lineHeight: 0.99,
+          fontSize: kinetic
+            ? scene.layout === "hero"
+              ? 116
+              : 88
+            : scene.layout === "hero"
+              ? 91
+              : 73,
+          lineHeight: kinetic ? 0.91 : 0.99,
           margin: 0,
-          letterSpacing: scene.layout === "hero" ? -3 : -2,
+          letterSpacing: kinetic
+            ? scene.layout === "hero"
+              ? -6
+              : -4
+            : scene.layout === "hero"
+              ? -3
+              : -2,
+          fontWeight: kinetic ? 850 : undefined,
           textWrap: "balance",
+          textShadow: kinetic
+            ? `0 12px 45px ${tokens.background}a8`
+            : undefined,
         }}
       >
         {scene.on_screen_text}
       </h1>
       <div
         style={{
-          width: 72 + accentProgress * 188,
-          height: 6,
-          marginTop: 22,
+          width: kinetic
+            ? 116 + accentProgress * 250
+            : 72 + accentProgress * 188,
+          height: kinetic ? 13 : 6,
+          marginTop: kinetic ? 26 : 22,
           borderRadius: 999,
-          background: `linear-gradient(90deg, ${tokens.accent}, ${tokens.warning})`,
-          boxShadow: `0 0 20px ${tokens.accent}44`,
+          background: kinetic
+            ? `linear-gradient(90deg, ${chapterColor}, ${color(tokens, chapter.secondary)})`
+            : `linear-gradient(90deg, ${tokens.accent}, ${tokens.warning})`,
+          boxShadow: kinetic
+            ? `0 10px 32px ${chapterColor}66`
+            : `0 0 20px ${tokens.accent}44`,
+          transform: kinetic ? "skewX(-18deg)" : undefined,
         }}
       />
     </div>
@@ -140,6 +325,8 @@ const EvidenceBadge: React.FC<{ scene: SceneData; tokens: ThemeTokens }> = ({
   tokens,
 }) => {
   const safeZone = useSafeZone();
+  const kinetic = isKineticPopTheme(useThemeGrammar());
+  const chapter = kineticChapterFor(scene);
   return scene.evidence_label ? (
     <div
       style={{
@@ -149,14 +336,18 @@ const EvidenceBadge: React.FC<{ scene: SceneData; tokens: ThemeTokens }> = ({
         display: "flex",
         alignItems: "center",
         gap: 12,
-        border: `2px solid ${tokens.citation}`,
-        borderRadius: 999,
-        padding: "10px 18px",
-        color: tokens.citation,
-        background: `${tokens.background}d9`,
-        fontSize: 21,
-        fontWeight: 700,
+        border: kinetic ? "none" : `2px solid ${tokens.citation}`,
+        borderRadius: kinetic ? 8 : 999,
+        padding: kinetic ? "12px 20px" : "10px 18px",
+        color: kinetic ? tokens.background : tokens.citation,
+        background: kinetic
+          ? `${color(tokens, chapter.primary)}e8`
+          : `${tokens.background}d9`,
+        boxShadow: kinetic ? `7px 7px 0 ${tokens.background}99` : undefined,
+        fontSize: kinetic ? 19 : 21,
+        fontWeight: kinetic ? 800 : 700,
         letterSpacing: 1.2,
+        zIndex: kinetic ? 4 : undefined,
       }}
     >
       <span aria-hidden="true">●</span>
@@ -172,6 +363,7 @@ const PacingDecorations: React.FC<{
 }> = ({ scene, tokens }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
+  const kinetic = isKineticPopTheme(useThemeGrammar());
   const preset = usePacing();
   const safeZone = useSafeZone();
   const profile = pacingProfiles[preset];
@@ -182,6 +374,79 @@ const PacingDecorations: React.FC<{
   const treatment = patternInterruptFor(scene.order);
   const opacity = profile.decorationOpacity * (0.36 + beat * 0.64);
   const shift = profile.decorationShift * beat;
+  if (kinetic) {
+    const chapter = kineticChapterFor(scene);
+    const camera = kineticScenePresentationFor(
+      frame,
+      durationFrames,
+      fps,
+      scene.motion,
+      scene.order,
+    );
+    const chapterColor = color(tokens, chapter.primary);
+    return (
+      <div
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          inset: 0,
+          zIndex: 1,
+          overflow: "hidden",
+          pointerEvents: "none",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            top: Math.max(116, safeZone.top),
+            [chapter.anchor]: Math.max(34, safeZone[chapter.anchor]),
+            color: `${tokens.text}20`,
+            fontSize: 190,
+            fontWeight: 900,
+            lineHeight: 0.8,
+            letterSpacing: -14,
+            transform: `translateY(${camera.translateY * 1.4}px)`,
+          }}
+        >
+          {String(scene.order + 1).padStart(2, "0")}
+        </div>
+        <div
+          style={{
+            position: "absolute",
+            left: 24,
+            top: 235,
+            width: 10,
+            height: 690,
+            borderRadius: 99,
+            background: `${tokens.text}28`,
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              height: `${progress * 100}%`,
+              borderRadius: 99,
+              background: chapterColor,
+              boxShadow: `0 0 24px ${chapterColor}8f`,
+            }}
+          />
+        </div>
+        <div
+          style={{
+            position: "absolute",
+            width: 56 + camera.beat * 34,
+            height: 56 + camera.beat * 34,
+            [chapter.anchor]: 88 - camera.beat * 17,
+            bottom: Math.max(360, safeZone.bottom + 32),
+            border: `10px solid ${chapterColor}`,
+            borderRadius: "50%",
+            boxShadow: `0 0 0 10px ${tokens.background}70`,
+          }}
+        />
+      </div>
+    );
+  }
   return (
     <div
       aria-hidden="true"
@@ -292,12 +557,32 @@ export const Frame: React.FC<{
   children: React.ReactNode;
 }> = ({ scene, tokens, children }) => {
   const safeZone = useSafeZone();
+  const themeName = useThemeGrammar();
+  const kinetic = isKineticPopTheme(themeName);
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const durationFrames = Math.max(1, Math.round(scene.duration * fps));
+  const camera = kinetic
+    ? kineticScenePresentationFor(
+        frame,
+        durationFrames,
+        fps,
+        scene.motion,
+        scene.order,
+      )
+    : null;
   const basePadding =
-    scene.layout === "full-diagram"
-      ? { top: 155, right: 54, bottom: 345, left: 54 }
-      : scene.layout === "evidence"
-        ? { top: 170, right: 62, bottom: 360, left: 62 }
-        : { top: 175, right: 64, bottom: 370, left: 64 };
+    kinetic && scene.layout === "full-diagram"
+      ? { top: 142, right: 40, bottom: 330, left: 42 }
+      : kinetic && scene.layout === "evidence"
+        ? { top: 154, right: 50, bottom: 342, left: 50 }
+        : kinetic
+          ? { top: 150, right: 52, bottom: 350, left: 52 }
+          : scene.layout === "full-diagram"
+            ? { top: 155, right: 54, bottom: 345, left: 54 }
+            : scene.layout === "evidence"
+              ? { top: 170, right: 62, bottom: 360, left: 62 }
+              : { top: 175, right: 64, bottom: 370, left: 64 };
   const padding = `${Math.max(basePadding.top, safeZone.top)}px ${Math.max(basePadding.right, safeZone.right)}px ${Math.max(basePadding.bottom, safeZone.bottom)}px ${Math.max(basePadding.left, safeZone.left)}px`;
   return (
     <div
@@ -311,12 +596,42 @@ export const Frame: React.FC<{
         gap: scene.layout === "hero" ? 56 : 38,
         color: tokens.text,
         isolation: "isolate",
-        ...motifStyle(tokens),
+        ...(kinetic ? {} : motifStyle(tokens)),
       }}
     >
+      {kinetic ? (
+        <KineticBackdrop
+          chapter={kineticChapterFor(scene)}
+          durationSeconds={scene.duration}
+          motion={scene.motion}
+          sceneOrder={scene.order}
+          tokens={tokens}
+        />
+      ) : null}
       <PacingDecorations scene={scene} tokens={tokens} />
       <EvidenceBadge scene={scene} tokens={tokens} />
-      {children}
+      {kinetic ? (
+        <div
+          data-kinetic-content="true"
+          style={{
+            position: "relative",
+            zIndex: 2,
+            minHeight: 0,
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: scene.layout === "hero" ? "center" : "flex-start",
+            gap: scene.layout === "hero" ? 52 : 34,
+            transform: `translate3d(${camera?.translateX ?? 0}px, ${camera?.translateY ?? 0}px, 0) scale(${camera?.scale ?? 1})`,
+            transformOrigin:
+              scene.order % 2 === 0 ? "left center" : "right center",
+          }}
+        >
+          {children}
+        </div>
+      ) : (
+        children
+      )}
     </div>
   );
 };
@@ -325,22 +640,33 @@ export const Panel: React.FC<{
   tokens: ThemeTokens;
   children: React.ReactNode;
   style?: React.CSSProperties;
-}> = ({ tokens, children, style }) => (
-  <div
-    style={{
-      background: `${tokens.panel}f2`,
-      border: `2px solid ${tokens.panelBorder}`,
-      borderRadius: tokens.radius,
-      boxShadow:
-        tokens.motif === "paper"
-          ? "0 18px 44px #5c51402a"
-          : "0 24px 60px #0005",
-      ...style,
-    }}
-  >
-    {children}
-  </div>
-);
+}> = ({ tokens, children, style }) => {
+  const kinetic = isKineticPopTheme(useThemeGrammar());
+  return (
+    <div
+      style={{
+        background: kinetic
+          ? `linear-gradient(145deg, ${tokens.panel}d9, ${tokens.background}9e)`
+          : `${tokens.panel}f2`,
+        border: kinetic ? "none" : `2px solid ${tokens.panelBorder}`,
+        borderLeft: kinetic ? `9px solid ${tokens.accent}` : undefined,
+        borderBottom: kinetic ? `3px solid ${tokens.panelBorder}c4` : undefined,
+        borderRadius: kinetic ? 9 : tokens.radius,
+        clipPath: kinetic
+          ? "polygon(0 0, calc(100% - 32px) 0, 100% 32px, 100% 100%, 0 100%)"
+          : undefined,
+        boxShadow: kinetic
+          ? `18px 22px 0 ${tokens.background}52, 0 28px 70px #0005`
+          : tokens.motif === "paper"
+            ? "0 18px 44px #5c51402a"
+            : "0 24px 60px #0005",
+        ...style,
+      }}
+    >
+      {children}
+    </div>
+  );
+};
 
 export const Shape: React.FC<{
   feature: "straight-edge" | "grid" | "rotor" | "signal" | "generic";

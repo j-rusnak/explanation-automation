@@ -2,7 +2,18 @@ import React from "react";
 import { AbsoluteFill } from "remotion";
 import { safeZonePixels } from "../safe-zone";
 import type { CoverCandidate, ProjectData } from "../schemas/project";
+import {
+  KineticBackdrop,
+  isKineticPopTheme,
+  kineticChapterFor,
+} from "../scenes/shared";
 import { getTheme } from "../themes/tokens";
+
+export const KINETIC_COVER_CHAPTER = kineticChapterFor({
+  layout: "hero",
+  order: 0,
+  primitive: "KineticText",
+});
 
 export const coverPaddingFor = (
   data: Pick<ProjectData, "safeZone" | "width" | "height">,
@@ -137,6 +148,7 @@ const CoverShape: React.FC<{
 
 const Hero: React.FC<{ candidate: CoverCandidate }> = ({ candidate }) => {
   const tokens = getTheme(candidate.palette);
+  const kinetic = isKineticPopTheme(candidate.palette);
   const hero = candidate.hero;
   if (hero.kind === "comparison") {
     return (
@@ -156,14 +168,21 @@ const Hero: React.FC<{ candidate: CoverCandidate }> = ({ candidate }) => {
             key={item.label}
             style={{
               height: 720,
-              border: `3px solid ${item.distorted ? tokens.warning : tokens.accent}`,
-              borderRadius: tokens.radius,
-              background: `${tokens.panel}ed`,
+              border: kinetic
+                ? "none"
+                : `3px solid ${item.distorted ? tokens.warning : tokens.accent}`,
+              borderRadius: kinetic ? 36 : tokens.radius,
+              background: kinetic
+                ? `radial-gradient(circle, ${item.distorted ? tokens.warning : tokens.accent}54 0%, ${tokens.panel}7a 48%, transparent 74%)`
+                : `${tokens.panel}ed`,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               position: "relative",
               overflow: "hidden",
+              transform: kinetic
+                ? `translateY(${item.distorted ? 35 : -20}px) rotate(${item.distorted ? 3 : -3}deg)`
+                : undefined,
             }}
           >
             <div
@@ -172,8 +191,11 @@ const Hero: React.FC<{ candidate: CoverCandidate }> = ({ candidate }) => {
                 top: 25,
                 left: 28,
                 color: item.distorted ? tokens.warning : tokens.accent,
-                fontSize: 27,
-                fontWeight: 700,
+                background: kinetic ? tokens.background : undefined,
+                padding: kinetic ? "9px 14px" : undefined,
+                fontSize: kinetic ? 25 : 27,
+                fontWeight: kinetic ? 800 : 700,
+                letterSpacing: kinetic ? 1.5 : undefined,
               }}
             >
               {item.label}
@@ -199,14 +221,17 @@ const Hero: React.FC<{ candidate: CoverCandidate }> = ({ candidate }) => {
         style={{
           height: 720,
           width: "100%",
-          borderRadius: tokens.radius,
-          border: `3px solid ${tokens.panelBorder}`,
-          background: tokens.panel,
+          borderRadius: kinetic ? 0 : tokens.radius,
+          border: kinetic ? "none" : `3px solid ${tokens.panelBorder}`,
+          background: kinetic
+            ? `radial-gradient(circle at 58% 48%, ${tokens.warning}55, transparent 48%)`
+            : tokens.panel,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
           position: "relative",
           overflow: "hidden",
+          transform: kinetic ? "rotate(-2deg) scale(1.08)" : undefined,
         }}
       >
         <CoverShape
@@ -226,6 +251,10 @@ const Hero: React.FC<{ candidate: CoverCandidate }> = ({ candidate }) => {
               height: index === 11 ? 7 : 2,
               background:
                 index === 11 ? tokens.warning : `${tokens.citation}38`,
+              boxShadow:
+                kinetic && index === 11
+                  ? `0 0 34px ${tokens.warning}`
+                  : undefined,
             }}
           />
         ))}
@@ -238,9 +267,11 @@ const Hero: React.FC<{ candidate: CoverCandidate }> = ({ candidate }) => {
         height: 700,
         width: "100%",
         position: "relative",
-        borderRadius: tokens.radius,
-        background: tokens.panel,
-        border: `3px solid ${tokens.panelBorder}`,
+        borderRadius: kinetic ? 0 : tokens.radius,
+        background: kinetic
+          ? `radial-gradient(circle at center, ${tokens.accent}3d, transparent 63%)`
+          : tokens.panel,
+        border: kinetic ? "none" : `3px solid ${tokens.panelBorder}`,
       }}
     >
       <svg
@@ -279,13 +310,16 @@ const Hero: React.FC<{ candidate: CoverCandidate }> = ({ candidate }) => {
             top: `${node.y * 80 + 10}%`,
             transform: "translate(-50%,-50%)",
             padding: "24px 30px",
-            borderRadius: 16,
+            borderRadius: kinetic ? 8 : 16,
             background:
               node.state === "active" ? tokens.accent : tokens.background,
             color: node.state === "active" ? tokens.background : tokens.text,
             border: `3px solid ${node.state === "active" ? tokens.accent : tokens.panelBorder}`,
             fontSize: 28,
-            fontWeight: 700,
+            fontWeight: kinetic ? 850 : 700,
+            boxShadow: kinetic
+              ? `10px 12px 0 ${node.state === "active" ? tokens.warning : tokens.panel}`
+              : undefined,
           }}
         >
           {node.label}
@@ -306,6 +340,7 @@ export const Cover: React.FC<ProjectData> = (data) => {
   }
   const candidate = selected;
   const tokens = getTheme(candidate.palette);
+  const kinetic = isKineticPopTheme(candidate.palette);
   const padding = coverPaddingFor(data, candidate.layout);
   return (
     <AbsoluteFill
@@ -320,27 +355,43 @@ export const Cover: React.FC<ProjectData> = (data) => {
         overflow: "hidden",
       }}
     >
-      <div
-        aria-hidden="true"
-        style={{
-          position: "absolute",
-          width: 670,
-          height: 670,
-          right: -280,
-          top: -240,
-          borderRadius: "50%",
-          border: `90px solid ${tokens.accent}18`,
-        }}
-      />
+      {kinetic ? (
+        <KineticBackdrop
+          chapter={KINETIC_COVER_CHAPTER}
+          durationSeconds={5}
+          motion="energetic"
+          sceneOrder={0}
+          tokens={tokens}
+        />
+      ) : (
+        <div
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            width: 670,
+            height: 670,
+            right: -280,
+            top: -240,
+            borderRadius: "50%",
+            border: `90px solid ${tokens.accent}18`,
+          }}
+        />
+      )}
       <div style={{ position: "relative", zIndex: 1 }}>
         <div
           style={{
-            color: tokens.accent,
-            fontSize: 25,
-            fontWeight: 700,
-            letterSpacing: 4,
+            color: kinetic ? tokens.background : tokens.accent,
+            background: kinetic ? tokens.warning : undefined,
+            display: kinetic ? "inline-flex" : undefined,
+            clipPath: kinetic
+              ? "polygon(0 0, calc(100% - 18px) 0, 100% 50%, calc(100% - 18px) 100%, 0 100%)"
+              : undefined,
+            padding: kinetic ? "12px 34px 12px 18px" : undefined,
+            fontSize: kinetic ? 22 : 25,
+            fontWeight: kinetic ? 850 : 700,
+            letterSpacing: kinetic ? 3 : 4,
             textTransform: "uppercase",
-            marginBottom: 24,
+            marginBottom: kinetic ? 28 : 24,
           }}
         >
           Technical explainer
@@ -348,12 +399,22 @@ export const Cover: React.FC<ProjectData> = (data) => {
         <h1
           style={{
             fontFamily: tokens.headingFont,
-            fontSize: candidate.layout === "editorial" ? 108 : 92,
-            lineHeight: 0.95,
-            letterSpacing: -4,
+            fontSize: kinetic
+              ? candidate.layout === "editorial"
+                ? 126
+                : 116
+              : candidate.layout === "editorial"
+                ? 108
+                : 92,
+            lineHeight: kinetic ? 0.87 : 0.95,
+            letterSpacing: kinetic ? -7 : -4,
+            fontWeight: kinetic ? 900 : undefined,
             textWrap: "balance",
             margin: 0,
-            maxWidth: 950,
+            maxWidth: kinetic ? 910 : 950,
+            textShadow: kinetic
+              ? `0 14px 50px ${tokens.background}b8`
+              : undefined,
           }}
         >
           {candidate.headline}
@@ -361,18 +422,27 @@ export const Cover: React.FC<ProjectData> = (data) => {
         {candidate.subheadline ? (
           <p
             style={{
-              fontSize: 36,
-              lineHeight: 1.2,
-              color: tokens.muted,
-              maxWidth: 870,
-              margin: "30px 0 0",
+              fontSize: kinetic ? 33 : 36,
+              lineHeight: kinetic ? 1.12 : 1.2,
+              color: kinetic ? tokens.text : tokens.muted,
+              maxWidth: kinetic ? 760 : 870,
+              margin: kinetic ? "24px 0 0 54px" : "30px 0 0",
+              fontWeight: kinetic ? 650 : undefined,
             }}
           >
             {candidate.subheadline}
           </p>
         ) : null}
       </div>
-      <div style={{ position: "relative", zIndex: 1, marginTop: 86 }}>
+      <div
+        style={{
+          position: "relative",
+          zIndex: 1,
+          marginTop: kinetic ? 34 : 86,
+          marginLeft: kinetic ? -28 : undefined,
+          marginRight: kinetic ? -20 : undefined,
+        }}
+      >
         <Hero candidate={candidate} />
       </div>
       <div
@@ -383,6 +453,8 @@ export const Cover: React.FC<ProjectData> = (data) => {
           alignItems: "center",
           color: tokens.muted,
           fontSize: 24,
+          position: "relative",
+          zIndex: 2,
         }}
       >
         <span>{data.title}</span>

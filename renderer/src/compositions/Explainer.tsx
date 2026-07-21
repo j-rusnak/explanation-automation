@@ -11,17 +11,41 @@ import {
   activeEmphasisTokenIndexes,
   captionTokenPresentation,
 } from "../captions/emphasis";
-import type { ProjectData, SceneData } from "../schemas/project";
+import type {
+  CaptionTokenData,
+  ProjectData,
+  SceneData,
+} from "../schemas/project";
 import {
   PacingProvider,
   captionMotionFor,
+  kineticEntrancePresentationFor,
   transitionFramesFor,
   transitionPresentationFor,
 } from "../pacing/rhythm";
 import { RetentionOverlay } from "../engagement/RetentionOverlay";
 import { Primitive } from "../scenes/primitives";
+import { ThemeGrammarProvider, isKineticPopTheme } from "../scenes/shared";
 import { SafeZoneProvider, useSafeZone } from "../safe-zone";
 import { getTheme } from "../themes/tokens";
+
+export const activeKeywordTokenIndexFor = (
+  tokens: readonly CaptionTokenData[],
+  activeTokenIndexes: readonly number[],
+): number | null => {
+  let selected: number | null = null;
+  let selectedLength = -1;
+  for (const tokenIndex of activeTokenIndexes) {
+    const token = tokens[tokenIndex];
+    if (!token) continue;
+    const meaningfulLength = token.text.replace(/[^\p{L}\p{N}]/gu, "").length;
+    if (meaningfulLength > selectedLength) {
+      selected = tokenIndex;
+      selectedLength = meaningfulLength;
+    }
+  }
+  return selected;
+};
 
 const CaptionCard: React.FC<{
   cue: ProjectData["captions"][number];
@@ -31,9 +55,13 @@ const CaptionCard: React.FC<{
 }> = ({ cue, currentTime, tokens, themeName }) => {
   const motion = captionMotionFor(currentTime, cue.start, cue.end);
   const safeZone = useSafeZone();
+  const kinetic = isKineticPopTheme(themeName);
   const activeTokenIndexes = new Set(
     activeEmphasisTokenIndexes(cue.tokens, currentTime, cue.end),
   );
+  const activeKeywordTokenIndex = kinetic
+    ? activeKeywordTokenIndexFor(cue.tokens, [...activeTokenIndexes])
+    : null;
   return (
     <div
       data-caption-index={cue.index}
@@ -42,37 +70,42 @@ const CaptionCard: React.FC<{
       data-caption-timing-source={cue.timingSource}
       style={{
         position: "absolute",
-        left: Math.max(62, safeZone.left),
+        left: Math.max(kinetic ? 76 : 62, safeZone.left),
         right: Math.max(62, safeZone.right),
         bottom: Math.max(145, safeZone.bottom),
-        minHeight: 170,
+        minHeight: kinetic ? 148 : 170,
         display: "flex",
         alignItems: "center",
-        justifyContent: "center",
-        textAlign: "center",
-        padding: "22px 34px",
-        borderRadius: 24,
-        border: `2px solid ${tokens.panelBorder}`,
+        justifyContent: kinetic ? "flex-start" : "center",
+        textAlign: kinetic ? "left" : "center",
+        padding: kinetic ? "20px 30px 24px 34px" : "22px 34px",
+        borderRadius: kinetic ? 8 : 24,
+        border: kinetic ? "none" : `2px solid ${tokens.panelBorder}`,
+        borderLeft: kinetic ? `10px solid ${tokens.warning}` : undefined,
         background:
           themeName === "technical-editorial"
             ? "#172033f2"
             : `${tokens.background}f2`,
         color: "#f7f9ff",
-        fontSize: 42,
-        fontWeight: 700,
-        lineHeight: 1.22,
+        fontSize: kinetic ? 45 : 42,
+        fontWeight: kinetic ? 750 : 700,
+        lineHeight: kinetic ? 1.16 : 1.22,
         overflow: "hidden",
         overflowWrap: "anywhere",
         boxShadow: "0 10px 36px #0008",
-        opacity: motion.opacity,
-        transform: `translateY(${motion.translateY}px)`,
+        opacity: kinetic ? 1 : motion.opacity,
+        transform: kinetic
+          ? "translate3d(0, 0, 0)"
+          : `translateY(${motion.translateY}px)`,
         zIndex: 20,
       }}
     >
       <span data-caption-text="true">
         {cue.tokens.length > 0
           ? cue.tokens.map((token, tokenIndex) => {
-              const active = activeTokenIndexes.has(tokenIndex);
+              const active = kinetic
+                ? tokenIndex === activeKeywordTokenIndex
+                : activeTokenIndexes.has(tokenIndex);
               return (
                 <React.Fragment
                   key={`${cue.cueId ?? cue.index}-token-${tokenIndex}`}
@@ -82,12 +115,25 @@ const CaptionCard: React.FC<{
                     data-caption-token-index={tokenIndex}
                     data-caption-token-group={token.group}
                     data-caption-token-active={active ? "true" : "false"}
-                    style={captionTokenPresentation(
-                      active,
-                      themeName === "technical-editorial"
-                        ? "#ffd166"
-                        : tokens.warning,
-                    )}
+                    style={{
+                      ...captionTokenPresentation(
+                        active,
+                        themeName === "technical-editorial"
+                          ? "#ffd166"
+                          : tokens.warning,
+                      ),
+                      ...(kinetic
+                        ? {
+                            color: active ? tokens.warning : "#f7f9ff",
+                            background: active
+                              ? `${tokens.warning}24`
+                              : "transparent",
+                            borderRadius: 5,
+                            padding: "0 2px",
+                            textDecorationLine: "none" as const,
+                          }
+                        : {}),
+                    }}
                   >
                     {token.text}
                   </span>
@@ -114,8 +160,9 @@ const CaptionCard: React.FC<{
 const SceneTransition: React.FC<{
   scene: SceneData;
   pacing: ProjectData["pacing"];
+  themeName: ProjectData["theme"];
   children: React.ReactNode;
-}> = ({ scene, pacing, children }) => {
+}> = ({ scene, pacing, themeName, children }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const transitionFrames = transitionFramesFor(scene, fps, pacing);
@@ -128,11 +175,23 @@ const SceneTransition: React.FC<{
     scene.motion,
     scene.order === 0,
   );
+  const kinetic = isKineticPopTheme(themeName);
+  const kineticEntrance =
+    kinetic && scene.order !== 0
+      ? kineticEntrancePresentationFor(frame, transitionFrames, scene.order)
+      : { scale: 1, translateX: 0, translateY: 0 };
   return (
     <AbsoluteFill
       style={{
         opacity: presentation.opacity,
-        transform: `translateX(${presentation.translateX}px)`,
+        transform: kinetic
+          ? `translate3d(${presentation.translateX + kineticEntrance.translateX}px, ${kineticEntrance.translateY}px, 0) scale(${kineticEntrance.scale})`
+          : `translateX(${presentation.translateX}px)`,
+        transformOrigin: kinetic
+          ? scene.order % 2 === 0
+            ? "left center"
+            : "right center"
+          : undefined,
       }}
     >
       {children}
@@ -156,58 +215,67 @@ export const Explainer: React.FC<ProjectData> = (data) => {
         fontFamily: tokens.font,
       }}
     >
-      <PacingProvider preset={data.pacing}>
-        <SafeZoneProvider insets={data.safeZone}>
-          {data.audioPath ? <Audio src={staticFile(data.audioPath)} /> : null}
-          {data.soundDesignPath ? (
-            <Audio src={staticFile(data.soundDesignPath)} />
-          ) : null}
-          {data.scenes.map((scene) => (
-            <Sequence
-              key={scene.scene_id}
-              from={Math.round(scene.start_time * data.fps)}
-              durationInFrames={Math.max(
-                1,
-                Math.round(scene.duration * data.fps),
-              )}
-              premountFor={data.fps}
-            >
-              <SceneTransition scene={scene} pacing={data.pacing}>
-                <Primitive scene={scene} themeName={data.theme} />
-              </SceneTransition>
-            </Sequence>
-          ))}
-          <RetentionOverlay retention={data.retention} themeName={data.theme} />
-          {activeCue ? (
-            <CaptionCard
-              cue={activeCue}
-              currentTime={currentTime}
-              tokens={tokens}
+      <ThemeGrammarProvider themeName={data.theme}>
+        <PacingProvider preset={data.pacing}>
+          <SafeZoneProvider insets={data.safeZone}>
+            {data.audioPath ? <Audio src={staticFile(data.audioPath)} /> : null}
+            {data.soundDesignPath ? (
+              <Audio src={staticFile(data.soundDesignPath)} />
+            ) : null}
+            {data.scenes.map((scene) => (
+              <Sequence
+                key={scene.scene_id}
+                from={Math.round(scene.start_time * data.fps)}
+                durationInFrames={Math.max(
+                  1,
+                  Math.round(scene.duration * data.fps),
+                )}
+                premountFor={data.fps}
+              >
+                <SceneTransition
+                  scene={scene}
+                  pacing={data.pacing}
+                  themeName={data.theme}
+                >
+                  <Primitive scene={scene} themeName={data.theme} />
+                </SceneTransition>
+              </Sequence>
+            ))}
+            <RetentionOverlay
+              retention={data.retention}
               themeName={data.theme}
             />
-          ) : null}
-          {data.watermarked ? (
-            <div
-              style={{
-                position: "absolute",
-                inset: 0,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                transform: "rotate(-24deg)",
-                fontSize: 116,
-                fontWeight: 700,
-                letterSpacing: 8,
-                color: "#ffffff25",
-                border: "14px solid #ffffff18",
-                zIndex: 30,
-              }}
-            >
-              UNREVIEWED
-            </div>
-          ) : null}
-        </SafeZoneProvider>
-      </PacingProvider>
+            {activeCue ? (
+              <CaptionCard
+                cue={activeCue}
+                currentTime={currentTime}
+                tokens={tokens}
+                themeName={data.theme}
+              />
+            ) : null}
+            {data.watermarked ? (
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  transform: "rotate(-24deg)",
+                  fontSize: 116,
+                  fontWeight: 700,
+                  letterSpacing: 8,
+                  color: "#ffffff25",
+                  border: "14px solid #ffffff18",
+                  zIndex: 30,
+                }}
+              >
+                UNREVIEWED
+              </div>
+            ) : null}
+          </SafeZoneProvider>
+        </PacingProvider>
+      </ThemeGrammarProvider>
     </AbsoluteFill>
   );
 };
