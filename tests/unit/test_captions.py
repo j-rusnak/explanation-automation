@@ -10,10 +10,26 @@ from techshort.alignment import (
     as_vtt,
     caption_warnings,
     cues_from_script,
+    has_dangling_caption_ending,
     write_caption_files,
 )
+from techshort.alignment.captions import CaptionCue
 from techshort.domain.models import ScriptManifest, ScriptSegment
 from techshort.providers.fixture import FixtureProvider
+
+
+def _fixture_script() -> ScriptManifest:
+    provider = FixtureProvider()
+    claims = provider.generate_claims(" ".join(provider.phrases), "source-x", "a" * 64)
+    return provider.generate_script(claims, "everyday-mechanism")
+
+
+def _segment_cues(
+    script: ScriptManifest, cues: list[CaptionCue], segment_index: int
+) -> list[CaptionCue]:
+    start = sum(segment.approximate_duration for segment in script.segments[:segment_index])
+    end = start + script.segments[segment_index].approximate_duration
+    return [cue for cue in cues if cue.start >= start - 1e-9 and cue.end <= end + 1e-9]
 
 
 def test_caption_timing_is_monotonic_and_serializes() -> None:
@@ -29,15 +45,49 @@ def test_caption_timing_is_monotonic_and_serializes() -> None:
 
 
 def test_fixture_captions_meet_reading_speed_and_avoid_orphan_cues() -> None:
-    provider = FixtureProvider()
-    claims = provider.generate_claims(" ".join(provider.phrases), "source-x", "a" * 64)
-    script = provider.generate_script(claims, "everyday-mechanism")
+    script = _fixture_script()
 
     cues = cues_from_script(script)
 
     assert min(cue.end - cue.start for cue in cues) >= 0.8
     assert max(len(re.sub(r"\s+", "", cue.text)) / (cue.end - cue.start) for cue in cues) <= 20
     assert all(len(cue.text.split()) >= 2 for cue in cues)
+    for segment_index in range(len(script.segments)):
+        segment_cues = _segment_cues(script, cues, segment_index)
+        assert all(not has_dangling_caption_ending(cue.text) for cue in segment_cues[:-1])
+        assert " ".join(cue.text for cue in segment_cues) == " ".join(
+            script.segments[segment_index].text.split()
+        )
+
+
+def test_fixture_captions_use_complete_high_value_phrases_deterministically() -> None:
+    script = _fixture_script()
+    first = cues_from_script(script)
+    second = cues_from_script(script)
+
+    assert first == second
+    assert [cue.text for cue in _segment_cues(script, first, 2)] == [
+        "Picture paper sliding sideways",
+        "under a scanner. Every line",
+        "can be accurate while the assembled",
+        "page becomes skewed.",
+    ]
+    assert [cue.text for cue in _segment_cues(script, first, 4)] == [
+        "What controls that skew?",
+        "The distance the subject moves",
+        "while the rows are being read.",
+    ]
+    assert [cue.text for cue in _segment_cues(script, first, 5)] == [
+        "Would shared timing change it?",
+        "Faster motion or longer readout",
+        "increases skew; a global shutter",
+        "exposes rows together and avoids it.",
+    ]
+    assert [cue.text for cue in _segment_cues(script, first, 7)] == [
+        "The useful model is one frame",
+        "assembled from many row-level",
+        "moments—like a tiny timeline.",
+    ]
 
 
 def test_caption_chunks_rebalance_a_trailing_singleton_without_changing_words() -> None:

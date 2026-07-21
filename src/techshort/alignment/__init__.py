@@ -3,6 +3,7 @@ from techshort.alignment.captions import (
     as_vtt,
     caption_warnings,
     cues_from_script,
+    has_dangling_caption_ending,
     write_caption_files,
 )
 from techshort.alignment.comparison import (
@@ -18,6 +19,7 @@ __all__ = [
     "as_srt",
     "as_vtt",
     "caption_warnings",
+    "has_dangling_caption_ending",
     "write_caption_files",
     "NarrationComparison",
     "compare_narration",

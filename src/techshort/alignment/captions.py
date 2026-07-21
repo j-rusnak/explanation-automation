@@ -21,10 +21,27 @@ class CaptionCue:
 MAX_CAPTION_CHARACTERS = 42
 MIN_CAPTION_DURATION_SECONDS = 0.8
 MAX_CAPTION_CHARACTERS_PER_SECOND = 20.0
+MIN_READABLE_CAPTION_CHARACTERS = round(
+    MIN_CAPTION_DURATION_SECONDS * MAX_CAPTION_CHARACTERS_PER_SECOND
+)
+_DANGLING_CAPTION_ENDINGS = frozenset(
+    """
+    a although am an and any are as at be because been being but by can could did do does
+    each every for from had has have if in into is like may might must no nor not of on onto
+    or over per shall should so some than that the though through to under unless was were
+    when while will with without would yet
+    """.split()
+)
+_CLOSING_PUNCTUATION = "\"'\u2019\u201d)]}"
+_ChunkScore = tuple[int, int, int, int, int, tuple[int, ...]]
+_ChunkPlan = tuple[_ChunkScore, list[str]]
 
 
-def _caption_chunks(text: str) -> list[str]:
-    """Split narration into compact cues without leaving a final word stranded."""
+def _visible_character_count(text: str) -> int:
+    return max(1, len(re.sub(r"\s+", "", text)))
+
+
+def _wrapped_caption_chunks(text: str) -> list[str]:
     chunks = textwrap.wrap(
         text,
         width=MAX_CAPTION_CHARACTERS,
@@ -56,9 +73,98 @@ def _caption_chunks(text: str) -> list[str]:
     return chunks
 
 
+def _terminal_token(text: str) -> str:
+    return text.split()[-1].rstrip(_CLOSING_PUNCTUATION) if text.split() else ""
+
+
+def has_dangling_caption_ending(text: str) -> bool:
+    """Return whether a cue stops on a connective that needs following words."""
+    terminal = _terminal_token(text)
+    if terminal.endswith((".", "?", "!")):
+        return False
+    normalized = re.sub(r"^\W+|\W+$", "", terminal, flags=re.UNICODE).casefold()
+    return normalized in _DANGLING_CAPTION_ENDINGS
+
+
+def _boundary_penalty(text: str) -> int:
+    terminal = _terminal_token(text)
+    if terminal.endswith((".", "?", "!")):
+        return 0
+    if terminal.endswith((";", ":")):
+        return 1
+    if terminal.endswith(","):
+        return 2
+    return 3
+
+
+def _optimized_phrase_chunks(text: str) -> list[str] | None:
+    words = " ".join(text.split()).split()
+    if not words or any(len(word) > MAX_CAPTION_CHARACTERS for word in words):
+        return None
+    total_visible = _visible_character_count(" ".join(words))
+    minimum_visible = min(MIN_READABLE_CAPTION_CHARACTERS, total_visible)
+    best: list[_ChunkPlan | None] = [None] * (len(words) + 1)
+    best[-1] = ((0, 0, 0, 0, 0, ()), [])
+
+    for start in range(len(words) - 1, -1, -1):
+        for end in range(start + 1, len(words) + 1):
+            chunk = " ".join(words[start:end])
+            if len(chunk) > MAX_CAPTION_CHARACTERS:
+                break
+            if _visible_character_count(chunk) < minimum_visible:
+                continue
+            tail = best[end]
+            if tail is None:
+                continue
+            tail_score, tail_chunks = tail
+            final_chunk = end == len(words)
+            boundary_penalty = 0 if final_chunk else _boundary_penalty(chunk)
+            raggedness = (len(chunk) - 34) ** 2
+            score: _ChunkScore = (
+                tail_score[0] + (0 if final_chunk else int(has_dangling_caption_ending(chunk))),
+                tail_score[1] + 1,
+                tail_score[2] + boundary_penalty * 20 + raggedness,
+                tail_score[3] + boundary_penalty,
+                tail_score[4] + raggedness,
+                (-end, *tail_score[5]),
+            )
+            candidate = (score, [chunk, *tail_chunks])
+            current_best = best[start]
+            if current_best is None or score < current_best[0]:
+                best[start] = candidate
+    return best[0][1] if best[0] is not None else None
+
+
+def _required_caption_duration(chunks: list[str]) -> float:
+    return sum(
+        max(
+            MIN_CAPTION_DURATION_SECONDS,
+            _visible_character_count(chunk) / MAX_CAPTION_CHARACTERS_PER_SECOND,
+        )
+        for chunk in chunks
+    )
+
+
+def _caption_chunks(text: str, segment_duration: float) -> list[str]:
+    """Split narration at readable phrase boundaries without changing its words."""
+    baseline = _wrapped_caption_chunks(text)
+    baseline_dangling = sum(has_dangling_caption_ending(chunk) for chunk in baseline[:-1])
+    if not baseline_dangling:
+        return baseline
+    optimized = _optimized_phrase_chunks(text)
+    if optimized is None:
+        return baseline
+    optimized_dangling = sum(has_dangling_caption_ending(chunk) for chunk in optimized[:-1])
+    if optimized_dangling >= baseline_dangling:
+        return baseline
+    baseline_fits = _required_caption_duration(baseline) <= segment_duration + 1e-9
+    optimized_fits = _required_caption_duration(optimized) <= segment_duration + 1e-9
+    return baseline if baseline_fits and not optimized_fits else optimized
+
+
 def _cue_durations(chunks: list[str], segment_duration: float) -> list[float]:
     """Allocate time by readable character load while preserving the segment boundary."""
-    character_counts = [max(1, len(re.sub(r"\s+", "", chunk))) for chunk in chunks]
+    character_counts = [_visible_character_count(chunk) for chunk in chunks]
     readable_minimums = [
         max(
             MIN_CAPTION_DURATION_SECONDS,
@@ -101,8 +207,8 @@ def cues_from_script(
     for segment in script.segments:
         # textwrap always consumes input, including a single word longer than the
         # line limit. This avoids non-advancing loops for technical identifiers.
-        chunks = _caption_chunks(segment.text)
         segment_duration = segment.approximate_duration * timing_scale
+        chunks = _caption_chunks(segment.text, segment_duration)
         durations = _cue_durations(chunks, segment_duration)
         elapsed_script_duration += segment.approximate_duration
         segment_end = elapsed_script_duration * timing_scale
