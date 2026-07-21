@@ -272,7 +272,7 @@ class CuriosityThread(CreativeStrictModel):
 class RetentionEvent(CreativeStrictModel):
     event_id: str = Field(min_length=1, max_length=120)
     beat_id: str = Field(min_length=1, max_length=120)
-    scheduled_at_seconds: float = Field(ge=0, le=60)
+    scheduled_at_seconds: float = Field(ge=0, le=75)
     event_kind: RetentionEventKind
     device: EngagementDevice
     purpose: str = Field(min_length=8, max_length=400)
@@ -292,7 +292,7 @@ class RetentionEvent(CreativeStrictModel):
 
 class CadenceBeat(CreativeStrictModel):
     beat_id: str = Field(min_length=1, max_length=120)
-    starts_at_seconds: float = Field(ge=0, le=60)
+    starts_at_seconds: float = Field(ge=0, le=75)
     duration_seconds: float = Field(gt=0, le=12)
     energy: CadenceEnergy
     cadence_role: CadenceRole
@@ -300,7 +300,7 @@ class CadenceBeat(CreativeStrictModel):
 
 
 class BeatCadence(CreativeStrictModel):
-    total_duration_seconds: float = Field(ge=45, le=60)
+    total_duration_seconds: float = Field(ge=45, le=75)
     max_attention_gap_seconds: float = Field(gt=0, le=5)
     beats: list[CadenceBeat] = Field(min_length=6, max_length=12)
 
@@ -338,7 +338,7 @@ class RetentionPlan(CreativeStrictModel):
     factual_locks: list[FactualLock] = Field(min_length=1)
     cold_open: HonestColdOpen
     curiosity_threads: list[CuriosityThread] = Field(min_length=1, max_length=4)
-    attention_events: list[RetentionEvent] = Field(min_length=5, max_length=12)
+    attention_events: list[RetentionEvent] = Field(min_length=5, max_length=15)
     cadence: BeatCadence
     policy: AntiClickbaitPolicy = Field(default_factory=AntiClickbaitPolicy)
     evidence_payoff_beat_id: str

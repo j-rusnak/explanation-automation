@@ -279,8 +279,9 @@ def test_retention_prompt_is_versioned_deterministic_and_explicitly_anti_clickba
     )
 
     assert first == second
-    assert first.template_version == "1.0.0"
+    assert first.template_version == "2.1.0"
     assert "cold open" in first.prompt
     assert "five" in first.prompt
     assert "deceptive withholding" in first.prompt
+    assert "overall spoken pace" in first.prompt
     assert "BEGIN UNTRUSTED INPUT" in first.prompt

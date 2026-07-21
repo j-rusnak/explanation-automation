@@ -59,11 +59,11 @@ NARRATIVE_BRIEF_TEMPLATE = PromptTemplate(
 
 BEAT_PLAN_TEMPLATE = PromptTemplate(
     name="beat-plan",
-    version="3.0.0",
+    version="4.1.0",
     instructions=(
-        f"{_SAFETY_PREAMBLE} Turn the approved narrative brief into five to twelve ordered beats. "
+        f"{_SAFETY_PREAMBLE} Turn the approved narrative brief into seven to twelve ordered beats. "
         "Include a hook, mechanism, exact visible evidence, consequence, meaningful limitation, "
-        "and resolution in 45–60 seconds. Keep each beat at seven seconds or less, with an honest "
+        "and resolution in 45–75 seconds. Keep each beat at seven seconds or less, with an honest "
         "cold open no longer than five seconds, two explicit mid-video re-hooks, and periodic "
         "pattern interrupts. Every beat must link factual-lock claim IDs and use structured, "
         "non-executable visual guidance with deliberate animation beats."
@@ -94,13 +94,14 @@ VISUAL_CRITIQUE_TEMPLATE = PromptTemplate(
 
 RETENTION_PLAN_TEMPLATE = PromptTemplate(
     name="retention-plan",
-    version="1.0.0",
+    version="2.1.0",
     instructions=(
-        f"{_SAFETY_PREAMBLE} Build an honest retention plan for a 45–60 second, 130–170 word "
+        f"{_SAFETY_PREAMBLE} Build an honest retention plan for a 45–75 second, 130–170 word "
         "explainer. The cold open must truthfully state or show the topic within five seconds. "
         "The first attention event must occur by two seconds, no attention gap may exceed five "
-        "seconds, and two mid-video re-hooks must be explicit. Keep the cold open at or below 175 "
-        "spoken words per minute and every other segment at or below 190. Use bounded questions, visual-mode "
+        "seconds, and two mid-video re-hooks must be explicit. Keep overall spoken pace and the "
+        "cold open at or below 175 spoken words per minute; keep every other individual segment "
+        "at or below 190. Use bounded questions, visual-mode "
         "changes, exact evidence payoffs, a meaningful limitation, and a final payoff matching the "
         "opening promise. Reject clickbait, false urgency, exaggerated certainty, engagement bait, "
         "and deceptive withholding. Every event and payoff must preserve factual-lock claim IDs. "
