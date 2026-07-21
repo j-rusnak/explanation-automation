@@ -4,7 +4,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Generic, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Generic, Literal, TypeVar, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -64,13 +64,15 @@ from techshort.prompts.editorial import (
     VISUAL_CRITIQUE_TEMPLATE,
 )
 from techshort.providers.codex_cli import CodexCliProvider
-from techshort.providers.fixture import FixtureProvider
 from techshort.providers.manual import ManualPromptPacket, ManualProvider, ManualTask
 from techshort.review import (
     claim_review_hash,
     has_current_approval,
     script_segment_review_hash,
 )
+
+if TYPE_CHECKING:
+    from techshort.providers.fixture import FixtureProvider
 
 ProviderName = Literal["fixture", "manual", "codex"]
 ArtifactT = TypeVar("ArtifactT", bound=BaseModel)
@@ -79,6 +81,14 @@ MAX_EVIDENCE_SPANS = 32
 SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 SECTION_MARKER = re.compile(r"(?m)^--- (?P<heading>[^\r\n]+) ---\n")
 SENTENCE = re.compile(r"\S.*?(?:[.!?](?=\s|$)|(?=\n{2,})|$)", re.DOTALL)
+
+
+def _fixture_provider() -> FixtureProvider:
+    # Keep the deterministic provider lazy so public provider modules can be
+    # imported before the generation package in a clean Python process.
+    from techshort.providers.fixture import FixtureProvider
+
+    return FixtureProvider()
 
 
 CLAIMS_INSTRUCTION = (
@@ -898,7 +908,7 @@ def generate_claims(
 ) -> GenerationOutcome[ClaimsManifest]:
     source, text = _source(store, source_id)
     if provider == "fixture":
-        fixture = FixtureProvider()
+        fixture = _fixture_provider()
         evidence = fixture.evidence(text, source.source_id, source.content_hash)
         candidate = fixture.generate_claims(text, source.source_id, source.content_hash)
         prompt_version = "fixture-v1"
@@ -1042,7 +1052,7 @@ def generate_angles(
     input_hash = stable_hash(excerpts)
 
     if provider == "fixture":
-        candidate = FixtureProvider().generate_angles(claims)
+        candidate = _fixture_provider().generate_angles(claims)
         prompt_version = "fixture-v1"
         prompt_hash = stable_hash("fixture rolling-shutter angles v1")
     elif provider == "manual":
@@ -1238,7 +1248,7 @@ def generate_script(
     if provider == "fixture":
         brief = build_rolling_shutter_brief(claims, angles, selection)
         beat_plan = build_rolling_shutter_beat_plan(brief)
-        candidate = FixtureProvider().generate_script(
+        candidate = _fixture_provider().generate_script(
             claims,
             selected_angle,
             angles_version_id=angles.version_id,
@@ -1433,7 +1443,7 @@ def generate_storyboard(
     input_hash = stable_hash(excerpts)
 
     if provider == "fixture":
-        candidate = FixtureProvider().generate_storyboard(script)
+        candidate = _fixture_provider().generate_storyboard(script)
         prompt_version = "fixture-visual-plan-v2"
         prompt_hash = stable_hash(
             {
