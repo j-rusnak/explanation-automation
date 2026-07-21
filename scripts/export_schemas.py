@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from techshort.audio.providers import NarrationSynthesisReceipt
+from techshort.audio.sound_design import SoundDesignReceipt
 from techshort.domain.creative import (
     BeatPlan,
     EditorialCritique,
@@ -31,6 +32,18 @@ from techshort.domain.models import (
     StoryboardManifest,
 )
 from techshort.domain.storage import atomic_write_json
+from techshort.experiments import (
+    ExperimentManifest,
+    ExperimentReviewLog,
+    ObservationLog,
+    RecommendationLog,
+)
+from techshort.publication.models import (
+    HumanPublicationConsent,
+    OrganicPackageRequest,
+    OrganicPostMetadata,
+    OrganicPublicationPackage,
+)
 from techshort.qa.creative import CreativeQualityInput, CreativeQualityResult
 
 MODELS = (
@@ -56,6 +69,15 @@ MODELS = (
     CreativeQualityInput,
     CreativeQualityResult,
     NarrationSynthesisReceipt,
+    SoundDesignReceipt,
+    ExperimentManifest,
+    ObservationLog,
+    RecommendationLog,
+    ExperimentReviewLog,
+    OrganicPackageRequest,
+    HumanPublicationConsent,
+    OrganicPostMetadata,
+    OrganicPublicationPackage,
     AssetManifest,
     ReviewLog,
     RenderManifest,

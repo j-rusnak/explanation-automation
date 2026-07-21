@@ -1,0 +1,439 @@
+{
+  "$defs": {
+    "ExperimentVariable": {
+      "enum": [
+        "hook",
+        "cover",
+        "pacing",
+        "caption-style",
+        "audio-treatment",
+        "narration-pace"
+      ],
+      "title": "ExperimentVariable",
+      "type": "string"
+    },
+    "MetricDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "denominator_field": {
+          "anyOf": [
+            {
+              "const": "view_count",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Denominator Field"
+        },
+        "direction": {
+          "$ref": "#/$defs/MetricDirection"
+        },
+        "label": {
+          "maxLength": 80,
+          "minLength": 2,
+          "title": "Label",
+          "type": "string"
+        },
+        "name": {
+          "$ref": "#/$defs/MetricName"
+        },
+        "numerator_field": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Numerator Field"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "statistic": {
+          "$ref": "#/$defs/MetricStatistic"
+        },
+        "supports_confidence_interval": {
+          "title": "Supports Confidence Interval",
+          "type": "boolean"
+        },
+        "unit": {
+          "enum": [
+            "count",
+            "seconds",
+            "ratio"
+          ],
+          "title": "Unit",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "label",
+        "direction",
+        "statistic",
+        "unit",
+        "supports_confidence_interval"
+      ],
+      "title": "MetricDefinition",
+      "type": "object"
+    },
+    "MetricDirection": {
+      "enum": [
+        "higher",
+        "lower"
+      ],
+      "title": "MetricDirection",
+      "type": "string"
+    },
+    "MetricName": {
+      "enum": [
+        "views",
+        "average-watch-seconds",
+        "completion-rate",
+        "skip-rate",
+        "like-rate",
+        "comment-rate",
+        "share-rate",
+        "save-rate",
+        "follow-rate"
+      ],
+      "title": "MetricName",
+      "type": "string"
+    },
+    "MetricStatistic": {
+      "enum": [
+        "count",
+        "mean",
+        "proportion"
+      ],
+      "title": "MetricStatistic",
+      "type": "string"
+    },
+    "OrganicPlatform": {
+      "enum": [
+        "tiktok",
+        "instagram-reels"
+      ],
+      "title": "OrganicPlatform",
+      "type": "string"
+    },
+    "ReviewStatus": {
+      "enum": [
+        "pending",
+        "approved",
+        "rejected",
+        "stale"
+      ],
+      "title": "ReviewStatus",
+      "type": "string"
+    },
+    "Variant": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_hash": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approval Hash"
+        },
+        "approved_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approved At"
+        },
+        "claims_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Claims Hash",
+          "type": "string"
+        },
+        "cover_hash": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cover Hash"
+        },
+        "cover_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cover Path"
+        },
+        "evidence_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Evidence Hash",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 80,
+          "minLength": 2,
+          "title": "Label",
+          "type": "string"
+        },
+        "limitation_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Limitation Hash",
+          "type": "string"
+        },
+        "locked_factual_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Locked Factual Hash",
+          "type": "string"
+        },
+        "media_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Media Hash",
+          "type": "string"
+        },
+        "media_path": {
+          "title": "Media Path",
+          "type": "string"
+        },
+        "review_status": {
+          "$ref": "#/$defs/ReviewStatus",
+          "default": "pending"
+        },
+        "reviewer_identifier": {
+          "anyOf": [
+            {
+              "maxLength": 80,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reviewer Identifier"
+        },
+        "rights_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Rights Hash",
+          "type": "string"
+        },
+        "role": {
+          "$ref": "#/$defs/VariantRole"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "variable": {
+          "$ref": "#/$defs/ExperimentVariable"
+        },
+        "variable_value": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Variable Value",
+          "type": "string"
+        },
+        "variant_id": {
+          "title": "Variant Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "variant_id",
+        "label",
+        "role",
+        "variable",
+        "variable_value",
+        "media_path",
+        "media_hash",
+        "locked_factual_hash",
+        "evidence_hash",
+        "claims_hash",
+        "limitation_hash",
+        "rights_hash"
+      ],
+      "title": "Variant",
+      "type": "object"
+    },
+    "VariantRole": {
+      "enum": [
+        "control",
+        "treatment"
+      ],
+      "title": "VariantRole",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "approval_hash": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Approval Hash"
+    },
+    "approved_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Approved At"
+    },
+    "confidence_level": {
+      "default": 0.95,
+      "maximum": 0.99,
+      "minimum": 0.9,
+      "title": "Confidence Level",
+      "type": "number"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "experiment_id": {
+      "title": "Experiment Id",
+      "type": "string"
+    },
+    "hypothesis": {
+      "maxLength": 500,
+      "minLength": 12,
+      "title": "Hypothesis",
+      "type": "string"
+    },
+    "maximum_window_difference_ratio": {
+      "default": 0.1,
+      "maximum": 0.25,
+      "minimum": 0,
+      "title": "Maximum Window Difference Ratio",
+      "type": "number"
+    },
+    "metric_definitions": {
+      "items": {
+        "$ref": "#/$defs/MetricDefinition"
+      },
+      "minItems": 1,
+      "title": "Metric Definitions",
+      "type": "array"
+    },
+    "minimum_views_per_variant": {
+      "default": 500,
+      "maximum": 10000000,
+      "minimum": 100,
+      "title": "Minimum Views Per Variant",
+      "type": "integer"
+    },
+    "name": {
+      "maxLength": 100,
+      "minLength": 3,
+      "title": "Name",
+      "type": "string"
+    },
+    "platform": {
+      "$ref": "#/$defs/OrganicPlatform"
+    },
+    "primary_metric": {
+      "$ref": "#/$defs/MetricName",
+      "default": "completion-rate"
+    },
+    "project_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Project Id",
+      "type": "string"
+    },
+    "review_status": {
+      "$ref": "#/$defs/ReviewStatus",
+      "default": "pending"
+    },
+    "reviewer_identifier": {
+      "anyOf": [
+        {
+          "maxLength": 80,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reviewer Identifier"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "variable": {
+      "$ref": "#/$defs/ExperimentVariable"
+    },
+    "variants": {
+      "items": {
+        "$ref": "#/$defs/Variant"
+      },
+      "maxItems": 8,
+      "minItems": 2,
+      "title": "Variants",
+      "type": "array"
+    }
+  },
+  "required": [
+    "experiment_id",
+    "project_id",
+    "name",
+    "hypothesis",
+    "platform",
+    "variable",
+    "variants"
+  ],
+  "title": "ExperimentManifest",
+  "type": "object"
+}

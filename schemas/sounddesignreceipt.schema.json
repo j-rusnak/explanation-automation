@@ -1,0 +1,148 @@
+{
+  "$defs": {
+    "SoundDesignEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "cue": {
+          "enum": [
+            "soft-hit",
+            "scan-pulse",
+            "source-click",
+            "contrast-shift",
+            "resolve-tone"
+          ],
+          "title": "Cue",
+          "type": "string"
+        },
+        "event_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Event Id",
+          "type": "string"
+        },
+        "peak_amplitude": {
+          "exclusiveMinimum": 0,
+          "maximum": 0.15,
+          "title": "Peak Amplitude",
+          "type": "number"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "time_seconds": {
+          "maximum": 120,
+          "minimum": 0,
+          "title": "Time Seconds",
+          "type": "number"
+        }
+      },
+      "required": [
+        "event_id",
+        "cue",
+        "time_seconds",
+        "peak_amplitude"
+      ],
+      "title": "SoundDesignEvent",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "duration_seconds": {
+      "exclusiveMinimum": 0,
+      "maximum": 120,
+      "title": "Duration Seconds",
+      "type": "number"
+    },
+    "events": {
+      "items": {
+        "$ref": "#/$defs/SoundDesignEvent"
+      },
+      "maxItems": 15,
+      "minItems": 1,
+      "title": "Events",
+      "type": "array"
+    },
+    "generator_version": {
+      "const": "procedural-accents-v1",
+      "default": "procedural-accents-v1",
+      "title": "Generator Version",
+      "type": "string"
+    },
+    "narration_hash": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Narration Hash"
+    },
+    "output_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Output Hash",
+      "type": "string"
+    },
+    "output_path": {
+      "title": "Output Path",
+      "type": "string"
+    },
+    "preset": {
+      "enum": [
+        "subtle",
+        "present"
+      ],
+      "title": "Preset",
+      "type": "string"
+    },
+    "retention_plan_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Retention Plan Hash",
+      "type": "string"
+    },
+    "retention_plan_version_id": {
+      "title": "Retention Plan Version Id",
+      "type": "string"
+    },
+    "sample_rate": {
+      "const": 48000,
+      "default": 48000,
+      "title": "Sample Rate",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "sound_design_id": {
+      "pattern": "^sound-design-[0-9a-f]{16}$",
+      "title": "Sound Design Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sound_design_id",
+    "preset",
+    "retention_plan_version_id",
+    "retention_plan_hash",
+    "duration_seconds",
+    "events",
+    "output_path",
+    "output_hash"
+  ],
+  "title": "SoundDesignReceipt",
+  "type": "object"
+}

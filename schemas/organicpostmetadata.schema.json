@@ -1,0 +1,178 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "alt_text": {
+      "maxLength": 1000,
+      "minLength": 1,
+      "title": "Alt Text",
+      "type": "string"
+    },
+    "aspect_ratio": {
+      "const": "9:16",
+      "default": "9:16",
+      "title": "Aspect Ratio",
+      "type": "string"
+    },
+    "automated_upload": {
+      "const": false,
+      "default": false,
+      "title": "Automated Upload",
+      "type": "boolean"
+    },
+    "caption_text": {
+      "maxLength": 2200,
+      "minLength": 1,
+      "title": "Caption Text",
+      "type": "string"
+    },
+    "captions_srt_filename": {
+      "const": "captions.srt",
+      "default": "captions.srt",
+      "title": "Captions Srt Filename",
+      "type": "string"
+    },
+    "captions_vtt_filename": {
+      "const": "captions.vtt",
+      "default": "captions.vtt",
+      "title": "Captions Vtt Filename",
+      "type": "string"
+    },
+    "claimed_posted": {
+      "const": false,
+      "default": false,
+      "title": "Claimed Posted",
+      "type": "boolean"
+    },
+    "consent_receipt_id": {
+      "pattern": "^organic-consent-[0-9a-f]{16}$",
+      "title": "Consent Receipt Id",
+      "type": "string"
+    },
+    "consent_state": {
+      "enum": [
+        "pending",
+        "granted",
+        "declined",
+        "revoked"
+      ],
+      "title": "Consent State",
+      "type": "string"
+    },
+    "cover_filename": {
+      "const": "cover.png",
+      "default": "cover.png",
+      "title": "Cover Filename",
+      "type": "string"
+    },
+    "duration_window_seconds": {
+      "default": [
+        45,
+        75
+      ],
+      "maxItems": 2,
+      "minItems": 2,
+      "prefixItems": [
+        {
+          "const": 45,
+          "type": "integer"
+        },
+        {
+          "const": 75,
+          "type": "integer"
+        }
+      ],
+      "title": "Duration Window Seconds",
+      "type": "array"
+    },
+    "evidence_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Evidence Url"
+    },
+    "expected_dimensions": {
+      "const": "1080x1920",
+      "default": "1080x1920",
+      "title": "Expected Dimensions",
+      "type": "string"
+    },
+    "experiment_id": {
+      "pattern": "^exp-[0-9a-f]{16}$",
+      "title": "Experiment Id",
+      "type": "string"
+    },
+    "hashtags": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "title": "Hashtags",
+      "type": "array"
+    },
+    "manual_upload_authorized": {
+      "title": "Manual Upload Authorized",
+      "type": "boolean"
+    },
+    "metadata_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Metadata Hash",
+      "type": "string"
+    },
+    "metadata_id": {
+      "pattern": "^organic-metadata-[0-9a-f]{16}$",
+      "title": "Metadata Id",
+      "type": "string"
+    },
+    "platform": {
+      "enum": [
+        "tiktok",
+        "instagram-reels"
+      ],
+      "title": "Platform",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "variant_id": {
+      "pattern": "^var-[0-9a-f]{16}$",
+      "title": "Variant Id",
+      "type": "string"
+    },
+    "video_filename": {
+      "const": "video.mp4",
+      "default": "video.mp4",
+      "title": "Video Filename",
+      "type": "string"
+    }
+  },
+  "required": [
+    "metadata_id",
+    "experiment_id",
+    "variant_id",
+    "platform",
+    "title",
+    "caption_text",
+    "alt_text",
+    "hashtags",
+    "consent_receipt_id",
+    "consent_state",
+    "manual_upload_authorized",
+    "metadata_hash"
+  ],
+  "title": "OrganicPostMetadata",
+  "type": "object"
+}

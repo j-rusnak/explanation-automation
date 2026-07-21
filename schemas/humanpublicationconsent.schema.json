@@ -1,0 +1,112 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "confirmation": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Confirmation"
+    },
+    "decided_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Decided At"
+    },
+    "experiment_id": {
+      "pattern": "^exp-[0-9a-f]{16}$",
+      "title": "Experiment Id",
+      "type": "string"
+    },
+    "package_input_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Package Input Hash",
+      "type": "string"
+    },
+    "platform": {
+      "enum": [
+        "tiktok",
+        "instagram-reels"
+      ],
+      "title": "Platform",
+      "type": "string"
+    },
+    "receipt_id": {
+      "pattern": "^organic-consent-[0-9a-f]{16}$",
+      "title": "Receipt Id",
+      "type": "string"
+    },
+    "reviewer_identifier": {
+      "anyOf": [
+        {
+          "maxLength": 120,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reviewer Identifier"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "state": {
+      "enum": [
+        "pending",
+        "granted",
+        "declined",
+        "revoked"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "supersedes_receipt_id": {
+      "anyOf": [
+        {
+          "pattern": "^organic-consent-[0-9a-f]{16}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Supersedes Receipt Id"
+    },
+    "variant_id": {
+      "pattern": "^var-[0-9a-f]{16}$",
+      "title": "Variant Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "receipt_id",
+    "experiment_id",
+    "variant_id",
+    "platform",
+    "package_input_hash",
+    "state"
+  ],
+  "title": "HumanPublicationConsent",
+  "type": "object"
+}
