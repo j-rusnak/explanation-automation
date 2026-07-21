@@ -1,5 +1,6 @@
 import React from "react";
 import { useCurrentFrame, useVideoConfig } from "remotion";
+import { RollingShutterHero } from "./hero-object";
 import {
   Frame,
   Panel,
@@ -32,6 +33,77 @@ export const Comparison: React.FC<PrimitiveProps> = ({ scene, themeName }) => {
     value: "",
   };
   const feature = typed?.feature ?? "straight-edge";
+  if (themeName === "kinetic-pop") {
+    return (
+      <Frame scene={scene} tokens={tokens}>
+        <SceneHeadline scene={scene} tokens={tokens} eyebrow="Side by side" />
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 20,
+            height: 650,
+          }}
+        >
+          {[left, right].map((side, index) => {
+            const distorted = comparisonSideIsDistorted(
+              "distorted" in side ? side.distorted : undefined,
+              index,
+            );
+            return (
+              <div
+                key={side.label}
+                style={{
+                  minWidth: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  overflow: "hidden",
+                }}
+              >
+                <div
+                  style={{
+                    alignSelf: "stretch",
+                    color: distorted ? tokens.danger : tokens.accent,
+                    fontSize: 28,
+                    fontWeight: 900,
+                    textAlign: "center",
+                  }}
+                >
+                  {side.label}
+                </div>
+                <RollingShutterHero
+                  tokens={tokens}
+                  idPrefix={`${scene.scene_id}-comparison-${index}`}
+                  progress={progress}
+                  scanProgress={progress}
+                  distortion={distorted ? 0.78 : 0}
+                  showReference={distorted}
+                  width={435}
+                  height={440}
+                />
+                <div style={{ textAlign: "center", minHeight: 86 }}>
+                  <strong style={{ fontSize: 31 }}>{side.value}</strong>
+                  {"detail" in side && side.detail ? (
+                    <div
+                      style={{
+                        marginTop: 7,
+                        fontSize: 21,
+                        color: tokens.muted,
+                      }}
+                    >
+                      {side.detail}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Frame>
+    );
+  }
   return (
     <Frame scene={scene} tokens={tokens}>
       <SceneHeadline scene={scene} tokens={tokens} eyebrow="Side by side" />
@@ -104,6 +176,81 @@ export const LimitationCard: React.FC<PrimitiveProps> = ({
     "kind" in visual && visual.kind === "limitation"
       ? visual.applies_when
       : null;
+  if (themeName === "kinetic-pop") {
+    return (
+      <Frame scene={scene} tokens={tokens}>
+        <div
+          style={{
+            minHeight: 690,
+            position: "relative",
+            overflow: "hidden",
+            borderRadius: tokens.radius,
+            border: `6px solid ${tokens.danger}`,
+            background: `linear-gradient(145deg, ${tokens.panelBorder} 0%, ${tokens.panelBorder} 48%, ${tokens.panel} 48%, ${tokens.panel} 100%)`,
+            padding: "49px 47px",
+            boxShadow: `18px 18px 0 ${tokens.danger}`,
+          }}
+        >
+          <div
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              height: 21,
+              background: `repeating-linear-gradient(135deg, ${tokens.warning} 0 22px, ${tokens.background} 22px 44px)`,
+            }}
+          />
+          <div
+            style={{
+              display: "inline-block",
+              padding: "10px 16px",
+              background: tokens.warning,
+              color: tokens.background,
+              fontSize: 24,
+              fontWeight: 900,
+              letterSpacing: 3,
+              transform: "rotate(-2deg)",
+            }}
+          >
+            SCOPE RESET
+          </div>
+          <div style={{ margin: "28px 0 30px" }}>
+            <SceneHeadline scene={scene} tokens={tokens} />
+          </div>
+          {limitation ? (
+            <p
+              style={{
+                maxWidth: 830,
+                fontSize: 43,
+                lineHeight: 1.22,
+                color: tokens.text,
+                margin: 0,
+                fontWeight: 800,
+              }}
+            >
+              {limitation}
+            </p>
+          ) : null}
+          {applies ? (
+            <div
+              style={{
+                marginTop: 34,
+                padding: "15px 19px",
+                borderLeft: `8px solid ${tokens.danger}`,
+                background: `${tokens.background}bb`,
+                color: tokens.warning,
+                fontSize: 25,
+                fontWeight: 800,
+              }}
+            >
+              Applies when: {applies}
+            </div>
+          ) : null}
+        </div>
+      </Frame>
+    );
+  }
   return (
     <Frame scene={scene} tokens={tokens}>
       <Panel

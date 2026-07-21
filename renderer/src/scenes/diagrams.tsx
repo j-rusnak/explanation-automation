@@ -3,6 +3,7 @@ import { useCurrentFrame, useVideoConfig } from "remotion";
 import { sceneProgressFor } from "../pacing/rhythm";
 import type { SceneData } from "../schemas/project";
 import type { ThemeTokens } from "../themes/tokens";
+import { RollingShutterHero } from "./hero-object";
 import {
   Frame,
   Panel,
@@ -45,16 +46,14 @@ const GraphView: React.FC<{
   scene: SceneData;
   tokens: ThemeTokens;
   sequential?: boolean;
-}> = ({ scene, tokens, sequential = false }) => {
+  bare?: boolean;
+}> = ({ scene, tokens, sequential = false, bare = false }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const progress = progressFor(scene, frame, fps);
   const graph = graphFromScene(scene);
-  return (
-    <Panel
-      tokens={tokens}
-      style={{ position: "relative", height: 650, overflow: "hidden" }}
-    >
+  const content = (
+    <>
       <svg
         aria-hidden="true"
         style={{
@@ -122,7 +121,90 @@ const GraphView: React.FC<{
           </div>
         );
       })}
+    </>
+  );
+  const style: React.CSSProperties = {
+    position: "relative",
+    height: 650,
+    overflow: "hidden",
+  };
+  return bare ? (
+    <div style={style}>{content}</div>
+  ) : (
+    <Panel tokens={tokens} style={style}>
+      {content}
     </Panel>
+  );
+};
+
+const KineticMechanismHero: React.FC<{
+  scene: SceneData;
+  tokens: ThemeTokens;
+}> = ({ scene, tokens }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const progress = progressFor(scene, frame, fps);
+  const graph = graphFromScene(scene);
+  return (
+    <div
+      style={{
+        position: "relative",
+        height: 660,
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+      }}
+    >
+      <RollingShutterHero
+        tokens={tokens}
+        idPrefix={`${scene.scene_id}-mechanism`}
+        progress={progress}
+        scanProgress={progress}
+        distortion={0.68}
+        showReference
+        width={660}
+        height={535}
+      />
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          bottom: 0,
+          display: "flex",
+          justifyContent: "center",
+          gap: 13,
+          flexWrap: "wrap",
+        }}
+      >
+        {graph.nodes.map((node, index) => {
+          const reveal = Math.max(
+            0,
+            Math.min(1, progress * graph.nodes.length - index + 0.45),
+          );
+          const active =
+            node.state === "active" || graph.activeStep === node.id;
+          return (
+            <div
+              key={node.id}
+              style={{
+                padding: "12px 17px",
+                borderRadius: 999,
+                border: `3px solid ${active ? tokens.warning : tokens.accent}`,
+                background: active ? tokens.warning : `${tokens.background}ee`,
+                color: active ? tokens.background : tokens.text,
+                fontSize: 21,
+                fontWeight: 800,
+                opacity: 0.28 + reveal * 0.72,
+                transform: `translateY(${(1 - reveal) * 16}px)`,
+              }}
+            >
+              {node.label}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 };
 
@@ -131,10 +213,19 @@ export const MechanismDiagram: React.FC<PrimitiveProps> = ({
   themeName,
 }) => {
   const tokens = sceneTheme(scene, themeName);
+  const useHero = themeName === "kinetic-pop" && scene.layout === "hero";
   return (
     <Frame scene={scene} tokens={tokens}>
       <SceneHeadline scene={scene} tokens={tokens} eyebrow="How it works" />
-      <GraphView scene={scene} tokens={tokens} />
+      {useHero ? (
+        <KineticMechanismHero scene={scene} tokens={tokens} />
+      ) : (
+        <GraphView
+          scene={scene}
+          tokens={tokens}
+          bare={themeName === "kinetic-pop"}
+        />
+      )}
     </Frame>
   );
 };
@@ -154,6 +245,7 @@ export const ParameterSimulation: React.FC<PrimitiveProps> = ({
   themeName,
 }) => {
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   const tokens = sceneTheme(scene, themeName);
   const visual = scene.visual;
   const typed =
@@ -169,6 +261,78 @@ export const ParameterSimulation: React.FC<PrimitiveProps> = ({
     : !("kind" in visual)
       ? [visual.left, visual.right]
       : ["Low", "High"];
+  if (themeName === "kinetic-pop") {
+    const progress = progressFor(scene, frame, fps);
+    return (
+      <Frame scene={scene} tokens={tokens}>
+        <SceneHeadline
+          scene={scene}
+          tokens={tokens}
+          eyebrow="Parameter simulation"
+        />
+        <div
+          style={{
+            height: 650,
+            display: "grid",
+            gridTemplateColumns: "0.62fr 1.38fr",
+            alignItems: "center",
+            gap: 20,
+          }}
+        >
+          <div>
+            {typed ? (
+              <>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "baseline",
+                    gap: 11,
+                    color: tokens.warning,
+                  }}
+                >
+                  <span style={{ fontSize: 88, fontWeight: 900 }}>
+                    {typed.value}
+                  </span>
+                  <span style={{ fontSize: 31, fontWeight: 800 }}>
+                    {typed.unit}
+                  </span>
+                </div>
+                <div
+                  style={{
+                    color: tokens.muted,
+                    fontSize: 24,
+                    lineHeight: 1.2,
+                  }}
+                >
+                  {typed.parameter_label}
+                </div>
+              </>
+            ) : null}
+            <div
+              style={{
+                marginTop: 31,
+                color: tokens.accent,
+                fontSize: 25,
+                fontWeight: 800,
+              }}
+            >
+              {labels[0]} → {labels[1]}
+            </div>
+          </div>
+          <RollingShutterHero
+            tokens={tokens}
+            idPrefix={`${scene.scene_id}-parameter`}
+            progress={progress}
+            scanProgress={progress}
+            distortion={normalized * 0.82}
+            showReference
+            width={595}
+            height={535}
+          />
+        </div>
+      </Frame>
+    );
+  }
   return (
     <Frame scene={scene} tokens={tokens}>
       <SceneHeadline
@@ -238,6 +402,71 @@ export const RasterScan: React.FC<PrimitiveProps> = ({ scene, themeName }) => {
     visual.subject === "blade" || visual.subject === "pole"
       ? "straight-edge"
       : visual.subject;
+  if (themeName === "kinetic-pop") {
+    return (
+      <Frame scene={scene} tokens={tokens}>
+        <SceneHeadline
+          scene={scene}
+          tokens={tokens}
+          eyebrow="Readout over time"
+        />
+        <div
+          style={{
+            height: 665,
+            position: "relative",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+          }}
+        >
+          <RollingShutterHero
+            tokens={tokens}
+            idPrefix={`${scene.scene_id}-raster`}
+            progress={progress}
+            scanProgress={scanProgress}
+            distortion={visual.distortion}
+            direction={visual.direction}
+            immediateProof={scene.order === 0}
+            showReference
+            width={745}
+            height={610}
+          />
+          <div
+            style={{
+              position: "absolute",
+              left: 0,
+              top: 42,
+              padding: "12px 17px",
+              borderRadius: 999,
+              background: tokens.accent,
+              color: tokens.background,
+              fontSize: 23,
+              fontWeight: 900,
+            }}
+          >
+            {visual.before_label}
+          </div>
+          <div
+            style={{
+              position: "absolute",
+              right: 0,
+              bottom: 36,
+              maxWidth: 250,
+              textAlign: "right",
+              color: tokens.warning,
+              fontSize: 25,
+              fontWeight: 900,
+            }}
+          >
+            {visual.after_label}
+            <div style={{ color: tokens.muted, fontSize: 20, marginTop: 7 }}>
+              {visual.scan_label}
+            </div>
+          </div>
+        </div>
+      </Frame>
+    );
+  }
   return (
     <Frame scene={scene} tokens={tokens}>
       <SceneHeadline
@@ -439,6 +668,62 @@ export const GridWarp: React.FC<PrimitiveProps> = ({ scene, themeName }) => {
       ? scene.visual
       : null;
   if (!visual) return null;
+  if (themeName === "kinetic-pop") {
+    return (
+      <Frame scene={scene} tokens={tokens}>
+        <SceneHeadline
+          scene={scene}
+          tokens={tokens}
+          eyebrow="Geometry changes"
+        />
+        <div
+          style={{
+            height: 650,
+            position: "relative",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <RollingShutterHero
+            tokens={tokens}
+            idPrefix={`${scene.scene_id}-grid-warp`}
+            progress={progress}
+            scanProgress={progress}
+            distortion={visual.skew}
+            curvature={visual.curvature}
+            showReference
+            width={720}
+            height={590}
+          />
+          <div
+            style={{
+              position: "absolute",
+              left: 3,
+              top: 52,
+              color: tokens.accent,
+              fontSize: 24,
+              fontWeight: 900,
+            }}
+          >
+            {visual.before_label}
+          </div>
+          <div
+            style={{
+              position: "absolute",
+              right: 3,
+              bottom: 50,
+              color: tokens.warning,
+              fontSize: 26,
+              fontWeight: 900,
+            }}
+          >
+            {visual.after_label}
+          </div>
+        </div>
+      </Frame>
+    );
+  }
   return (
     <Frame scene={scene} tokens={tokens}>
       <SceneHeadline scene={scene} tokens={tokens} eyebrow="Geometry changes" />
