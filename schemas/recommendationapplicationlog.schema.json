@@ -1,0 +1,152 @@
+{
+  "$defs": {
+    "RecommendationAction": {
+      "enum": [
+        "adopt-variant",
+        "keep-control",
+        "collect-more-data"
+      ],
+      "title": "RecommendationAction",
+      "type": "string"
+    },
+    "RecommendationApplication": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/RecommendationAction"
+        },
+        "application_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Application Hash",
+          "type": "string"
+        },
+        "application_id": {
+          "pattern": "^application-[0-9a-f]{16}$",
+          "title": "Application Id",
+          "type": "string"
+        },
+        "applied_at": {
+          "format": "date-time",
+          "title": "Applied At",
+          "type": "string"
+        },
+        "applied_candidate_id": {
+          "title": "Applied Candidate Id",
+          "type": "string"
+        },
+        "changed_production_default": {
+          "title": "Changed Production Default",
+          "type": "boolean"
+        },
+        "experiment_id": {
+          "pattern": "^exp-[0-9a-f]{16}$",
+          "title": "Experiment Id",
+          "type": "string"
+        },
+        "invalidated_gates": {
+          "items": {
+            "enum": [
+              "storyboard",
+              "rights",
+              "final"
+            ],
+            "type": "string"
+          },
+          "maxItems": 3,
+          "title": "Invalidated Gates",
+          "type": "array"
+        },
+        "previous_candidate_id": {
+          "title": "Previous Candidate Id",
+          "type": "string"
+        },
+        "previous_selection_id": {
+          "title": "Previous Selection Id",
+          "type": "string"
+        },
+        "recommendation_approval_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Recommendation Approval Hash",
+          "type": "string"
+        },
+        "recommendation_id": {
+          "pattern": "^rec-[0-9a-f]{16}$",
+          "title": "Recommendation Id",
+          "type": "string"
+        },
+        "resulting_selection_id": {
+          "title": "Resulting Selection Id",
+          "type": "string"
+        },
+        "reviewer_identifier": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Reviewer Identifier",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "variable": {
+          "const": "cover",
+          "default": "cover",
+          "title": "Variable",
+          "type": "string"
+        },
+        "variant_id": {
+          "pattern": "^var-[0-9a-f]{16}$",
+          "title": "Variant Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "application_id",
+        "experiment_id",
+        "recommendation_id",
+        "recommendation_approval_hash",
+        "action",
+        "variant_id",
+        "previous_candidate_id",
+        "applied_candidate_id",
+        "previous_selection_id",
+        "resulting_selection_id",
+        "changed_production_default",
+        "reviewer_identifier",
+        "applied_at",
+        "application_hash"
+      ],
+      "title": "RecommendationApplication",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "applications": {
+      "items": {
+        "$ref": "#/$defs/RecommendationApplication"
+      },
+      "maxItems": 1000,
+      "title": "Applications",
+      "type": "array"
+    },
+    "experiment_id": {
+      "pattern": "^exp-[0-9a-f]{16}$",
+      "title": "Experiment Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "experiment_id"
+  ],
+  "title": "RecommendationApplicationLog",
+  "type": "object"
+}

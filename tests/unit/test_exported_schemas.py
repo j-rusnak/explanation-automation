@@ -14,6 +14,7 @@ from techshort.experiments import (
     ExperimentManifest,
     ExperimentReviewLog,
     ObservationLog,
+    RecommendationApplicationLog,
     RecommendationLog,
 )
 from techshort.publication.models import (
@@ -46,6 +47,7 @@ PERSISTED_WORKFLOW_MODELS = (
     ObservationLog,
     RecommendationLog,
     ExperimentReviewLog,
+    RecommendationApplicationLog,
     OrganicPackageRequest,
     HumanPublicationConsent,
     OrganicPostMetadata,

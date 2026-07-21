@@ -36,6 +36,7 @@ from techshort.experiments import (
     ExperimentManifest,
     ExperimentReviewLog,
     ObservationLog,
+    RecommendationApplicationLog,
     RecommendationLog,
 )
 from techshort.publication.models import (
@@ -74,6 +75,7 @@ MODELS = (
     ObservationLog,
     RecommendationLog,
     ExperimentReviewLog,
+    RecommendationApplicationLog,
     OrganicPackageRequest,
     HumanPublicationConsent,
     OrganicPostMetadata,
