@@ -10,6 +10,9 @@ from techshort.generation.editorial.retention import (
     critique_retention,
 )
 from techshort.generation.editorial.script import build_rolling_shutter_script
+from techshort.generation.editorial.storyboard_context import (
+    build_storyboard_retention_context,
+)
 
 __all__ = [
     "build_rolling_shutter_beat_plan",
@@ -17,6 +20,7 @@ __all__ = [
     "build_rolling_shutter_script",
     "build_rolling_shutter_storyboard_guidance",
     "build_rolling_shutter_retention_plan",
+    "build_storyboard_retention_context",
     "critique_editorial",
     "critique_retention",
     "critique_visual",
