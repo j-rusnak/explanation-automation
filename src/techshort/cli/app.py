@@ -14,8 +14,14 @@ from rich.console import Console
 from rich.table import Table
 
 from techshort import __version__
-from techshort.alignment import cues_from_script, write_caption_files
+from techshort.alignment import (
+    register_active_synthesis_timing,
+    resolve_caption_timing,
+    write_caption_files,
+)
 from techshort.audio import (
+    KokoroLocalNarrationProvider,
+    KokoroNarrationUnavailable,
     LocalNarrationUnavailable,
     WindowsSapiNarrationProvider,
     active_audio,
@@ -23,6 +29,8 @@ from techshort.audio import (
     import_transcript,
     probe_duration,
     set_narration_mode,
+    setup_kokoro_model,
+    synthesize_kokoro_narration,
     synthesize_local_narration,
 )
 from techshort.audio.sound_design import generate_sound_design
@@ -119,6 +127,7 @@ RIGHTS_STATUSES = {
     "restricted",
 }
 ORGANIC_PLATFORMS = {"tiktok", "instagram-reels"}
+NARRATION_PROVIDERS = {"kokoro", "kokoro-local", "sapi", "windows-sapi"}
 MAX_CLI_JSON_BYTES = 512 * 1024
 
 
@@ -206,6 +215,13 @@ def _provider(value: str) -> str:
     return normalized
 
 
+def _narration_provider(value: str) -> Literal["kokoro-local", "windows-sapi"]:
+    normalized = value.casefold()
+    if normalized not in NARRATION_PROVIDERS:
+        raise ValueError("narration provider must be kokoro or sapi")
+    return "kokoro-local" if normalized in {"kokoro", "kokoro-local"} else "windows-sapi"
+
+
 def _package_version(name: str) -> str | None:
     package_path = Path("node_modules") / name / "package.json"
     if not package_path.is_file():
@@ -261,6 +277,8 @@ def doctor(
             f"{len(local_voices)} enabled Windows System.Speech voice(s): "
             + ", ".join(voice.name for voice in local_voices)
         )
+    neural_voice_provider = KokoroLocalNarrationProvider()
+    neural_speech_ready, neural_speech_message = neural_voice_provider.readiness()
     configured_whisper = os.getenv("TECHSHORT_WHISPER_CLI")
     whisper = (
         shutil.which(configured_whisper)
@@ -329,6 +347,11 @@ def doctor(
             "required": False,
             "ok": local_speech_ready,
             "value": local_speech_message,
+        },
+        "neural_speech": {
+            "required": False,
+            "ok": neural_speech_ready,
+            "value": neural_speech_message,
         },
     }
     overall = all(row["ok"] for row in details.values() if row["required"])
@@ -645,21 +668,65 @@ def audio_import_transcript(slug: str, transcript_file: Path) -> None:
         fail(str(exc))
 
 
+@audio_app.command("setup")
+def audio_setup(
+    provider: Annotated[str, typer.Option("--provider")] = "kokoro",
+    cache_directory: Annotated[Path | None, typer.Option("--cache-dir")] = None,
+    yes: Annotated[
+        bool,
+        typer.Option("--yes", help="Allow the one-time pinned model download."),
+    ] = False,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Explicitly install a local narration model; normal synthesis stays offline."""
+
+    try:
+        selected = _narration_provider(provider)
+        if selected != "kokoro-local":
+            raise ValueError("Windows System.Speech uses installed voices and needs no setup")
+        if not yes:
+            raise ValueError(
+                "Kokoro setup downloads the pinned local model; rerun with --yes to allow it"
+            )
+        manifest = setup_kokoro_model(cache_directory=cache_directory)
+        if json_output:
+            typer.echo(manifest.model_dump_json(indent=2))
+            return
+        console.print(
+            f"Installed pinned Kokoro model revision {manifest.revision} "
+            f"({manifest.total_bytes:,} bytes)"
+        )
+        console.print(
+            "Synthesis now runs locally with remote model access disabled. "
+            "Voice-output rights still require human review."
+        )
+    except (OSError, ValueError, LocalNarrationUnavailable, KokoroNarrationUnavailable) as exc:
+        fail(str(exc))
+
+
 @audio_app.command("voices")
 def audio_voices(
+    provider: Annotated[str, typer.Option("--provider")] = "kokoro",
+    cache_directory: Annotated[Path | None, typer.Option("--cache-dir")] = None,
     json_output: Annotated[bool, typer.Option("--json", help="Machine-readable output.")] = False,
 ) -> None:
-    """List enabled zero-cost Windows System.Speech voices."""
+    """List allowlisted neural voices or installed Windows fallback voices."""
 
-    provider = WindowsSapiNarrationProvider()
     try:
-        voices = provider.list_voices()
-    except LocalNarrationUnavailable as exc:
+        selected = _narration_provider(provider)
+        voice_provider = (
+            KokoroLocalNarrationProvider(cache_directory=cache_directory)
+            if selected == "kokoro-local"
+            else WindowsSapiNarrationProvider()
+        )
+        voices = voice_provider.list_voices()
+        provider_ready, provider_message = voice_provider.readiness()
+    except (ValueError, LocalNarrationUnavailable, KokoroNarrationUnavailable) as exc:
         if json_output:
             typer.echo(
                 json.dumps(
                     {
-                        "provider": provider.provider_id,
+                        "provider": provider,
                         "ready": False,
                         "message": str(exc),
                         "voices": [],
@@ -670,15 +737,15 @@ def audio_voices(
             raise typer.Exit(1) from None
         fail(str(exc))
     payload = {
-        "provider": provider.provider_id,
-        "ready": True,
-        "message": f"{len(voices)} enabled local voice(s)",
+        "provider": voice_provider.provider_id,
+        "ready": provider_ready,
+        "message": provider_message,
         "voices": [asdict(voice) for voice in voices],
     }
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
         return
-    table = Table(title="Local narration voices")
+    table = Table(title=f"Local narration voices ({voice_provider.provider_id})")
     table.add_column("Name")
     table.add_column("Culture")
     table.add_column("Gender")
@@ -686,12 +753,17 @@ def audio_voices(
     for voice in voices:
         table.add_row(voice.name, voice.culture, voice.gender, voice.age)
     console.print(table)
+    if not provider_ready:
+        console.print(f"[yellow]Not ready to synthesize:[/yellow] {provider_message}")
 
 
 @audio_app.command("synthesize")
 def audio_synthesize(
     slug: str,
+    provider: Annotated[str, typer.Option("--provider")] = "kokoro",
+    cache_directory: Annotated[Path | None, typer.Option("--cache-dir")] = None,
     voice_name: Annotated[str | None, typer.Option("--voice")] = None,
+    speed: Annotated[float, typer.Option(min=0.75, max=1.5)] = 1.1,
     rate: Annotated[int, typer.Option(min=-10, max=10)] = 1,
     volume: Annotated[int, typer.Option(min=1, max=100)] = 100,
     rights_status: Annotated[
@@ -705,20 +777,34 @@ def audio_synthesize(
     required_attribution: Annotated[str | None, typer.Option("--required-attribution")] = None,
     json_output: Annotated[bool, typer.Option("--json")] = False,
 ) -> None:
-    """Synthesize the current human-approved script with an installed local voice."""
+    """Synthesize approved segments locally and register deterministic caption timing."""
 
     try:
         if rights_status not in RIGHTS_STATUSES:
             raise ValueError("invalid rights status")
-        result = synthesize_local_narration(
-            store(slug),
-            voice_name=voice_name,
-            rate=rate,
-            volume=volume,
-            rights_status=rights_status,
-            license_name=license_name,
-            required_attribution=required_attribution,
-        )
+        selected = _narration_provider(provider)
+        target = store(slug)
+        if selected == "kokoro-local":
+            result = synthesize_kokoro_narration(
+                target,
+                cache_directory=cache_directory,
+                voice_name=voice_name,
+                speed=speed,
+                rights_status=rights_status,
+                license_name=license_name,
+                required_attribution=required_attribution,
+            )
+        else:
+            result = synthesize_local_narration(
+                target,
+                voice_name=voice_name,
+                rate=rate,
+                volume=volume,
+                rights_status=rights_status,
+                license_name=license_name,
+                required_attribution=required_attribution,
+            )
+        timing = register_active_synthesis_timing(target)
         payload = {
             "provider": result.provider,
             "voice": asdict(result.voice),
@@ -728,6 +814,11 @@ def audio_synthesize(
             "duration_seconds": result.duration_seconds,
             "rate": result.rate,
             "volume": result.volume,
+            "speed": result.speed,
+            "timing_id": timing.timing_id,
+            "timing_quality": timing.quality,
+            "timing_coverage": timing.alignment.coverage,
+            "timing_fallback_reason": timing.alignment.fallback_reason,
             "rights_status": rights_status,
         }
         if json_output:
@@ -738,12 +829,15 @@ def audio_synthesize(
                 f"{result.audio_path}"
             )
             console.print(f"Receipt: {result.receipt_path}")
+            console.print(
+                f"Timing: {timing.quality} ({timing.alignment.coverage:.0%} exact coverage)"
+            )
             if rights_status in {"unknown", "restricted", "citation-only"}:
                 console.print(
                     "[yellow]Embedding remains blocked until voice-output rights are "
                     "explicitly reviewed.[/yellow]"
                 )
-    except (OSError, ValueError, LocalNarrationUnavailable) as exc:
+    except (OSError, ValueError, LocalNarrationUnavailable, KokoroNarrationUnavailable) as exc:
         fail(str(exc))
 
 
@@ -771,11 +865,38 @@ def audio_sound_design(
         fail(str(exc))
 
 
+@audio_app.command("timing")
+def audio_timing(
+    slug: str,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Rebuild approved-token timing from the current synthetic narration receipt."""
+
+    try:
+        timing = register_active_synthesis_timing(store(slug))
+        if json_output:
+            typer.echo(timing.model_dump_json(indent=2))
+            return
+        console.print(
+            f"Registered {timing.quality} timing {timing.timing_id}: "
+            f"{timing.alignment.coverage:.0%} exact approved-token coverage"
+        )
+        if timing.alignment.fallback_reason:
+            console.print(f"[yellow]Fallback:[/yellow] {timing.alignment.fallback_reason}")
+    except (OSError, ValueError, LocalNarrationUnavailable, KokoroNarrationUnavailable) as exc:
+        fail(str(exc))
+
+
 def _generate_captions(target: ProjectStore) -> tuple[Path, Path]:
     script = load_model(target.path("script/script.json"), ScriptManifest)
     narration = active_audio(target)
     narration_duration = probe_duration(narration) if narration else None
-    cues = cues_from_script(script, target_duration=narration_duration)
+    resolution = resolve_caption_timing(
+        target,
+        script,
+        target_duration=narration_duration,
+    )
+    cues = list(resolution.cues)
     old_hashes = {
         path.name: sha256_file(path)
         for path in (target.path("captions/captions.srt"), target.path("captions/captions.vtt"))

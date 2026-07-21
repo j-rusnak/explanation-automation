@@ -45,11 +45,18 @@ def test_audio_help_exposes_transcript_and_rights_metadata() -> None:
     result = runner.invoke(app, ["audio", "--help"])
     assert result.exit_code == 0
     assert "import-transcript" in result.stdout
+    assert "setup" in result.stdout
+    assert "synthesize" in result.stdout
 
     import_help = runner.invoke(app, ["audio", "import", "--help"])
     assert import_help.exit_code == 0
     for option in ("--rights-status", "--creator", "--license", "--source-url"):
         assert option in import_help.stdout
+
+    synthesize_help = runner.invoke(app, ["audio", "synthesize", "--help"])
+    assert synthesize_help.exit_code == 0
+    for option in ("--provider", "--voice", "--speed", "--rights-status"):
+        assert option in synthesize_help.stdout
 
 
 def test_machine_status_lists_actionable_gate_blockers(

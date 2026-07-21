@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from typer.testing import CliRunner
@@ -217,11 +218,14 @@ def test_audio_voice_discovery_and_synthesis_are_machine_readable(
     class FixtureProvider:
         provider_id = "windows-sapi"
 
+        def readiness(self) -> tuple[bool, str]:
+            return True, "fixture ready"
+
         def list_voices(self) -> list[NarrationVoice]:
             return [voice]
 
     monkeypatch.setattr("techshort.cli.app.WindowsSapiNarrationProvider", FixtureProvider)
-    voices = runner.invoke(app, ["audio", "voices", "--json"])
+    voices = runner.invoke(app, ["audio", "voices", "--provider", "sapi", "--json"])
     assert voices.exit_code == 0
     assert json.loads(voices.stdout)["voices"][0]["name"] == "Fixture Voice"
 
@@ -245,12 +249,22 @@ def test_audio_voice_discovery_and_synthesis_are_machine_readable(
         )
 
     monkeypatch.setattr("techshort.cli.app.synthesize_local_narration", fake_synthesize)
+    monkeypatch.setattr(
+        "techshort.cli.app.register_active_synthesis_timing",
+        lambda _store: SimpleNamespace(
+            timing_id="timing-1111111111111111",
+            quality="engine-reported",
+            alignment=SimpleNamespace(coverage=1.0, fallback_reason=None),
+        ),
+    )
     synthesized = runner.invoke(
         app,
         [
             "audio",
             "synthesize",
             "audio-cli",
+            "--provider",
+            "sapi",
             "--voice",
             "Fixture Voice",
             "--rate",
@@ -263,6 +277,7 @@ def test_audio_voice_discovery_and_synthesis_are_machine_readable(
     assert synthesized.exit_code == 0, synthesized.stdout
     payload = json.loads(synthesized.stdout)
     assert payload["duration_seconds"] == 52.5
+    assert payload["timing_quality"] == "engine-reported"
     assert payload["rights_status"] == "unknown"
     assert observed == {
         "slug": "audio-cli",
