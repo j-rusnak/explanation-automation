@@ -245,6 +245,39 @@ def test_caption_timing_and_flashing_proxies_are_actionable() -> None:
     assert checks["motion-intensity-flashing"].details["maximum_flash_events_per_second"] == "4.000"
 
 
+def test_precise_run_does_not_masquerade_as_sustained_energetic_motion() -> None:
+    payload = _fixture("timeline.json").model_dump(mode="json")
+    scenes = payload["scenes"]
+    assert isinstance(scenes, list)
+    for scene in scenes[:3]:
+        assert isinstance(scene, dict)
+        scene["motion_intensity"] = "precise"
+    last_scene = scenes[-1]
+    assert isinstance(last_scene, dict)
+    last_scene["motion_intensity"] = "energetic"
+
+    result = evaluate_creative_quality(CreativeQualityInput.model_validate(payload))
+    check = next(item for item in result.checks if item.check_id == "motion-intensity-flashing")
+
+    assert check.status == "pass"
+    assert check.details["longest_energetic_scene_run"] == "1"
+
+
+def test_three_consecutive_energetic_scenes_still_warn() -> None:
+    payload = _fixture("timeline.json").model_dump(mode="json")
+    scenes = payload["scenes"]
+    assert isinstance(scenes, list)
+    for scene in scenes[:3]:
+        assert isinstance(scene, dict)
+        scene["motion_intensity"] = "energetic"
+
+    result = evaluate_creative_quality(CreativeQualityInput.model_validate(payload))
+    check = next(item for item in result.checks if item.check_id == "motion-intensity-flashing")
+
+    assert check.status == "warning"
+    assert check.details["longest_energetic_scene_run"] == "3"
+
+
 def test_retention_roles_are_singular() -> None:
     payload = _fixture("architecture.json").model_dump(mode="json")
     scenes = payload["scenes"]
@@ -398,6 +431,23 @@ def test_current_manifest_adapter_preserves_quality_metadata() -> None:
     assert checks["exposed-internal-ids"] == "pass"
     assert checks["primitive-layout-diversity"] == "pass"
     assert checks["static-motion-budget"] == "pass"
+    motion = next(
+        check
+        for check in evaluate_creative_quality(snapshot).checks
+        if check.check_id == "motion-intensity-flashing"
+    )
+    assert motion.status == "pass"
+    assert motion.details["longest_energetic_scene_run"] == "2"
+    energy_by_role = {
+        role: {scene.motion_intensity for scene in snapshot.scenes if scene.engagement_role == role}
+        for role in {"cold-open", "rehook", "payoff", "limitation"}
+    }
+    assert energy_by_role == {
+        "cold-open": {"energetic"},
+        "rehook": {"energetic"},
+        "payoff": {"precise"},
+        "limitation": {"calm"},
+    }
 
     retimed = creative_input_from_manifests(
         storyboard,

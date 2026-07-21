@@ -313,6 +313,15 @@ def test_builds_provider_neutral_locked_retention_chain() -> None:
         "limitation-reframe",
         "final-payoff",
     } <= {event.event_kind for event in plan.attention_events}
+    expected_energy = {
+        "open": "high",
+        "develop": "medium",
+        "re-hook": "high",
+        "evidence-payoff": "medium",
+        "limitation": "low",
+        "resolve": "medium",
+    }
+    assert all(beat.energy == expected_energy[beat.cadence_role] for beat in plan.cadence.beats)
     assert artifacts.retention_critique.blocking is False
 
 

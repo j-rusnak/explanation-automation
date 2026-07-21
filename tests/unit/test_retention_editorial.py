@@ -105,6 +105,15 @@ def test_fixture_retention_is_brisk_honest_periodic_and_evidence_linked(
     assert {"evidence-payoff", "limitation-reframe", "final-payoff"} <= {
         event.event_kind for event in plan.attention_events
     }
+    expected_energy = {
+        "open": "high",
+        "develop": "medium",
+        "re-hook": "high",
+        "evidence-payoff": "medium",
+        "limitation": "low",
+        "resolve": "medium",
+    }
+    assert all(beat.energy == expected_energy[beat.cadence_role] for beat in plan.cadence.beats)
     assert plan.cold_open.truth_up_front
     assert not plan.cold_open.deceptive_withholding
     assert any(segment.segment_type == "limitation" for segment in script.segments)

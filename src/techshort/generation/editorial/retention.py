@@ -64,7 +64,7 @@ def _cadence(beat_plan: BeatPlan) -> BeatCadence:
                     "duration_seconds": beat.approximate_duration,
                     "energy": (
                         "high"
-                        if role in {"open", "re-hook", "evidence-payoff"}
+                        if role in {"open", "re-hook"}
                         else "low"
                         if role == "limitation"
                         else "medium"

@@ -976,7 +976,11 @@ def _motion_intensity_flashing_check(snapshot: CreativeQualityInput) -> Creative
     failures: list[str] = []
     maximum_flash_rate = 0.0
     intensities = [scene.motion_intensity for scene in snapshot.scenes]
-    energetic_run = _longest_run(intensities)
+    energetic_run = 0
+    current_energetic_run = 0
+    for intensity in intensities:
+        current_energetic_run = current_energetic_run + 1 if intensity == "energetic" else 0
+        energetic_run = max(energetic_run, current_energetic_run)
     for scene in snapshot.scenes:
         unique_beats = set(scene.motion_beats)
         cue_count = sum(bool(_FLASH_CUE.search(beat)) for beat in unique_beats)
