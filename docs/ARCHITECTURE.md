@@ -77,13 +77,35 @@ regardless of provider. Generation, critique, and engagement scoring never grant
 
 ## ADR-003: local audio and human-operated organic experiments
 
-The zero-cost narration provider is Windows System.Speech. It receives only the current
+User-recorded narration is supported but not required. The selected cross-platform offline model
+runtime is `kokoro-js` with `onnx-community/Kokoro-82M-v1.0-ONNX`, pinned to revision
+`1939ad2a8e416c0acfeecc08a694d14ef25f2231`, `q8`, and CPU. Model acquisition is a separate,
+explicit one-time action. It writes to the Git-ignored `.techshort/models/kokoro` cache and emits
+file hashes plus an aggregate SHA-256. Normal synthesis reopens that cache with remote models
+disabled, so it cannot silently fetch a different revision.
+
+The Kokoro boundary is a fixed Node helper with a strict versioned JSON contract. It accepts only
+an allowlisted stock English voice, bounded speed, and up to 100 stable-ID script segments. It
+produces numbered 24 kHz WAV files plus inert JSON metadata; it does not accept SSML, executable
+markup, provider-selected paths, or voice-cloning input. Segment synthesis makes narration
+addressable without treating audio as proof. The model and runtime are Apache-2.0, while selected
+voice and generated-output rights remain `unknown` until a human records an accurate rights
+decision.
+
+Both providers synthesize one approved script segment at a time, normalize each segment to 48 kHz
+mono PCM, retain content-addressed segment WAVs, and concatenate them with an exact 140 ms pause.
+The synthesis receipt binds every segment's text approval, audio hash, frame count, provider, and
+runtime state. System.Speech word-progress events are aligned only onto exact approved tokens.
+Kokoro emits no word events, so its manifest honestly uses proportional word timing inside each
+exact synthesized segment interval. Renderer captions, SRT/VTT, QA, and final-review hashing all
+resolve the same timing manifest; provider-inserted text can never become caption text.
+
+Windows System.Speech remains the zero-cost integrated fallback. It receives only the current
 human-approved script, invokes a fixed local synthesis helper, and writes audio, a transcript, and
-a strict content-derived receipt. Installed voice discovery is local. No cloud TTS endpoint,
-voice cloning, API key, downloaded model, or provider-selected executable path is involved.
-Synthetic voice-output rights default to `unknown`; the resulting asset cannot pass the rights
-gate until a human records accurate terms. Optional sound accents are generated from allowlisted
-retention cue enums with deterministic oscillators, bounded amplitude, and no downloaded samples.
+a strict content-derived receipt. Installed voice discovery is local. Neither local path uses a
+cloud TTS endpoint, API key, arbitrary downloaded code, or provider-selected executable path.
+Optional sound accents are generated from allowlisted retention cue enums with deterministic
+oscillators, bounded amplitude, and no downloaded samples.
 
 Organic experimentation begins only after a current approved export exists. A cover experiment
 renders two or three approved cover candidates around the exact same video and locks evidence,
@@ -108,6 +130,9 @@ service, which invalidates storyboard, rights, and final approval when selection
 - pypdf (BSD-3-Clause): text-PDF extraction and page labels; OCR remains out of scope.
 - Pydantic and Typer (MIT): strict schemas and the local CLI.
 - Streamlit (Apache-2.0): restart-safe local review surface.
+- kokoro-js 1.2.1 and the pinned Kokoro ONNX model (Apache-2.0): optional local segment
+  synthesis after an explicit one-time model-cache setup; runtime inference is `q8` on CPU with
+  remote model access disabled.
 - Remotion: the requested renderer, under its own commercial-use terms. Operators must confirm
   that their team/use qualifies or obtain the appropriate license.
 - Atkinson Hyperlegible: bundled renderer font under the SIL Open Font License 1.1.

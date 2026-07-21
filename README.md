@@ -1,6 +1,6 @@
 # techshort
 
-`techshort` is a local-first, human-reviewed technical explainer compiler. It turns PDF, Markdown, or text sources into evidence-linked claims, a clause-level script, a typed deterministic storyboard, a vertical Remotion video, captions, a cited companion page, and an export bundle. It also supports zero-cost Windows narration, deterministic sound accents, controlled cover variants, aggregate-only organic experiment analysis, and immutable packages for manual TikTok or Instagram Reels upload. It remains useful offline and does not require an API key or platform account integration.
+`techshort` is a local-first, human-reviewed technical explainer compiler. It turns PDF, Markdown, or text sources into evidence-linked claims, a clause-level script, a typed deterministic storyboard, a vertical Remotion video, captions, a cited companion page, and an export bundle. It also supports offline synthetic narration, deterministic sound accents, controlled cover variants, aggregate-only organic experiment analysis, and immutable packages for manual TikTok or Instagram Reels upload. It remains useful offline and does not require an API key or platform account integration.
 
 The hard invariant is simple: every factual script clause cites one or more approved claims, and every approved claim cites exact evidence that still resolves in the ingested source. Deterministic QA and five human gates block final export when provenance, rights, staleness, limitation, or media checks fail.
 
@@ -16,6 +16,7 @@ platform performance.
 - [Remotion 4.0.489](https://github.com/remotion-dev/remotion/blob/main/LICENSE.md). Its current custom license permits some individuals/small teams to use it without charge; other organizations and automated-video products may require a paid license. Confirm eligibility before commercial use.
 - Setup explicitly downloads and verifies Remotion's Chrome Headless Shell. Its npm package includes an FFmpeg build marked non-redistributable; `node_modules` is excluded from Git and must not be redistributed. Review your own distribution obligations.
 - [pypdf](https://github.com/py-pdf/pypdf/blob/main/LICENSE) is BSD-3-Clause, Pydantic/Typer are MIT, Streamlit is Apache-2.0, and Atkinson Hyperlegible is SIL OFL 1.1.
+- The pinned `kokoro-js` runtime and pinned Kokoro ONNX model are Apache-2.0. That covers the model/runtime artifacts; it does not automatically establish rights to a selected generated voice or its output. Synthetic narration remains `unknown` until a human rights review records the applicable terms.
 
 This repository already contained an MIT `LICENSE`; techshort did not add or change it.
 
@@ -41,6 +42,22 @@ npm.cmd exec remotion -- browser ensure
 ```
 
 Direct Python dependencies and all npm dependencies are exact-pinned; `requirements.lock` and `package-lock.json` lock the resolved transitive environments.
+
+### Optional one-time Kokoro model setup
+
+Normal setup installs the pinned local runtime but intentionally does not download the optional
+model. On a machine that will use Kokoro narration, run this explicit one-time command while
+network access is available:
+
+```powershell
+.\.venv\Scripts\techshort.exe audio setup --provider kokoro --yes
+```
+
+The command invokes the fixed helper, downloads only `onnx-community/Kokoro-82M-v1.0-ONNX` at revision
+`1939ad2a8e416c0acfeecc08a694d14ef25f2231`, using the `q8` model on CPU. It then reports the
+cache file hashes and aggregate SHA-256 in a strict local manifest. Synthesis opens that same cache with remote model
+access disabled, so no network connection is needed after setup. `.techshort/` is Git-ignored;
+model files must not be committed or placed in project exports.
 
 ## Doctor and reviewer
 
@@ -102,6 +119,20 @@ New projects default to `narrated`, so missing audio fails render and QA. The sa
 .\.venv\Scripts\techshort.exe audio import-transcript rolling-shutter C:\path\to\narration.txt
 ```
 
+For the current synthetic-first workflow, omit the `silent-reviewed` mode command and run this
+after script approval. Manual recording is not required:
+
+```powershell
+.\.venv\Scripts\techshort.exe audio voices --provider kokoro
+.\.venv\Scripts\techshort.exe audio synthesize rolling-shutter --provider kokoro --voice af_heart --speed 1.1
+.\.venv\Scripts\techshort.exe audio sound-design rolling-shutter --preset subtle
+```
+
+Synthesis defaults its rights assertion to `unknown`, so previewing is safe but final rights approval
+remains blocked. Review the selected voice/output terms in the reviewer, record only the status and
+license details they actually support, then regenerate narration with those accurate rights options
+before approving rights. Do not choose a permissive status merely to make the sample export pass.
+
 The transcript command is optional but enables deterministic word-error QA against the approved script. Alternatively, configure an installed CLI and an existing local model file in the current PowerShell process; techshort never downloads a model:
 
 ```powershell
@@ -111,19 +142,72 @@ $env:TECHSHORT_WHISPER_MODEL = 'C:\path\to\model.bin'
 
 The renderer burns deterministic captions into the video. Timing uses probed narration duration when audio is present and otherwise falls back to approved script durations only when `silent-reviewed` was explicitly chosen. Without a transcript or verified local transcription, QA tells the final reviewer to compare narration manually. Changing audio later requires rights approval, caption generation, preview, QA, and final approval to be repeated; changing its transcript requires preview, QA, and final approval to be repeated.
 
-### Zero-cost local synthetic narration and sound design
+### Offline synthetic narration and sound design
+
+User-recorded narration is supported, but it is not required. The repository contains a pinned
+Kokoro runtime for offline segment synthesis after the one-time model setup above. Kokoro is the
+default project-level provider; Windows System.Speech remains the zero-cost Windows fallback.
+There is no voice-cloning path: both runtimes select only an installed or explicitly allowlisted
+stock voice.
+
+The Kokoro Node helper accepts strict JSON rather than arbitrary text flags, markup, or code. List
+its reviewed English voices with:
+
+```powershell
+node renderer/scripts/kokoro-local.mjs voices
+```
+
+Its input contract is exactly `schemaVersion`, `voice`, `speed`, and `segments`; every segment is
+exactly `segmentId` plus one line of inert `text`. Speed is bounded from `0.75` to `1.5`, segment
+IDs must be unique stable IDs, and the input is limited to 100 segments and 128 KiB:
+
+```json
+{
+  "schemaVersion": "1.0.0",
+  "voice": "af_heart",
+  "speed": 1,
+  "segments": [
+    {
+      "segmentId": "segment-01",
+      "text": "A rolling shutter records neighboring rows at different moments."
+    }
+  ]
+}
+```
+
+The low-level synthesis command exists for runtime verification and integration work; it is not a
+project manifest or rights approval command. Create the output directory first, then pass a JSON
+file matching the contract:
+
+```powershell
+New-Item -ItemType Directory -Force .techshort\kokoro-output | Out-Null
+node renderer/scripts/kokoro-local.mjs synthesize `
+  --cache-dir .techshort/models/kokoro `
+  --input C:\path\to\kokoro-input.json `
+  --output-dir .techshort\kokoro-output
+```
+
+Successful stdout is strict JSON containing the provider, model ID, pinned revision, `q8` dtype,
+CPU device, runtime version, selected voice and speed, aggregate model-cache SHA-256, and one
+record per `segmentId` with its deterministic WAV filename, 24 kHz sample rate, sample count, and
+duration. Synthesis never enables remote model access. Any generated WAV still needs to enter the
+normal asset workflow and receive human rights review before embedding. Normal project synthesis
+uses the safer `techshort audio synthesize ... --provider kokoro` command above; the low-level
+helper exists for runtime diagnostics.
 
 On Windows, list enabled System.Speech voices after approving the script:
 
 ```powershell
-.\.venv\Scripts\techshort.exe audio voices
-.\.venv\Scripts\techshort.exe audio synthesize rolling-shutter --voice "<installed voice name>" --rate 1 --volume 100
+.\.venv\Scripts\techshort.exe audio voices --provider sapi
+.\.venv\Scripts\techshort.exe audio synthesize rolling-shutter --provider sapi --voice "<installed voice name>" --rate 1 --volume 100
 .\.venv\Scripts\techshort.exe audio sound-design rolling-shutter --preset subtle
 ```
 
-`audio synthesize` uses only a locally installed Windows voice. It writes hash-bound audio,
-transcript, provenance receipt, and asset records; it does not call a cloud TTS service. The
-default synthetic-voice rights status is `unknown`, which intentionally blocks final export.
+Both providers write hash-bound, per-segment audio, transcript, timing, provenance receipt, and
+asset records; neither calls a cloud TTS service during synthesis. SAPI timing uses verified engine
+word events. Kokoro currently uses exact synthesized segment boundaries and explicitly labeled
+proportional word timing because its runtime does not emit word events. The default synthetic-voice
+rights status is `unknown`, which intentionally blocks final export.
 Review the installed voice and output terms, then rerun synthesis with the accurate
 `--rights-status`, `--license`, and `--required-attribution` values when applicable. Do not label
 output original, owned, or permissively licensed without evidence.
@@ -132,6 +216,18 @@ output original, owned, or permissively licensed without evidence.
 retention cues. It never downloads music or samples. The resulting sound asset still requires
 human rights review, and both audio commands invalidate affected downstream approvals. Generate
 captions, preview, QA, and final approval again after the final audio is selected.
+
+#### Kokoro troubleshooting
+
+- If synthesis says the cache is missing or lacks the pinned ONNX model, rerun the one-time
+  `setup` command with network access. Do not enable remote model access during synthesis.
+- If setup reports a different revision, dtype, or device than documented above, stop and inspect
+  the installed lockfile/runtime before generating narration. Normal operation is the pinned
+  revision, `q8`, and CPU only.
+- An empty or modified cache should be replaced by rerunning setup, not copied into Git. The
+  `.techshort/` directory being absent from `git status` is expected.
+- `techshort audio voices` lists the Kokoro allowlist by default. Use `--provider sapi` to list
+  enabled Windows System.Speech fallback voices.
 
 ### Zero-cost organic cover experiments
 
@@ -256,12 +352,12 @@ See [engagement and retention](docs/ENGAGEMENT.md), [organic experiments](docs/E
 
 - OCR is deliberately unsupported; scanned/empty PDFs are reported rather than guessed.
 - PDF bounding boxes and printed page labels are stored only when reliably available; pypdf V1 uses page index plus exact character locators.
-- Narration timing falls back to approved segment durations. Without a hash-bound transcript or a configured local Whisper model, QA requires manual narration comparison.
+- SAPI narration uses verified engine word events. Kokoro word emphasis is an explicitly labeled proportional estimate inside exact synthesized segment boundaries; provider words never replace approved caption text. Imported recordings still need a hash-bound transcript or configured local Whisper model for deterministic comparison.
 - Deterministic creative QA catches measurable risks such as dense copy, repeated layouts, missing units, exposed internal IDs, caption speed, and weak cover structure. It is a production aid, not a substitute for watching the preview.
 - Retention plans and creative QA encode useful short-form heuristics, not a guarantee of views or watch time. Organic cover experiments use manually imported aggregates and remain observational; there is no platform-analytics integration, account automation, automatic publishing, or causal-performance guarantee.
 - Flash QA checks declared and inferred motion cues and blocks unsafe declared rates, but it is not a full rendered-pixel luminance-and-area analysis. A human must inspect the exact preview, contact sheet, and scene stills.
 - The optional procedural sound-design track uses only allowlisted deterministic cues and is rights-tracked. It is not music, a sample library, adaptive scoring, or proof that sound will improve performance.
-- Local synthetic narration currently uses Windows System.Speech only. Installed voice availability and licensing differ by machine; default `unknown` rights deliberately blocks embedding until reviewed.
+- Kokoro requires one explicit networked model-setup step before offline use. It is the default project provider; Windows System.Speech remains an offline fallback. Both synthetic paths require human review of voice/output rights, and `unknown` deliberately blocks embedding.
 - V2 cover generation is deterministic and specialized for the rolling-shutter fixture. General-source cover drafting still requires manual/provider-specific candidates that satisfy the same strict cover schema.
 - The Streamlit UI is a review surface, not a nonlinear editor.
 - PDF parsing runs in-process; file/page/output bounds reduce but do not eliminate parser memory risk from a novel malicious PDF.
