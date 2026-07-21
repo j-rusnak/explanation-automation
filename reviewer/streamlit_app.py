@@ -16,11 +16,19 @@ from pydantic import BaseModel
 from techshort.alignment import cues_from_script, write_caption_files
 from techshort.audio import (
     active_audio,
+    active_synthesis_receipt,
     active_transcript,
+    discover_windows_voices,
     import_audio,
     import_transcript,
     probe_duration,
     set_narration_mode,
+    synthesize_local_narration,
+)
+from techshort.audio.sound_design import (
+    SoundDesignReceipt,
+    active_sound_design,
+    generate_sound_design,
 )
 from techshort.configuration import PACING_PROFILES, set_pacing_profile
 from techshort.domain.creative import (
@@ -131,6 +139,7 @@ MOTION_PRESETS = ("calm", "precise", "energetic")
 
 ArtTheme = Literal["midnight", "blueprint", "signal-lab", "technical-editorial"]
 NarrationMode = Literal["narrated", "silent-reviewed"]
+SoundDesignPreset = Literal["subtle", "present"]
 
 st.set_page_config(page_title="techshort reviewer", page_icon="TS", layout="wide")
 st.title("techshort reviewer")
@@ -185,6 +194,34 @@ def _set_narration_mode(store: ProjectStore, mode: str) -> None:
     if mode not in NARRATION_MODES:
         raise ValueError(f"unsupported narration mode: {mode}")
     set_narration_mode(store, cast(NarrationMode, mode))
+
+
+def _synthesize_review_narration(
+    store: ProjectStore,
+    voice_name: str,
+    rate: int,
+    volume: int,
+    rights_status: str,
+    license_name: str,
+    required_attribution: str,
+) -> object:
+    if rights_status not in AUDIO_RIGHTS_STATUSES:
+        raise ValueError("unsupported narration rights status")
+    return synthesize_local_narration(
+        store,
+        voice_name=voice_name,
+        rate=rate,
+        volume=volume,
+        rights_status=rights_status,
+        license_name=license_name.strip() or None,
+        required_attribution=required_attribution.strip() or None,
+    )
+
+
+def _generate_review_sound_design(store: ProjectStore, preset: str) -> SoundDesignReceipt:
+    if preset not in {"subtle", "present"}:
+        raise ValueError("unsupported sound-design preset")
+    return generate_sound_design(store, cast(SoundDesignPreset, preset))
 
 
 def _cover_preview(candidate: CoverCandidate) -> Image.Image:
@@ -1411,6 +1448,149 @@ def _show_storyboard_and_assets(store: ProjectStore, reviewer: str) -> None:
     _perform("Approve all asset rights", "rights-approve-all", approve_rights, store, reviewer)
 
 
+def _show_local_narration_tools(store: ProjectStore) -> None:
+    st.subheader("Local Windows narration")
+    st.caption(
+        "Generate a reviewable narration from the currently approved script using an installed "
+        "Windows System.Speech voice. Text is passed as inert plain text; no cloud service or "
+        "API credential is used."
+    )
+    try:
+        voices = discover_windows_voices()
+    except (OSError, ValueError, RuntimeError) as exc:
+        ready = False
+        readiness_detail = str(exc)
+        voices = []
+    else:
+        ready = bool(voices)
+        readiness_detail = f"{len(voices)} enabled Windows System.Speech voice(s)"
+    if ready and voices:
+        st.success(f"Local speech engine ready: {readiness_detail}")
+    else:
+        st.info(f"Local speech synthesis unavailable: {readiness_detail}")
+
+    voice_names = [voice.name for voice in voices]
+    selected_voice = st.selectbox(
+        "Installed Windows voice",
+        voice_names or ["No installed voice available"],
+        key="local-narration-voice",
+        disabled=not voice_names,
+    )
+    if voice_names:
+        voice = next(item for item in voices if item.name == selected_voice)
+        st.caption(f"Installed voice metadata: {voice.culture} · {voice.gender} · {voice.age}.")
+    rate_column, volume_column = st.columns(2)
+    rate = rate_column.slider(
+        "Speech rate",
+        min_value=-10,
+        max_value=10,
+        value=1,
+        step=1,
+        key="local-narration-rate",
+        help="Windows System.Speech rate; techshort rejects values outside -10 through 10.",
+    )
+    volume = volume_column.slider(
+        "Speech volume",
+        min_value=1,
+        max_value=100,
+        value=100,
+        step=1,
+        key="local-narration-volume",
+        help="Synthesis input volume; final narration is normalized locally by FFmpeg.",
+    )
+    rights_status = st.selectbox(
+        "Installed voice rights status",
+        AUDIO_RIGHTS_STATUSES,
+        index=AUDIO_RIGHTS_STATUSES.index("unknown"),
+        key="local-narration-rights-status",
+        help="Unknown is the safe default and blocks final export until reviewed.",
+    )
+    license_name = st.text_input(
+        "Voice license or permission record (optional)",
+        key="local-narration-license",
+    )
+    required_attribution = st.text_input(
+        "Voice attribution required by that license (optional)",
+        key="local-narration-attribution",
+    )
+    st.warning(
+        "A voice being installed on this computer does not establish commercial reuse rights. "
+        "Verify the voice's license or permission before changing rights from unknown. Unknown, "
+        "citation-only, and restricted narration cannot pass export rights review."
+    )
+    _perform(
+        "Synthesize local narration",
+        "local-narration-synthesize",
+        _synthesize_review_narration,
+        store,
+        selected_voice,
+        rate,
+        volume,
+        rights_status,
+        license_name,
+        required_attribution,
+        disabled=not (ready and voice_names),
+    )
+
+    try:
+        active_synthesis = active_synthesis_receipt(store)
+    except (OSError, ValueError, RuntimeError) as exc:
+        st.error(f"Local narration receipt is stale or invalid: {exc}")
+    else:
+        if active_synthesis is not None:
+            receipt, _ = active_synthesis
+            st.success(
+                f"Current local synthesis: {receipt.voice_name} · rate {receipt.rate:+d} · "
+                f"volume {receipt.volume} · {receipt.output_duration_seconds:.2f} s"
+            )
+            st.caption(
+                f"Rights: {receipt.rights_status} · receipt: {receipt.synthesis_id}. "
+                "The receipt is hash-bound to the approved script, audio, and transcript."
+            )
+
+
+def _show_sound_design_tools(store: ProjectStore) -> None:
+    st.subheader("Procedural sound-design accents")
+    st.caption(
+        "Generate a deterministic, local WAV from the approved retention plan's allowlisted "
+        "cues. The track remains separate from narration and is reviewed as an embedded asset."
+    )
+    preset = st.selectbox(
+        "Sound-design preset",
+        ("subtle", "present"),
+        key="sound-design-preset",
+        help="Subtle peaks at 7.5%; present peaks at 12%. Both stay below the 15% hard bound.",
+    )
+    _perform(
+        "Generate sound-design accents",
+        "sound-design-generate",
+        _generate_review_sound_design,
+        store,
+        preset,
+    )
+    try:
+        sound_design = active_sound_design(store)
+    except (OSError, ValueError, RuntimeError) as exc:
+        st.error(f"Sound-design track is stale or invalid: {exc}")
+        return
+    if sound_design is None:
+        st.info("No current procedural sound-design track exists.")
+        return
+    receipt = _load_if(store, "audio/sound-design.json", SoundDesignReceipt)
+    if receipt is None:
+        st.error("The active sound-design receipt is missing.")
+        return
+    st.success(
+        f"Active sound design: {receipt.preset} · {len(receipt.events)} cue(s) · "
+        f"{receipt.duration_seconds:.2f} s"
+    )
+    st.audio(str(sound_design))
+    st.warning(
+        "Procedural audio is registered as an original asset, but its asset rights review is "
+        "still required after generation. Audition the mix for distraction and accessibility."
+    )
+
+
 def _show_narration(store: ProjectStore) -> None:
     project = store.project()
     st.subheader("Narration mode")
@@ -1452,8 +1632,11 @@ def _show_narration(store: ProjectStore) -> None:
         st.audio(str(narration))
     else:
         st.info("No narration is imported. Deterministic script timing remains available.")
+    _show_local_narration_tools(store)
+    st.divider()
+    st.subheader("Import user-recorded narration")
     uploaded = st.file_uploader(
-        "Import user-recorded narration",
+        "Audio file",
         type=["wav", "mp3", "m4a", "aac", "flac", "ogg", "opus"],
         key="narration-upload",
     )
@@ -1536,6 +1719,7 @@ def _show_narration(store: ProjectStore) -> None:
             disabled=True,
             width="stretch",
         )
+    _show_sound_design_tools(store)
     _perform("Generate caption sidecars", "captions-generate", _generate_captions, store)
     for extension in ("srt", "vtt"):
         path = store.path(f"captions/captions.{extension}")
