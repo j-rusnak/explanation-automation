@@ -56,7 +56,33 @@ from techshort.domain.models import (
     SourceIndex,
     StoryboardManifest,
 )
-from techshort.domain.storage import ProjectStore, load_model, sanitize_filename
+from techshort.domain.storage import (
+    ProjectStore,
+    atomic_write_model,
+    load_model,
+    sanitize_filename,
+    within,
+)
+from techshort.experiments import (
+    ExperimentManifest,
+    ExperimentStore,
+    ExperimentVariable,
+    MetricName,
+    RecommendationAction,
+    RecommendationApplicationLog,
+    analyze_experiment,
+    apply_approved_cover_recommendation,
+    approve_experiment,
+    approve_recommendation,
+    build_metrics_template,
+    create_cover_experiment,
+    experiment_status,
+    import_manual_observations,
+    list_experiment_ids,
+)
+from techshort.experiments import (
+    OrganicPlatform as ExperimentPlatform,
+)
 from techshort.export import export_project, generate_evidence_page
 from techshort.generation import select_angle
 from techshort.generation.design import (
@@ -70,6 +96,15 @@ from techshort.generation.editorial import (
     build_rolling_shutter_storyboard_guidance,
     critique_editorial,
     critique_visual,
+)
+from techshort.publication import (
+    GRANT_CONFIRMATION,
+    OrganicPackageBuildResult,
+    OrganicPackageRequest,
+    OrganicPublicationPackage,
+    build_organic_publication_package,
+    organic_package_input_hash,
+    record_publication_consent,
 )
 from techshort.qa import run_qa
 from techshort.qa.creative import (
@@ -115,6 +150,7 @@ STEPS = (
     "7 Preview",
     "8 QA",
     "9 Export",
+    "10 Organic experiments",
 )
 RIGHTS_STATUSES = (
     "original",
@@ -712,6 +748,150 @@ def _import_uploaded_transcript(
         staged = Path(temporary) / filename
         staged.write_bytes(uploaded_bytes)
         return import_transcript(store, staged)
+
+
+def _create_cover_experiment(
+    store: ProjectStore,
+    name: str,
+    hypothesis: str,
+    platform: str,
+    candidate_ids: list[str],
+    primary_metric: str,
+    minimum_views: int,
+) -> ExperimentManifest:
+    if platform not in {"tiktok", "instagram-reels"}:
+        raise ValueError("organic platform must be TikTok or Instagram Reels")
+    if primary_metric not in {"completion-rate", "skip-rate"}:
+        raise ValueError("cover experiment metric must be completion-rate or skip-rate")
+    return create_cover_experiment(
+        store,
+        name=name.strip(),
+        hypothesis=hypothesis.strip(),
+        platform=ExperimentPlatform(platform),
+        candidate_ids=candidate_ids,
+        primary_metric=MetricName(primary_metric),
+        minimum_views_per_variant=minimum_views,
+    )
+
+
+def _prepare_experiment_publication_request(
+    store: ProjectStore,
+    experiment_id: str,
+    variant_id: str,
+    title: str,
+    post_copy: str,
+    alt_text: str,
+    hashtags_text: str,
+    evidence_url: str,
+) -> Path:
+    experiment = ExperimentStore(store, experiment_id).manifest()
+    if experiment.review_status is not ReviewStatus.APPROVED:
+        raise ValueError("publication request requires an approved experiment")
+    variant = next((item for item in experiment.variants if item.variant_id == variant_id), None)
+    if variant is None or variant.review_status is not ReviewStatus.APPROVED:
+        raise ValueError("publication request requires an approved experiment variant")
+    if variant.cover_path is None or variant.cover_hash is None:
+        raise ValueError("publication request requires a reviewed cover artifact")
+    media = store.path(variant.media_path)
+    cover = store.path(variant.cover_path)
+    captions_srt = store.path(f"export/{store.slug}.srt")
+    captions_vtt = store.path(f"export/{store.slug}.vtt")
+    if not media.is_file() or sha256_file(media) != variant.media_hash:
+        raise ValueError("publication variant media is missing or stale")
+    if not cover.is_file() or sha256_file(cover) != variant.cover_hash:
+        raise ValueError("publication variant cover is missing or stale")
+    if not captions_srt.is_file() or not captions_vtt.is_file():
+        raise ValueError("publication request requires exported SRT and VTT captions")
+    hashtags = [
+        token.removeprefix("#")
+        for token in hashtags_text.replace(",", " ").split()
+        if token.strip()
+    ]
+    request = OrganicPackageRequest(
+        experiment_id=experiment.experiment_id,
+        variant_id=variant.variant_id,
+        platform=experiment.platform.value,
+        final_mp4=variant.media_path,
+        expected_media_hash=variant.media_hash,
+        cover_png=variant.cover_path,
+        expected_cover_hash=variant.cover_hash,
+        captions_srt=captions_srt.relative_to(store.root).as_posix(),
+        captions_vtt=captions_vtt.relative_to(store.root).as_posix(),
+        title=title,
+        post_copy=post_copy,
+        alt_text=alt_text,
+        hashtags=hashtags,
+        evidence_url=evidence_url.strip() or None,
+    )
+    request_directory = store.path(f"experiments/{experiment_id}/publication-requests/{variant_id}")
+    if request_directory.is_symlink():
+        raise ValueError("publication request directory cannot be a symbolic link")
+    request_directory.mkdir(parents=True, exist_ok=True)
+    destination = request_directory / f"request-{stable_hash(request)[:16]}.json"
+    if destination.is_symlink():
+        raise ValueError("publication request cannot be a symbolic link")
+    if destination.is_file():
+        if load_model(destination, OrganicPackageRequest) != request:
+            raise ValueError("publication request path contains conflicting content")
+    else:
+        atomic_write_model(destination, request)
+    return destination
+
+
+def _build_pending_publication_package(
+    store: ProjectStore, request_path: Path
+) -> OrganicPackageBuildResult:
+    if request_path.is_symlink():
+        raise ValueError("publication request cannot be a symbolic link")
+    request = load_model(within(store.root, request_path), OrganicPackageRequest)
+    return build_organic_publication_package(store, request)
+
+
+def _grant_publication_package(
+    store: ProjectStore,
+    request_path: Path,
+    package_manifest_path: Path,
+    reviewer: str,
+    confirmation: str,
+) -> OrganicPackageBuildResult:
+    if confirmation != GRANT_CONFIRMATION:
+        raise ValueError("manual publication requires the exact authorization phrase")
+    if request_path.is_symlink() or package_manifest_path.is_symlink():
+        raise ValueError("publication consent inputs cannot be symbolic links")
+    request = load_model(within(store.root, request_path), OrganicPackageRequest)
+    package = load_model(
+        within(store.root, package_manifest_path), OrganicPublicationPackage
+    )
+    consent = record_publication_consent(
+        package,
+        state="granted",
+        reviewer_identifier=reviewer,
+        confirmation=confirmation,
+    )
+    return build_organic_publication_package(store, request, consent=consent)
+
+
+def _import_uploaded_observations(
+    store: ProjectStore,
+    experiment_id: str,
+    uploaded_name: str,
+    uploaded_bytes: bytes,
+) -> list[object]:
+    if len(uploaded_bytes) > 256 * 1024:
+        raise ValueError("aggregate observation import exceeds the 256 KiB limit")
+    filename = sanitize_filename(uploaded_name)
+    suffix = Path(filename).suffix.casefold()
+    if suffix not in {".json", ".csv"}:
+        raise ValueError("aggregate observations must use JSON or CSV")
+    with tempfile.TemporaryDirectory(prefix="techshort-observations-") as temporary:
+        staged = Path(temporary) / filename
+        staged.write_bytes(uploaded_bytes)
+        return list(
+            import_manual_observations(
+                ExperimentStore(store, experiment_id),
+                staged,
+            )
+        )
 
 
 def _edit_scene_from_json(
@@ -1841,6 +2021,530 @@ def _show_export(store: ProjectStore, reviewer: str) -> None:
         st.write(files)
 
 
+def _show_cover_experiment_creation(store: ProjectStore) -> None:
+    with st.expander("Create a controlled cover experiment", expanded=False):
+        st.caption(
+            "Uses one current, approved, unwatermarked export for every variant and changes "
+            "only the reviewed cover. Rendering stays local and creates no platform post."
+        )
+        try:
+            covers = _load_if(store, "storyboard/covers.json", CoverManifest)
+            selection = _load_if(store, "storyboard/cover-selection.json", CoverSelection)
+        except (OSError, ValueError) as exc:
+            st.error(f"Reviewed cover state is invalid: {exc}")
+            return
+        if covers is None or selection is None:
+            st.info("Generate and select reviewed cover directions before creating an experiment.")
+            return
+        candidate_labels = {item.candidate_id: item.headline for item in covers.candidates}
+        candidate_ids = [item.candidate_id for item in covers.candidates]
+        selected_candidates = st.multiselect(
+            "Reviewed cover candidates",
+            candidate_ids,
+            default=candidate_ids,
+            format_func=lambda item: f"{candidate_labels[item]} ({item})",
+            key="experiment-create-candidates",
+            help="The current selected cover must remain included as the control.",
+        )
+        st.caption(f"Current control cover: {selection.selected_candidate_id}")
+        name = st.text_input(
+            "Experiment name",
+            value="Cover engagement test",
+            key="experiment-create-name",
+        )
+        hypothesis = st.text_area(
+            "Specific hypothesis",
+            value=(
+                "A reviewed alternative cover will improve completion rate while the video "
+                "and factual content remain identical."
+            ),
+            key="experiment-create-hypothesis",
+        )
+        platform = st.selectbox(
+            "Organic platform",
+            ("tiktok", "instagram-reels"),
+            key="experiment-create-platform",
+        )
+        metric = st.selectbox(
+            "Primary aggregate metric",
+            ("completion-rate", "skip-rate"),
+            key="experiment-create-metric",
+        )
+        minimum_views = st.number_input(
+            "Minimum views per variant",
+            min_value=100,
+            max_value=10_000_000,
+            value=500,
+            step=100,
+            key="experiment-create-minimum-views",
+        )
+        _perform(
+            "Create cover experiment",
+            "experiment-create",
+            _create_cover_experiment,
+            store,
+            name,
+            hypothesis,
+            platform,
+            selected_candidates,
+            metric,
+            int(minimum_views),
+            disabled=(
+                len(selected_candidates) < 2
+                or selection.selected_candidate_id not in selected_candidates
+            ),
+        )
+
+
+def _show_experiment_variants(
+    store: ProjectStore,
+    manifest: ExperimentManifest,
+    experiment_store: ExperimentStore,
+    reviewer: str,
+) -> None:
+    st.subheader("Immutable variants")
+    st.caption(
+        "Review the rendered cover, role, and full content hashes. Approval binds every variant "
+        "to identical media, facts, evidence, limitation, and rights state."
+    )
+    columns = st.columns(len(manifest.variants))
+    for column, variant in zip(columns, manifest.variants, strict=True):
+        with column, st.container(border=True):
+            st.markdown(f"#### {variant.label}")
+            st.caption(
+                f"{variant.role.value} · {variant.review_status.value} · {variant.variant_id}"
+            )
+            if variant.cover_path is None or variant.cover_hash is None:
+                st.error("Reviewed cover artifact is missing from this variant.")
+            else:
+                cover = store.path(variant.cover_path)
+                if cover.is_file() and sha256_file(cover) == variant.cover_hash:
+                    st.image(str(cover), caption=variant.label, width="stretch")
+                else:
+                    st.error("Cover bytes are missing or stale; approval is blocked.")
+            st.text(f"Cover SHA-256: {variant.cover_hash or 'missing'}")
+            st.text(f"Media SHA-256: {variant.media_hash}")
+            with st.expander("Locked provenance hashes"):
+                st.text(f"Facts: {variant.locked_factual_hash}")
+                st.text(f"Evidence: {variant.evidence_hash}")
+                st.text(f"Claims: {variant.claims_hash}")
+                st.text(f"Limitation: {variant.limitation_hash}")
+                st.text(f"Rights: {variant.rights_hash}")
+    _perform(
+        "Approve experiment and all variants",
+        f"experiment-approve-{manifest.experiment_id}",
+        approve_experiment,
+        experiment_store,
+        reviewer,
+        disabled=manifest.review_status is ReviewStatus.APPROVED,
+    )
+
+
+def _load_variant_publication_packages(
+    store: ProjectStore,
+    manifest: ExperimentManifest,
+    variant_id: str,
+) -> list[tuple[Path, OrganicPublicationPackage]]:
+    root = store.path(
+        f"experiments/{manifest.experiment_id}/publication/{variant_id}/{manifest.platform.value}"
+    )
+    if not root.is_dir():
+        return []
+    packages: list[tuple[Path, OrganicPublicationPackage]] = []
+    for path in sorted(root.glob("organic-package-*/package-manifest.json")):
+        if path.is_symlink() or path.parent.is_symlink():
+            raise ValueError("publication package cannot use symbolic links")
+        packages.append(
+            (path, load_model(within(store.root, path), OrganicPublicationPackage))
+        )
+    return packages
+
+
+def _show_experiment_publication(
+    store: ProjectStore,
+    manifest: ExperimentManifest,
+    reviewer: str,
+) -> None:
+    st.subheader("Manual organic packages")
+    st.warning(
+        "techshort only creates local, immutable handoff packages. It does not log into an "
+        "account, upload a file, publish a post, or claim that publication occurred."
+    )
+    variant_ids = [item.variant_id for item in manifest.variants]
+    variant_labels = {item.variant_id: item.label for item in manifest.variants}
+    selected_variant_id = st.selectbox(
+        "Package variant",
+        variant_ids,
+        format_func=lambda item: f"{variant_labels[item]} ({item})",
+        key=f"publication-variant-{manifest.experiment_id}",
+    )
+    title = st.text_input(
+        "Reviewed post title",
+        value=store.project().title,
+        key=f"publication-title-{manifest.experiment_id}",
+    )
+    post_copy = st.text_area(
+        "Reviewed post copy",
+        key=f"publication-copy-{manifest.experiment_id}",
+        help="Do not add factual claims that are absent from the approved explainer.",
+    )
+    alt_text = st.text_area(
+        "Accessible alt text",
+        key=f"publication-alt-{manifest.experiment_id}",
+    )
+    hashtags = st.text_input(
+        "Hashtags (comma or space separated, maximum eight)",
+        key=f"publication-hashtags-{manifest.experiment_id}",
+    )
+    evidence_url = st.text_input(
+        "Public evidence or correction URL (optional)",
+        key=f"publication-evidence-url-{manifest.experiment_id}",
+    )
+    _perform(
+        "Prepare strict publication request",
+        f"publication-request-prepare-{manifest.experiment_id}",
+        _prepare_experiment_publication_request,
+        store,
+        manifest.experiment_id,
+        selected_variant_id,
+        title,
+        post_copy,
+        alt_text,
+        hashtags,
+        evidence_url,
+        disabled=(
+            manifest.review_status is not ReviewStatus.APPROVED
+            or not title.strip()
+            or not post_copy.strip()
+            or not alt_text.strip()
+        ),
+    )
+
+    request_root = store.path(
+        f"experiments/{manifest.experiment_id}/publication-requests/{selected_variant_id}"
+    )
+    request_paths = sorted(request_root.glob("request-*.json")) if request_root.is_dir() else []
+    if not request_paths:
+        st.info("Prepare a reviewed request before building a pending package.")
+        return
+    request_by_relative = {path.relative_to(store.root).as_posix(): path for path in request_paths}
+    selected_request_relative = st.selectbox(
+        "Prepared request",
+        list(request_by_relative),
+        key=f"publication-request-select-{manifest.experiment_id}-{selected_variant_id}",
+    )
+    selected_request_path = request_by_relative[selected_request_relative]
+    try:
+        request = load_model(selected_request_path, OrganicPackageRequest)
+    except (OSError, ValueError) as exc:
+        st.error(f"Prepared publication request is invalid: {exc}")
+        return
+    st.caption(
+        f"Request {selected_request_path.name} · {len(request.hashtags)} hashtag(s) · "
+        f"evidence link {'included' if request.evidence_url else 'not included'}"
+    )
+    _perform(
+        "Build pending immutable package",
+        f"publication-package-build-{manifest.experiment_id}-{selected_variant_id}",
+        _build_pending_publication_package,
+        store,
+        selected_request_path,
+    )
+
+    try:
+        packages = _load_variant_publication_packages(store, manifest, selected_variant_id)
+    except (OSError, ValueError) as exc:
+        st.error(f"Publication package manifest is invalid: {exc}")
+        return
+    if not packages:
+        st.info("No immutable package exists for this variant yet.")
+        return
+    st.dataframe(
+        [
+            {
+                "package": package.package_id,
+                "consent": package.consent.state,
+                "manual upload authorized": package.manual_upload_authorized,
+                "automated upload": package.automated_upload,
+                "claimed posted": package.claimed_posted,
+                "package hash": package.package_hash,
+            }
+            for _, package in packages
+        ],
+        hide_index=True,
+        width="stretch",
+    )
+    try:
+        request_input_hash = organic_package_input_hash(store, request)
+    except (OSError, ValueError) as exc:
+        st.error(f"Prepared publication request is stale: {exc}")
+        return
+    granted = [
+        package
+        for _, package in packages
+        if package.consent.state == "granted" and package.package_input_hash == request_input_hash
+    ]
+    if granted:
+        st.success(
+            f"Exact request already has granted package {granted[-1].package_id}. "
+            "No upload or publication was performed."
+        )
+        return
+    pending = [
+        (path, package)
+        for path, package in packages
+        if package.consent.state == "pending" and package.package_input_hash == request_input_hash
+    ]
+    if not pending:
+        st.info("No pending package matches the selected reviewed request.")
+        return
+    pending_by_id = {package.package_id: (path, package) for path, package in pending}
+    selected_package_id = st.selectbox(
+        "Pending package for consent",
+        list(pending_by_id),
+        key=f"publication-pending-select-{manifest.experiment_id}-{selected_variant_id}",
+    )
+    selected_manifest_path, _ = pending_by_id[selected_package_id]
+    st.caption("Type this exact phrase to authorize manual publication of this package only:")
+    st.code(GRANT_CONFIRMATION, language=None)
+    confirmation = st.text_input(
+        "Exact manual-publication consent phrase",
+        key=f"publication-consent-{manifest.experiment_id}-{selected_variant_id}",
+    )
+    _perform(
+        "Build granted-consent package",
+        f"publication-consent-grant-{manifest.experiment_id}-{selected_variant_id}",
+        _grant_publication_package,
+        store,
+        selected_request_path,
+        selected_manifest_path,
+        reviewer,
+        confirmation,
+        disabled=confirmation != GRANT_CONFIRMATION,
+    )
+    st.caption(
+        "Granting consent authorizes a person to upload only the exact hash-bound package. "
+        "The application still performs no upload or publication."
+    )
+
+
+def _show_experiment_analysis(
+    store: ProjectStore,
+    manifest: ExperimentManifest,
+    experiment_store: ExperimentStore,
+    reviewer: str,
+) -> None:
+    st.subheader("Aggregate observations and analysis")
+    st.caption(
+        "Import cumulative post-level aggregates only. JSON and CSV are limited to 256 KiB and "
+        "100 rows; person-level identifiers or events are rejected."
+    )
+    template_format = st.selectbox(
+        "Blank aggregate template format",
+        ("csv", "json"),
+        key=f"experiment-template-format-{manifest.experiment_id}",
+    )
+    try:
+        template = build_metrics_template(
+            experiment_store, cast(Literal["csv", "json"], template_format)
+        )
+    except (OSError, ValueError) as exc:
+        st.info(f"Blank metrics template is unavailable: {exc}")
+    else:
+        st.download_button(
+            "Download blank aggregate template",
+            data=template.content,
+            file_name=f"{manifest.experiment_id}-aggregate-metrics.{template.format}",
+            mime="application/json" if template.format == "json" else "text/csv",
+            key=f"experiment-template-download-{manifest.experiment_id}",
+            width="stretch",
+        )
+        st.caption(template.guidance)
+    upload = st.file_uploader(
+        "Aggregate observation JSON or CSV",
+        type=["json", "csv"],
+        key=f"experiment-observations-upload-{manifest.experiment_id}",
+    )
+    if upload is None:
+        st.button(
+            "Import aggregate observations",
+            key=f"experiment-observations-import-disabled-{manifest.experiment_id}",
+            disabled=True,
+            width="stretch",
+        )
+    else:
+        _perform(
+            "Import aggregate observations",
+            f"experiment-observations-import-{manifest.experiment_id}",
+            _import_uploaded_observations,
+            store,
+            manifest.experiment_id,
+            upload.name,
+            bytes(upload.getbuffer()),
+        )
+    try:
+        observation_log = experiment_store.observations()
+    except (OSError, ValueError) as exc:
+        st.error(f"Aggregate observation log is invalid: {exc}")
+        return
+    if observation_log.snapshots:
+        st.dataframe(
+            [
+                {
+                    "variant": item.variant_id,
+                    "publication reference": item.publication_reference,
+                    "window end": item.window_ended_at.isoformat(),
+                    "views": item.view_count,
+                    "completed": item.completed_view_count,
+                    "skipped": item.skipped_view_count,
+                    "total watch seconds": item.total_watch_time_seconds,
+                }
+                for item in observation_log.snapshots
+            ],
+            hide_index=True,
+            width="stretch",
+        )
+    else:
+        st.info("No aggregate observations have been imported.")
+    _perform(
+        "Analyze latest aggregate observations",
+        f"experiment-analyze-{manifest.experiment_id}",
+        analyze_experiment,
+        experiment_store,
+        disabled=manifest.review_status is not ReviewStatus.APPROVED,
+    )
+    try:
+        recommendations = experiment_store.recommendations().recommendations
+    except (OSError, ValueError) as exc:
+        st.error(f"Experiment recommendation log is invalid: {exc}")
+        return
+    if not recommendations:
+        st.info("No analysis recommendation exists.")
+        return
+    recommendation = recommendations[-1]
+    st.subheader("Latest recommendation")
+    if recommendation.review_status is ReviewStatus.STALE:
+        st.warning(
+            f"This recommendation is stale: {recommendation.invalidation_reason or 'new data'}"
+        )
+    st.write(recommendation.summary)
+    st.caption(
+        f"{recommendation.action.value} · {recommendation.primary_metric.value} · "
+        f"review: {recommendation.review_status.value} · {recommendation.recommendation_id}"
+    )
+    st.dataframe(
+        [
+            {
+                "treatment": item.treatment_variant_id,
+                "status": item.status.value,
+                "control value": item.control_value,
+                "treatment value": item.treatment_value,
+                "control interval": (
+                    f"{item.control_interval.lower:.4f}–{item.control_interval.upper:.4f}"
+                    if item.control_interval is not None
+                    else "not available"
+                ),
+                "treatment interval": (
+                    f"{item.treatment_interval.lower:.4f}–{item.treatment_interval.upper:.4f}"
+                    if item.treatment_interval is not None
+                    else "not available"
+                ),
+                "control views": item.control_views,
+                "treatment views": item.treatment_views,
+            }
+            for item in recommendation.comparisons
+        ],
+        hide_index=True,
+        width="stretch",
+    )
+    for uncertainty in recommendation.uncertainty:
+        st.warning(f"Analysis uncertainty: {uncertainty}")
+    conclusive = recommendation.action is not RecommendationAction.COLLECT_MORE_DATA
+    _perform(
+        "Approve conclusive recommendation",
+        f"experiment-recommendation-approve-{recommendation.recommendation_id}",
+        approve_recommendation,
+        experiment_store,
+        recommendation.recommendation_id,
+        reviewer,
+        disabled=(not conclusive or recommendation.review_status is not ReviewStatus.PENDING),
+    )
+    st.warning(
+        "Applying an approved cover recommendation may change the selected cover and will "
+        "invalidate storyboard, rights, and final approval. It never changes the evidence or "
+        "publishes to a platform. Review and re-render every invalidated downstream gate."
+    )
+    _perform(
+        "Apply approved cover recommendation",
+        f"experiment-recommendation-apply-{recommendation.recommendation_id}",
+        apply_approved_cover_recommendation,
+        experiment_store,
+        recommendation.recommendation_id,
+        reviewer,
+        disabled=(
+            recommendation.review_status is not ReviewStatus.APPROVED
+            or manifest.variable is not ExperimentVariable.COVER
+        ),
+    )
+    application_path = store.path(f"experiments/{manifest.experiment_id}/applications.json")
+    if application_path.is_file():
+        try:
+            applications = load_model(application_path, RecommendationApplicationLog)
+        except (OSError, ValueError) as exc:
+            st.error(f"Recommendation application log is invalid: {exc}")
+            return
+        if applications.applications:
+            application = applications.applications[-1]
+            st.success(
+                f"Application receipt {application.application_id}: selected "
+                f"{application.applied_candidate_id}."
+            )
+            if application.invalidated_gates:
+                st.warning("Invalidated gates: " + ", ".join(application.invalidated_gates) + ".")
+
+
+def _show_organic_experiments(store: ProjectStore, reviewer: str) -> None:
+    st.caption(
+        "Controlled organic experiments compare reviewed variants using manually imported, "
+        "aggregate platform observations. There is no account connection or automatic posting."
+    )
+    _show_cover_experiment_creation(store)
+    try:
+        experiment_ids = list_experiment_ids(store)
+    except (OSError, ValueError) as exc:
+        st.error(f"Experiment index is unavailable: {exc}")
+        return
+    if not experiment_ids:
+        st.info("No organic experiment exists for this project.")
+        return
+    selected_experiment_id = st.selectbox(
+        "Experiment",
+        experiment_ids,
+        key="organic-experiment-selector",
+    )
+    experiment_store = ExperimentStore(store, selected_experiment_id)
+    try:
+        manifest = experiment_store.manifest()
+        status = experiment_status(experiment_store)
+    except (OSError, ValueError) as exc:
+        st.error(f"Experiment is invalid: {exc}")
+        return
+    st.subheader(manifest.name)
+    st.write(manifest.hypothesis)
+    first, second, third, fourth = st.columns(4)
+    first.metric("Platform", manifest.platform.value)
+    second.metric("Variable", manifest.variable.value)
+    third.metric("Observed", f"{status.observed_variant_count}/{status.variant_count}")
+    fourth.metric("Review", "approved" if status.approved else "pending")
+    if status.blockers:
+        st.warning("Experiment blockers:\n\n- " + "\n- ".join(status.blockers))
+    else:
+        st.success("No current experiment blockers.")
+    _show_experiment_variants(store, manifest, experiment_store, reviewer)
+    _show_experiment_publication(store, manifest, reviewer)
+    _show_experiment_analysis(store, manifest, experiment_store, reviewer)
+
+
 projects_root = Path(os.getenv("TECHSHORT_PROJECTS_ROOT", "projects"))
 slugs = (
     sorted(path.name for path in projects_root.iterdir() if (path / "project.json").is_file())
@@ -1880,8 +2584,10 @@ elif step == "7 Preview":
     _show_preview(store)
 elif step == "8 QA":
     _show_qa(store)
-else:
+elif step == "9 Export":
     _show_export(store, reviewer)
+else:
+    _show_organic_experiments(store, reviewer)
 
 with st.sidebar.expander("Append-only review history"):
     log = _load_if(store, "reviews/review-log.json", ReviewLog)

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from PIL import Image
 from streamlit.testing.v1 import AppTest
 
 from techshort.audio import NarrationVoice
+from techshort.domain.hashing import sha256_file
 from techshort.domain.models import (
     AnglesManifest,
     ClaimsManifest,
@@ -14,6 +17,19 @@ from techshort.domain.models import (
     StoryboardManifest,
 )
 from techshort.domain.storage import ProjectStore, load_model
+from techshort.experiments import (
+    ExperimentStore,
+    ExperimentVariable,
+    OrganicPlatform,
+    VariantRole,
+    analyze_experiment,
+    append_observations,
+    approve_experiment,
+    build_observation,
+    build_variant,
+    derive_experiment_id,
+    initialize_experiment,
+)
 from techshort.generation import (
     fixture_claims,
     fixture_script,
@@ -23,6 +39,7 @@ from techshort.generation import (
 )
 from techshort.generation.design import generate_fixture_covers, select_cover
 from techshort.ingestion import ingest_source
+from techshort.publication import GRANT_CONFIRMATION, OrganicPublicationPackage
 from techshort.review import approve_claims, approve_script
 
 
@@ -55,6 +72,71 @@ def _reviewable_project(tmp_path: Path) -> Path:
     return projects
 
 
+def _approved_cover_experiment(projects: Path) -> tuple[ProjectStore, ExperimentStore]:
+    store = ProjectStore(projects, "review-app")
+    covers = load_model(store.path("storyboard/covers.json"), CoverManifest)
+    selection = load_model(store.path("storyboard/cover-selection.json"), CoverSelection)
+    locked_hash = "1" * 64
+    name = "Reviewer cover test"
+    experiment_id = derive_experiment_id(
+        store.project().project_id,
+        name,
+        ExperimentVariable.COVER,
+        locked_hash,
+    )
+    media = store.path("export/review-app.mp4")
+    media.write_bytes(b"\x00\x00\x00\x18ftypisom" + b"reviewed-video" * 4)
+    store.path("export/review-app.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:02,000\nReviewed caption.\n",
+        encoding="utf-8",
+    )
+    store.path("export/review-app.vtt").write_text(
+        "WEBVTT\n\n00:00.000 --> 00:02.000\nReviewed caption.\n",
+        encoding="utf-8",
+    )
+    candidates = covers.candidates[:2]
+    variants = []
+    for index, candidate in enumerate(candidates):
+        cover_path = store.path(
+            f"experiments/{experiment_id}/variants/{candidate.candidate_id}.png"
+        )
+        cover_path.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (108, 192), (25 + index * 80, 60, 100)).save(cover_path)
+        variants.append(
+            build_variant(
+                label=candidate.headline,
+                role=(
+                    VariantRole.CONTROL
+                    if candidate.candidate_id == selection.selected_candidate_id
+                    else VariantRole.TREATMENT
+                ),
+                variable=ExperimentVariable.COVER,
+                variable_value=candidate.candidate_id,
+                media_path="export/review-app.mp4",
+                media_hash=sha256_file(media),
+                cover_path=cover_path.relative_to(store.root).as_posix(),
+                cover_hash=sha256_file(cover_path),
+                locked_factual_hash=locked_hash,
+                evidence_hash="2" * 64,
+                claims_hash="3" * 64,
+                limitation_hash="4" * 64,
+                rights_hash="5" * 64,
+            )
+        )
+    manifest = initialize_experiment(
+        store,
+        name=name,
+        hypothesis="A reviewed alternative cover will improve completion rate.",
+        platform=OrganicPlatform.TIKTOK,
+        variable=ExperimentVariable.COVER,
+        variants=variants,
+        minimum_views_per_variant=100,
+    )
+    experiment_store = ExperimentStore(store, manifest.experiment_id)
+    approve_experiment(experiment_store, "test-reviewer")
+    return store, experiment_store
+
+
 def test_reviewer_constructs_every_step_without_duplicate_widget_ids(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -80,6 +162,7 @@ def test_reviewer_constructs_every_step_without_duplicate_widget_ids(
         "7 Preview",
         "8 QA",
         "9 Export",
+        "10 Organic experiments",
     ]
     for step in steps:
         app.sidebar.radio(key="review-step").set_value(step)
@@ -229,6 +312,151 @@ def test_narration_step_passes_reviewed_controls_to_local_audio_services(
     app.run()
     assert calls["sound_slug"] == "review-app"
     assert calls["sound_preset"] == "present"
+
+
+def test_organic_experiment_step_builds_pending_and_explicit_consent_packages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    projects = _reviewable_project(tmp_path)
+    store, experiment_store = _approved_cover_experiment(projects)
+    manifest = experiment_store.manifest()
+    control = next(item for item in manifest.variants if item.role is VariantRole.CONTROL)
+    monkeypatch.setenv("TECHSHORT_PROJECTS_ROOT", str(projects))
+    app = AppTest.from_file("reviewer/streamlit_app.py", default_timeout=30).run()
+    app.sidebar.radio(key="review-step").set_value("10 Organic experiments")
+    app.run()
+
+    assert not app.exception
+    assert app.button(key="experiment-create")
+    assert app.selectbox(key="organic-experiment-selector").value == manifest.experiment_id
+    assert app.button(key=f"experiment-approve-{manifest.experiment_id}").disabled
+    assert app.selectbox(key=f"publication-variant-{manifest.experiment_id}")
+    assert app.download_button(
+        key=f"experiment-template-download-{manifest.experiment_id}"
+    )
+    warnings = " ".join(item.value for item in app.warning)
+    assert "does not log into an account" in warnings
+    assert "claim that publication occurred" in warnings
+
+    app.text_area(key=f"publication-copy-{manifest.experiment_id}").set_value(
+        "A reviewed cover test for the approved technical explainer."
+    )
+    app.text_area(key=f"publication-alt-{manifest.experiment_id}").set_value(
+        "A reviewed vertical explainer cover."
+    )
+    app.run()
+    app.button(key=f"publication-request-prepare-{manifest.experiment_id}").click()
+    app.run()
+    build_key = f"publication-package-build-{manifest.experiment_id}-{control.variant_id}"
+    assert app.button(key=build_key)
+    app.button(key=build_key).click()
+    app.run()
+
+    grant_key = f"publication-consent-grant-{manifest.experiment_id}-{control.variant_id}"
+    consent_key = f"publication-consent-{manifest.experiment_id}-{control.variant_id}"
+    assert app.button(key=grant_key).disabled
+    app.text_input(key=consent_key).set_value(GRANT_CONFIRMATION)
+    app.run()
+    assert not app.button(key=grant_key).disabled
+    app.button(key=grant_key).click()
+    app.run()
+
+    package_manifests = sorted(
+        store.path(
+            f"experiments/{manifest.experiment_id}/publication/{control.variant_id}/tiktok"
+        ).glob("organic-package-*/package-manifest.json")
+    )
+    packages = [load_model(path, OrganicPublicationPackage) for path in package_manifests]
+    assert {item.consent.state for item in packages} == {"pending", "granted"}
+    granted = next(item for item in packages if item.consent.state == "granted")
+    assert granted.manual_upload_authorized
+    assert not granted.automated_upload
+    assert not granted.claimed_posted
+    assert not app.exception
+
+
+def test_organic_experiment_step_analyzes_approves_and_routes_cover_application(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    projects = _reviewable_project(tmp_path)
+    _, experiment_store = _approved_cover_experiment(projects)
+    manifest = experiment_store.manifest()
+    control = next(item for item in manifest.variants if item.role is VariantRole.CONTROL)
+    treatment = next(item for item in manifest.variants if item.role is VariantRole.TREATMENT)
+    start = datetime(2026, 7, 1, tzinfo=UTC)
+    end = datetime(2026, 7, 8, tzinfo=UTC)
+    captured = datetime(2026, 7, 9, tzinfo=UTC)
+    append_observations(
+        experiment_store,
+        [
+            build_observation(
+                experiment_id=manifest.experiment_id,
+                variant_id=control.variant_id,
+                platform=manifest.platform,
+                publication_reference="control-post",
+                window_started_at=start,
+                window_ended_at=end,
+                captured_at=captured,
+                view_count=1000,
+                completed_view_count=400,
+            ),
+            build_observation(
+                experiment_id=manifest.experiment_id,
+                variant_id=treatment.variant_id,
+                platform=manifest.platform,
+                publication_reference="treatment-post",
+                window_started_at=start,
+                window_ended_at=end,
+                captured_at=captured,
+                view_count=1000,
+                completed_view_count=800,
+            ),
+        ],
+    )
+    recommendation = analyze_experiment(experiment_store)
+    assert recommendation.action.value == "adopt-variant"
+    applied: dict[str, str] = {}
+
+    def fake_apply(
+        selected_store: ExperimentStore,
+        recommendation_id: str,
+        reviewer_identifier: str,
+    ) -> object:
+        applied.update(
+            experiment_id=selected_store.experiment_id,
+            recommendation_id=recommendation_id,
+            reviewer=reviewer_identifier,
+        )
+        return object()
+
+    monkeypatch.setattr(
+        "techshort.experiments.apply_approved_cover_recommendation",
+        fake_apply,
+    )
+    monkeypatch.setenv("TECHSHORT_PROJECTS_ROOT", str(projects))
+    app = AppTest.from_file("reviewer/streamlit_app.py", default_timeout=30).run()
+    app.sidebar.radio(key="review-step").set_value("10 Organic experiments")
+    app.run()
+
+    approve_key = f"experiment-recommendation-approve-{recommendation.recommendation_id}"
+    assert not app.button(key=approve_key).disabled
+    assert any("Wilson intervals" in item.value for item in app.warning)
+    app.button(key=approve_key).click()
+    app.run()
+    apply_key = f"experiment-recommendation-apply-{recommendation.recommendation_id}"
+    assert not app.button(key=apply_key).disabled
+    app.button(key=apply_key).click()
+    app.run()
+
+    assert applied == {
+        "experiment_id": manifest.experiment_id,
+        "recommendation_id": recommendation.recommendation_id,
+        "reviewer": "local-reviewer",
+    }
+    assert any(
+        "invalidate storyboard, rights, and final approval" in item.value for item in app.warning
+    )
+    assert not app.exception
 
 
 def test_qa_step_surfaces_creative_quality_findings(
