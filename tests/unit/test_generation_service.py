@@ -7,7 +7,13 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from techshort.domain.creative import RetentionCritique, RetentionPlan
+from techshort.domain.creative import (
+    BeatPlan,
+    EditorialCritique,
+    NarrativeBrief,
+    RetentionCritique,
+    RetentionPlan,
+)
 from techshort.domain.hashing import sha256_file
 from techshort.domain.models import (
     AnglesManifest,
@@ -15,6 +21,7 @@ from techshort.domain.models import (
     ClaimCritiqueReport,
     ClaimsManifest,
     EvidenceManifest,
+    ScriptManifest,
     SourceDocument,
     SourceIndex,
 )
@@ -264,9 +271,7 @@ def test_three_angles_require_explicit_hash_bound_selection(tmp_path: Path) -> N
     assert script.angle == "engineering-tradeoff"
     assert 130 <= sum(len(segment.text.split()) for segment in script.segments) <= 170
     retention = load_model(store.path("script/retention-plan.json"), RetentionPlan)
-    retention_critique = load_model(
-        store.path("script/retention-critique.json"), RetentionCritique
-    )
+    retention_critique = load_model(store.path("script/retention-critique.json"), RetentionCritique)
     assert retention.script_version_id == script.version_id
     assert retention.cold_open.duration_seconds <= 5
     assert max(beat.duration_seconds for beat in retention.cadence.beats) <= 7
@@ -311,7 +316,7 @@ def test_script_must_use_selected_angle_central_claims(tmp_path: Path) -> None:
         generate_script(store, "manual", manual_result="script/manual-result.json")
 
 
-def test_switching_from_fixture_to_manual_retires_fixture_creative_state(
+def test_switching_from_fixture_to_manual_rebuilds_provider_neutral_creative_state(
     tmp_path: Path,
 ) -> None:
     store = _rolling_store(tmp_path)
@@ -321,6 +326,7 @@ def test_switching_from_fixture_to_manual_retires_fixture_creative_state(
     selection = select_angle(store, "everyday-mechanism")
     generate_script(store, "fixture").require_artifact()
     assert "retention_plan" in store.project().active_versions
+    fixture_brief_id = store.project().active_versions["narrative_brief"]
 
     pending = generate_script(store, "manual")
     assert pending.requires_manual_import
@@ -338,18 +344,61 @@ def test_switching_from_fixture_to_manual_retires_fixture_creative_state(
         manual_result="script/manual-provider-switch-result.json",
     ).require_artifact()
 
+    brief = load_model(store.path("script/narrative-brief.json"), NarrativeBrief)
+    beat_plan = load_model(store.path("script/beat-plan.json"), BeatPlan)
+    editorial = load_model(store.path("script/editorial-critique.json"), EditorialCritique)
+    retention = load_model(store.path("script/retention-plan.json"), RetentionPlan)
+    retention_critique = load_model(store.path("script/retention-critique.json"), RetentionCritique)
     project = store.project()
-    for key in (
-        "narrative_brief",
-        "beat_plan",
-        "editorial_critique",
-        "retention_plan",
-        "retention_critique",
-    ):
-        assert key not in project.active_versions
-    assert store.path("script/retention-plan.json").is_file()
+    assert brief.version_id != fixture_brief_id
+    assert brief.version_id == project.active_versions["narrative_brief"]
+    assert beat_plan.version_id == project.active_versions["beat_plan"]
+    assert editorial.critique_id == project.active_versions["editorial_critique"]
+    assert retention.version_id == project.active_versions["retention_plan"]
+    assert retention_critique.critique_id == project.active_versions["retention_critique"]
+    assert editorial.script_version_id == imported.version_id
+    assert retention.script_version_id == imported.version_id
+    assert retention_critique.script_version_id == imported.version_id
+    assert not editorial.blocking
+    assert not retention_critique.blocking
     assert imported.version_id == project.active_versions["script"]
     approve_script(store, "manual-reviewer")
+
+
+def test_manual_retention_validation_fails_before_replacing_current_script(
+    tmp_path: Path,
+) -> None:
+    store = _rolling_store(tmp_path)
+    claims = generate_claims(store, "fixture").require_artifact()
+    approve_claims(store, "test")
+    angles = generate_angles(store, "fixture").require_artifact()
+    selection = select_angle(store, "everyday-mechanism")
+    current = generate_script(store, "fixture").require_artifact()
+    before = store.path("script/script.json").read_bytes()
+
+    pending = generate_script(store, "manual")
+    assert pending.requires_manual_import
+    candidate = FixtureProvider().generate_script(
+        claims,
+        selection.selected_angle,
+        angles_version_id=angles.version_id,
+        angle_selection_id=selection.selection_id,
+    )
+    for segment in candidate.segments[1:]:
+        if segment.segment_type == "hook":
+            segment.segment_type = "factual"
+    result = store.path("script/manual-invalid-retention.json")
+    result.write_text(candidate.model_dump_json(indent=2), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="two distinct mid-video hook"):
+        generate_script(
+            store,
+            "manual",
+            manual_result="script/manual-invalid-retention.json",
+        )
+
+    assert store.path("script/script.json").read_bytes() == before
+    assert store.project().active_versions["script"] == current.version_id
 
 
 def test_script_regeneration_archives_pre_angle_schema_bytes(tmp_path: Path) -> None:
@@ -475,6 +524,65 @@ def test_codex_angle_generation_uses_schema_constrained_provider(tmp_path: Path)
     ).require_artifact()
     assert provider.models == [AnglesManifest]
     assert angles.version_id == store.project().active_versions["angles"]
+
+
+def test_codex_script_builds_provider_neutral_editorial_chain(tmp_path: Path) -> None:
+    store = _rolling_store(tmp_path)
+    claims = generate_claims(store, "fixture").require_artifact()
+    approve_claims(store, "test")
+    angles = generate_angles(store, "fixture").require_artifact()
+    selection = select_angle(store, "everyday-mechanism")
+
+    class FakeCodex:
+        def __init__(self) -> None:
+            self.models: list[type[Any]] = []
+            self.last_run: CodexRunMetadata | None = None
+
+        def generate(
+            self,
+            instruction: str,
+            excerpts: list[dict[str, object]],
+            model: type[Any],
+        ) -> Any:
+            assert "two distinct mid-video re-hooks" in instruction
+            assert "Use 7 to 12 segments" in instruction
+            assert "cold open at or below 175" in instruction
+            assert "overall spoken pace at or below 175" in instruction
+            assert excerpts
+            self.models.append(model)
+            self.last_run = CodexRunMetadata(
+                prompt_version="test-codex-v1",
+                prompt_hash="c" * 64,
+                input_hash="d" * 64,
+                attempts=1,
+                flags=("--sandbox", "read-only"),
+            )
+            return FixtureProvider().generate_script(
+                claims,
+                selection.selected_angle,
+                angles_version_id=angles.version_id,
+                angle_selection_id=selection.selection_id,
+            )
+
+    provider = FakeCodex()
+    script = generate_script(
+        store,
+        "codex",
+        codex_provider=provider,  # type: ignore[arg-type]
+    ).require_artifact()
+
+    assert provider.models == [ScriptManifest]
+    project = store.project()
+    brief = load_model(store.path("script/narrative-brief.json"), NarrativeBrief)
+    plan = load_model(store.path("script/retention-plan.json"), RetentionPlan)
+    editorial = load_model(store.path("script/editorial-critique.json"), EditorialCritique)
+    retention = load_model(store.path("script/retention-critique.json"), RetentionCritique)
+    assert brief.version_id == project.active_versions["narrative_brief"]
+    assert plan.version_id == project.active_versions["retention_plan"]
+    assert editorial.script_version_id == script.version_id
+    assert retention.script_version_id == script.version_id
+    assert not editorial.blocking
+    assert not retention.blocking
 
 
 def test_fixture_claims_persist_independent_critique(tmp_path: Path) -> None:
