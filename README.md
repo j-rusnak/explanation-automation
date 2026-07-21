@@ -4,6 +4,12 @@
 
 The hard invariant is simple: every factual script clause cites one or more approved claims, and every approved claim cites exact evidence that still resolves in the ingested source. Deterministic QA and five human gates block final export when provenance, rights, staleness, limitation, or media checks fail.
 
+Short-form engagement is also deterministic and reviewable. Every generated script receives an
+honest cold-open contract, a typed 45-75-second cadence, claim-linked attention events at gaps of
+no more than five seconds, two distinct mid-video re-hooks, an evidence payoff, and a limitation
+reframe. These controls improve editorial craft without treating attention as proof or promising
+platform performance.
+
 ## Requirements and licenses
 
 - Windows PowerShell (the tested host), Python 3.11–3.14, Node.js 22, npm, and Git. Final verification used Python 3.13.14 and Node.js 22.17.1.
@@ -45,7 +51,7 @@ Direct Python dependencies and all npm dependencies are exact-pinned; `requireme
 
 Open `http://localhost:8501`. The reviewer has nine restart-safe steps for project, sources, claims/evidence, angles/script, storyboard/assets, narration/captions, preview, QA, and export. It displays source/generated content as escaped inert text; repository Streamlit configuration disables telemetry.
 
-The reviewer now exposes three deterministic art directions (`blueprint`, `signal-lab`, and `technical-editorial`), three evidence-linked cover candidates, narrative and visual critiques, scene layout/motion controls, and hash-tracked representative stills. Cover choice is part of storyboard approval: changing the theme, scene treatment, or selected cover invalidates downstream review.
+The reviewer now exposes three deterministic art directions (`blueprint`, `signal-lab`, and `technical-editorial`), three evidence-linked cover candidates, narrative, retention, and visual critiques, the exact attention-event schedule, scene layout/motion controls, and hash-tracked representative stills. Cover choice is part of storyboard approval: changing the theme, pacing, safe zone, scene treatment, or selected cover invalidates downstream review.
 
 ## Complete sample workflow
 
@@ -53,6 +59,8 @@ The sample source is original project prose about rolling-shutter distortion. Th
 
 ```powershell
 .\.venv\Scripts\techshort.exe init rolling-shutter --title "Rolling-Shutter Distortion"
+.\.venv\Scripts\techshort.exe style pacing rolling-shutter high-retention
+.\.venv\Scripts\techshort.exe style safe-zone rolling-shutter --top 0.06 --right 0.14 --bottom 0.17 --left 0.067
 .\.venv\Scripts\techshort.exe audio mode rolling-shutter silent-reviewed
 .\.venv\Scripts\techshort.exe ingest rolling-shutter examples\rolling-shutter\rolling-shutter.md
 .\.venv\Scripts\techshort.exe claims generate rolling-shutter --provider fixture
@@ -142,15 +150,24 @@ npm.cmd run render-sample
 ## Providers
 
 - `fixture`: deterministic offline claims/critique/angles/script/storyboard used by the complete example and tests.
-- The fixture flow also persists an angle-specific narrative brief, factual locks, beat plan, storyboard guidance, editorial critique, visual critique, and three cover directions. These artifacts remain drafting constraints, never proof or approval.
-- `manual`: exports an untrusted-data prompt packet and strictly validates imported JSON.
+- Every script-generation path persists a narrative brief, factual locks, beat plan, retention plan, editorial critique, and retention critique. Fixture generation uses angle-specific topic direction; manual and Codex output receive deterministic provider-neutral constraints after strict import. These artifacts remain drafting constraints, never proof or approval.
+- `manual`: exports an untrusted-data prompt packet and strictly validates imported JSON before applying the same local editorial and retention checks.
 - `codex`: optional Codex CLI provider. It requires a locally installed authenticated CLI with `codex exec`, `--ephemeral`, `--sandbox read-only`, `--output-schema`, and `--output-last-message`. It uses an excerpt-only temporary directory, argument arrays, a timeout, no code execution, and strict Pydantic validation. A live authenticated claims-plus-critique smoke was run on the tested host; the offline path remains unaffected when Codex is missing.
+
+Manual and Codex storyboard generation receives a validated, prose-free retention context with
+beat timing, allowlisted event kinds, visual devices, and claim IDs. Free-form event purpose and
+sound metadata are excluded, and stale or blocking context is rejected before a prompt is written.
+
+Only the current, validated retention chain reaches Remotion. Its allowlisted event kind, visual
+device, ID, and narration-scaled time drive a short safe-zone-contained geometric pulse on an
+exact frame; provider text, event prose, paths, sounds, and code are excluded from the render
+payload.
 
 ## Storage and security
 
 Runtime projects live under `projects/<slug>` and are Git-ignored. Writes are atomic and validated. Regeneration archives the prior manifest version. Edits transitively stale downstream artifacts and append invalidation records to review history. Sources, extracted full text, narration, renders, secrets, exports, dependencies, and temporary provider data are excluded from Git.
 
-See [architecture](docs/ARCHITECTURE.md), [security threat model](docs/SECURITY.md), [rights policy](docs/RIGHTS.md), and [troubleshooting](docs/TROUBLESHOOTING.md).
+See [engagement and retention](docs/ENGAGEMENT.md), [architecture](docs/ARCHITECTURE.md), [security threat model](docs/SECURITY.md), [rights policy](docs/RIGHTS.md), and [troubleshooting](docs/TROUBLESHOOTING.md).
 
 ## Current limitations
 
@@ -158,6 +175,9 @@ See [architecture](docs/ARCHITECTURE.md), [security threat model](docs/SECURITY.
 - PDF bounding boxes and printed page labels are stored only when reliably available; pypdf V1 uses page index plus exact character locators.
 - Narration timing falls back to approved segment durations. Without a hash-bound transcript or a configured local Whisper model, QA requires manual narration comparison.
 - Deterministic creative QA catches measurable risks such as dense copy, repeated layouts, missing units, exposed internal IDs, caption speed, and weak cover structure. It is a production aid, not a substitute for watching the preview.
+- Retention plans and creative QA encode useful short-form heuristics, not a guarantee of views or watch time. V1 has no social publishing, audience experimentation, or platform-analytics integration.
+- Flash QA checks declared and inferred motion cues and blocks unsafe declared rates, but it is not a full rendered-pixel luminance-and-area analysis. A human must inspect the exact preview, contact sheet, and scene stills.
+- Sound-design cues in retention plans are inert metadata. The renderer neither synthesizes nor embeds effects; any later effect needs a rights record and renewed downstream review.
 - V2 cover generation is deterministic and specialized for the rolling-shutter fixture. General-source cover drafting still requires manual/provider-specific candidates that satisfy the same strict cover schema.
 - The Streamlit UI is a review surface, not a nonlinear editor.
 - PDF parsing runs in-process; file/page/output bounds reduce but do not eliminate parser memory risk from a novel malicious PDF.
