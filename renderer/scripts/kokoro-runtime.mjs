@@ -11,6 +11,9 @@ export const KOKORO_DTYPE = "q8";
 export const KOKORO_DEVICE = "cpu";
 export const KOKORO_RUNTIME_VERSION = "techshort-kokoro-v1";
 
+export const ordinalNameCompare = (left, right) =>
+  left < right ? -1 : left > right ? 1 : 0;
+
 const stableId = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const manifestName = "techshort-kokoro-manifest.json";
 const maxInputBytes = 128 * 1024;
@@ -136,7 +139,10 @@ export const loadKokoro = async ({ cacheDirectory, allowRemoteModels }) => {
 
 const walkFiles = async (directory, root, output) => {
   const entries = await readdir(directory, { withFileTypes: true });
-  entries.sort((left, right) => left.name.localeCompare(right.name));
+  // Use ordinal ASCII ordering so the Node and Python provenance verifiers
+  // hash the same inventory on every host. localeCompare() orders punctuation
+  // differently from Python and may also vary by the machine locale.
+  entries.sort((left, right) => ordinalNameCompare(left.name, right.name));
   for (const entry of entries) {
     const absolute = resolve(directory, entry.name);
     if (entry.isSymbolicLink()) {

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   KOKORO_MODEL_REVISION,
   KOKORO_VOICES,
+  ordinalNameCompare,
   segmentFileName,
   validateSynthesisInput,
 } from "../scripts/kokoro-runtime.mjs";
@@ -31,6 +32,12 @@ describe("Kokoro local runtime contract", () => {
     expect(validateSynthesisInput(validInput())).toEqual(validInput());
     expect(segmentFileName(0)).toBe("segment-001.wav");
     expect(segmentFileName(99)).toBe("segment-100.wav");
+  });
+
+  it("uses cross-runtime ordinal cache inventory ordering", () => {
+    expect(
+      ["tokenizer_config.json", "tokenizer.json"].sort(ordinalNameCompare),
+    ).toEqual(["tokenizer.json", "tokenizer_config.json"]);
   });
 
   it.each([

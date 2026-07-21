@@ -17,6 +17,7 @@ export const KOKORO_DTYPE: "q8";
 export const KOKORO_DEVICE: "cpu";
 export const KOKORO_RUNTIME_VERSION: string;
 export const KOKORO_VOICES: Readonly<Record<string, KokoroVoice>>;
+export const ordinalNameCompare: (left: string, right: string) => number;
 export const validateSynthesisInput: (value: unknown) => KokoroSynthesisInput;
 export const segmentFileName: (index: number) => string;
 export const configureKokoroEnvironment: (
