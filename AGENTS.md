@@ -10,6 +10,8 @@
 - Preview video is watermarked until the final gate passes. Final export is never watermarked.
 - Cover selection is part of storyboard review. A current cover, contact sheet, and representative still for every scene are required for final media QA.
 - Narration is required by default. Silent output is valid only through the explicit `silent-reviewed` mode and final human review.
+- Engagement must remain honest and evidence-linked: no bait, false urgency, deceptive withholding, unsupported certainty, or strobing. Retention heuristics never weaken provenance, limitation, rights, accessibility, or approval gates.
+- Generated scripts require a current typed retention plan and critique. Attention gaps are at most five seconds, declared events are inert allowlisted data, and renderer event timing is narration-scaled and deterministic.
 - Normal tests are offline; model calls are opt-in only.
 
 ## Commands
