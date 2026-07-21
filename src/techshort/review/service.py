@@ -849,9 +849,7 @@ def _validate_editorial_dependencies(
     if not retention_keys.issubset(project.active_versions):
         raise ValueError("retention planning artifacts are incomplete")
     retention = load_model(store.path("script/retention-plan.json"), RetentionPlan)
-    retention_critique = load_model(
-        store.path("script/retention-critique.json"), RetentionCritique
-    )
+    retention_critique = load_model(store.path("script/retention-critique.json"), RetentionCritique)
     _ensure_active_versions(
         project,
         retention_plan=retention.version_id,
@@ -971,9 +969,7 @@ def _validate_storyboard_dependencies(
         if scene.evidence_label is None:
             raise ValueError(f"scene {scene.scene_id} requires an evidence label")
         if expected_label is not None and scene.evidence_label != expected_label:
-            raise ValueError(
-                f"scene {scene.scene_id} evidence label understates inferred evidence"
-            )
+            raise ValueError(f"scene {scene.scene_id} evidence label understates inferred evidence")
         if expected_label is None and scene.evidence_label not in labels:
             raise ValueError(f"scene {scene.scene_id} evidence label does not match its claims")
         support = [

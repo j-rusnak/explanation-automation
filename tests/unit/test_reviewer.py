@@ -109,9 +109,7 @@ def test_script_step_shows_all_angles_and_explicit_selection_controls(
     assert not app.exception
     assert any("Editorial critique" in item.value for item in app.subheader)
     assert any("Retention plan" in item.value for item in app.subheader)
-    assert any(
-        metric.label == "Narration pace" and "WPM" in metric.value for metric in app.metric
-    )
+    assert any(metric.label == "Narration pace" and "WPM" in metric.value for metric in app.metric)
     assert any(item.label == "Retention event schedule" for item in app.expander)
     for candidate in angles.candidates:
         assert any(candidate.title in item.value for item in app.markdown)

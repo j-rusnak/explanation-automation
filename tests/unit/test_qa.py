@@ -105,9 +105,7 @@ def test_qa_hard_fails_low_scene_panel_contrast(tmp_path: Path) -> None:
     store = _approved_store(tmp_path)
     storyboard_path = store.path("storyboard/storyboard.json")
     storyboard = load_model(storyboard_path, StoryboardManifest)
-    scene = next(
-        item for item in storyboard.scenes if item.primitive == "ParameterSimulation"
-    )
+    scene = next(item for item in storyboard.scenes if item.primitive == "ParameterSimulation")
     scene.theme_overrides = {"panel": "#FFFFFF", "text": "#FFFFFF"}
     atomic_write_model(storyboard_path, storyboard)
 
@@ -167,9 +165,7 @@ def test_qa_blocks_declared_accessibility_failure(
         result = original(snapshot)
         data = result.model_dump(mode="json")
         unsafe = next(
-            check
-            for check in data["checks"]
-            if check["check_id"] == "motion-intensity-flashing"
+            check for check in data["checks"] if check["check_id"] == "motion-intensity-flashing"
         )
         unsafe["status"] = "failure"
         unsafe["message"] = "Declared flashing exceeds the safe threshold"
@@ -179,9 +175,7 @@ def test_qa_blocks_declared_accessibility_failure(
     monkeypatch.setattr(qa_service, "evaluate_creative_quality", unsafe_quality)
     report = run_qa(store, require_media=False)
 
-    motion = next(
-        check for check in report.checks if check.check_id == "motion-intensity-flashing"
-    )
+    motion = next(check for check in report.checks if check.check_id == "motion-intensity-flashing")
     assert motion.status == "failure"
     assert motion.hard_blocker
     assert motion.message in report.export_blockers

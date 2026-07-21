@@ -523,8 +523,7 @@ def run_qa(
                 and retention.beat_plan_version_id == beat_plan.version_id
                 and retention.script_version_id == script.version_id
                 and retention.claims_version_id == claims.version_id
-                and retention_critique
-                == critique_retention(retention, brief, beat_plan, script)
+                and retention_critique == critique_retention(retention, brief, beat_plan, script)
                 and not retention_critique.blocking
             )
             creative_chain_valid = creative_chain_valid and retention_chain_valid
@@ -906,16 +905,12 @@ def run_qa(
             "motion-intensity-flashing",
         ):
             accessibility_check = next(
-                item
-                for item in creative_result.checks
-                if item.check_id == accessibility_check_id
+                item for item in creative_result.checks if item.check_id == accessibility_check_id
             )
             checks.append(
                 QACheck(
                     check_id=accessibility_check.check_id,
-                    status=(
-                        "failure" if accessibility_check.status == "failure" else "pass"
-                    ),
+                    status=("failure" if accessibility_check.status == "failure" else "pass"),
                     message=(
                         accessibility_check.message
                         if accessibility_check.status != "warning"

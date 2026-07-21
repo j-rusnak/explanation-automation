@@ -579,9 +579,7 @@ def _show_creative_findings(store: ProjectStore) -> None:
         retention_critique,
         plan_is_current=plan_is_current,
         critique_is_current=critique_is_current,
-        timing_scale=(
-            snapshot.retention.timing_scale if snapshot.retention is not None else 1.0
-        ),
+        timing_scale=(snapshot.retention.timing_scale if snapshot.retention is not None else 1.0),
     )
     st.metric("Creative QA score", f"{result.score}/100", result.status.upper())
     st.caption(
