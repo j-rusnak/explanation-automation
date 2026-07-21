@@ -8,7 +8,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from techshort.alignment.captions import CaptionCue
+from techshort.alignment.captions import (
+    MAX_CAPTION_CHARACTERS_PER_SECOND,
+    MIN_CAPTION_DURATION_SECONDS,
+    CaptionCue,
+)
 from techshort.domain.creative import RetentionPlan
 from techshort.domain.models import (
     AnnotatedChartVisual,
@@ -934,7 +938,7 @@ def _caption_timing_accessibility_check(
         longest = max(longest, duration)
         if duration < 0.5 or duration > 10:
             failures.append(cue.cue_id)
-        elif duration < 0.8 or duration > 7:
+        elif duration < MIN_CAPTION_DURATION_SECONDS or duration > 7:
             warnings.append(cue.cue_id)
         if previous is not None and cue.start_seconds < previous.end_seconds:
             failures.extend([previous.cue_id, cue.cue_id])
@@ -1097,7 +1101,7 @@ def _caption_speed_check(snapshot: CreativeQualityInput) -> CreativeQualityCheck
         maximum = max(maximum, cps)
         if cps > 25:
             failures.append(cue.cue_id)
-        elif cps > 20:
+        elif cps > MAX_CAPTION_CHARACTERS_PER_SECOND:
             warnings.append(cue.cue_id)
     status: QualityStatus = "failure" if failures else "warning" if warnings else "pass"
     offenders = failures + warnings

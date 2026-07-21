@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 import textwrap
 from dataclasses import dataclass
@@ -18,6 +19,66 @@ class CaptionCue:
 
 
 MAX_CAPTION_CHARACTERS = 42
+MIN_CAPTION_DURATION_SECONDS = 0.8
+MAX_CAPTION_CHARACTERS_PER_SECOND = 20.0
+
+
+def _caption_chunks(text: str) -> list[str]:
+    """Split narration into compact cues without leaving a final word stranded."""
+    chunks = textwrap.wrap(
+        text,
+        width=MAX_CAPTION_CHARACTERS,
+        break_long_words=True,
+        break_on_hyphens=False,
+        replace_whitespace=True,
+        drop_whitespace=True,
+    ) or [text]
+    for index in range(len(chunks) - 1, 0, -1):
+        current_words = chunks[index].split()
+        previous_words = chunks[index - 1].split()
+        if len(current_words) != 1:
+            continue
+        merged = f"{chunks[index - 1]} {chunks[index]}"
+        if len(merged) <= MAX_CAPTION_CHARACTERS:
+            chunks[index - 1] = merged
+            del chunks[index]
+            continue
+        if len(previous_words) < 3:
+            continue
+        rebalanced_current = f"{previous_words[-1]} {chunks[index]}"
+        rebalanced_previous = " ".join(previous_words[:-1])
+        if (
+            len(rebalanced_current) <= MAX_CAPTION_CHARACTERS
+            and len(rebalanced_previous) <= MAX_CAPTION_CHARACTERS
+        ):
+            chunks[index - 1] = rebalanced_previous
+            chunks[index] = rebalanced_current
+    return chunks
+
+
+def _cue_durations(chunks: list[str], segment_duration: float) -> list[float]:
+    """Allocate time by readable character load while preserving the segment boundary."""
+    character_counts = [max(1, len(re.sub(r"\s+", "", chunk))) for chunk in chunks]
+    readable_minimums = [
+        max(
+            MIN_CAPTION_DURATION_SECONDS,
+            character_count / MAX_CAPTION_CHARACTERS_PER_SECOND,
+        )
+        for character_count in character_counts
+    ]
+    required_duration = sum(readable_minimums)
+    total_characters = sum(character_counts)
+    if required_duration <= segment_duration:
+        remaining = segment_duration - required_duration
+        return [
+            minimum + remaining * character_count / total_characters
+            for minimum, character_count in zip(readable_minimums, character_counts, strict=True)
+        ]
+
+    # If the approved segment timing cannot satisfy both accessibility budgets,
+    # scale both requirements equally. QA will surface the infeasible script honestly.
+    infeasible_scale = segment_duration / required_duration
+    return [minimum * infeasible_scale for minimum in readable_minimums]
 
 
 def cues_from_script(
@@ -35,24 +96,20 @@ def cues_from_script(
     timing_scale = target_duration / script_duration if target_duration is not None else 1.0
     cues: list[CaptionCue] = []
     current = 0.0
+    elapsed_script_duration = 0.0
     index = 1
     for segment in script.segments:
         # textwrap always consumes input, including a single word longer than the
-        # line limit.  This avoids the non-advancing loop that long technical
-        # identifiers previously triggered.
-        chunks = textwrap.wrap(
-            segment.text,
-            width=MAX_CAPTION_CHARACTERS,
-            break_long_words=True,
-            break_on_hyphens=False,
-            replace_whitespace=True,
-            drop_whitespace=True,
-        ) or [segment.text]
+        # line limit. This avoids non-advancing loops for technical identifiers.
+        chunks = _caption_chunks(segment.text)
         segment_duration = segment.approximate_duration * timing_scale
-        portion = segment_duration / len(chunks)
-        for chunk in chunks:
-            cues.append(CaptionCue(index=index, start=current, end=current + portion, text=chunk))
-            current += portion
+        durations = _cue_durations(chunks, segment_duration)
+        elapsed_script_duration += segment.approximate_duration
+        segment_end = elapsed_script_duration * timing_scale
+        for chunk_index, (chunk, duration) in enumerate(zip(chunks, durations, strict=True)):
+            cue_end = segment_end if chunk_index == len(chunks) - 1 else current + duration
+            cues.append(CaptionCue(index=index, start=current, end=cue_end, text=chunk))
+            current = cue_end
             index += 1
     if cues and target_duration is not None:
         # Remove accumulated floating-point error while preserving monotonic cues.
