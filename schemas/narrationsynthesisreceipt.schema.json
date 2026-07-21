@@ -1,5 +1,119 @@
 {
   "$defs": {
+    "KokoroProviderMetadata": {
+      "additionalProperties": false,
+      "description": "Pinned offline neural-provider state bound into a narration receipt.",
+      "properties": {
+        "cache_manifest_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Cache Manifest Hash",
+          "type": "string"
+        },
+        "cache_manifest_path": {
+          "title": "Cache Manifest Path",
+          "type": "string"
+        },
+        "cache_path": {
+          "title": "Cache Path",
+          "type": "string"
+        },
+        "device": {
+          "const": "cpu",
+          "default": "cpu",
+          "title": "Device",
+          "type": "string"
+        },
+        "dtype": {
+          "const": "q8",
+          "default": "q8",
+          "title": "Dtype",
+          "type": "string"
+        },
+        "model_cache_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Model Cache Sha256",
+          "type": "string"
+        },
+        "model_id": {
+          "const": "onnx-community/Kokoro-82M-v1.0-ONNX",
+          "default": "onnx-community/Kokoro-82M-v1.0-ONNX",
+          "title": "Model Id",
+          "type": "string"
+        },
+        "node_helper_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Node Helper Hash",
+          "type": "string"
+        },
+        "offline_mode": {
+          "const": true,
+          "default": true,
+          "title": "Offline Mode",
+          "type": "boolean"
+        },
+        "package_lock_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Package Lock Hash",
+          "type": "string"
+        },
+        "revision": {
+          "const": "1939ad2a8e416c0acfeecc08a694d14ef25f2231",
+          "default": "1939ad2a8e416c0acfeecc08a694d14ef25f2231",
+          "title": "Revision",
+          "type": "string"
+        },
+        "runtime_module_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Runtime Module Hash",
+          "type": "string"
+        },
+        "runtime_version": {
+          "const": "techshort-kokoro-v1",
+          "default": "techshort-kokoro-v1",
+          "title": "Runtime Version",
+          "type": "string"
+        },
+        "speed": {
+          "maximum": 1.5,
+          "minimum": 0.75,
+          "title": "Speed",
+          "type": "number"
+        },
+        "voice_id": {
+          "enum": [
+            "af_heart",
+            "af_bella",
+            "af_nicole",
+            "af_aoede",
+            "af_kore",
+            "af_nova",
+            "af_sarah",
+            "am_fenrir",
+            "am_michael",
+            "am_puck",
+            "bf_emma",
+            "bf_isabella",
+            "bm_fable",
+            "bm_george"
+          ],
+          "title": "Voice Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "voice_id",
+        "speed",
+        "cache_path",
+        "cache_manifest_path",
+        "cache_manifest_hash",
+        "model_cache_sha256",
+        "node_helper_hash",
+        "runtime_module_hash",
+        "package_lock_hash"
+      ],
+      "title": "KokoroProviderMetadata",
+      "type": "object"
+    },
     "NarrationConcatenationReceipt": {
       "additionalProperties": false,
       "description": "Deterministic PCM concatenation parameters for normalized segments.",
@@ -112,7 +226,6 @@
             "$ref": "#/$defs/NarrationEngineEvent"
           },
           "maxItems": 4096,
-          "minItems": 1,
           "title": "Engine Events",
           "type": "array"
         },
@@ -185,6 +298,17 @@
       "title": "Created At",
       "type": "string"
     },
+    "kokoro": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/KokoroProviderMetadata"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "license_name": {
       "anyOf": [
         {
@@ -212,7 +336,10 @@
       "type": "string"
     },
     "provider": {
-      "const": "windows-sapi",
+      "enum": [
+        "windows-sapi",
+        "kokoro-local"
+      ],
       "title": "Provider",
       "type": "string"
     },

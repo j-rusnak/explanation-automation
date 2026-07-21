@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from techshort.audio.providers import NarrationSynthesisReceipt
+from techshort.alignment.timing import NarrationTimingManifest
+from techshort.audio.providers import KokoroModelCacheManifest, NarrationSynthesisReceipt
 from techshort.audio.sound_design import SoundDesignReceipt
 from techshort.domain.creative import (
     BeatPlan,
@@ -69,7 +70,9 @@ MODELS = (
     VisualCritique,
     CreativeQualityInput,
     CreativeQualityResult,
+    NarrationTimingManifest,
     NarrationSynthesisReceipt,
+    KokoroModelCacheManifest,
     SoundDesignReceipt,
     ExperimentManifest,
     ObservationLog,

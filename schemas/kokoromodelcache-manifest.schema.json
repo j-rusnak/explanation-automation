@@ -1,0 +1,137 @@
+{
+  "$defs": {
+    "KokoroCacheFile": {
+      "additionalProperties": false,
+      "description": "One immutable file included in a reviewed local Kokoro model cache.",
+      "properties": {
+        "path": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size": {
+          "exclusiveMinimum": 0,
+          "maximum": 1073741824,
+          "title": "Size",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path",
+        "size",
+        "sha256"
+      ],
+      "title": "KokoroCacheFile",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Strict local manifest for the exact pinned Kokoro model cache bytes.",
+  "properties": {
+    "aggregate_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Aggregate Sha256",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "device": {
+      "const": "cpu",
+      "default": "cpu",
+      "title": "Device",
+      "type": "string"
+    },
+    "dtype": {
+      "const": "q8",
+      "default": "q8",
+      "title": "Dtype",
+      "type": "string"
+    },
+    "file_count": {
+      "exclusiveMinimum": 0,
+      "maximum": 1000,
+      "title": "File Count",
+      "type": "integer"
+    },
+    "files": {
+      "items": {
+        "$ref": "#/$defs/KokoroCacheFile"
+      },
+      "maxItems": 1000,
+      "minItems": 1,
+      "title": "Files",
+      "type": "array"
+    },
+    "model_id": {
+      "const": "onnx-community/Kokoro-82M-v1.0-ONNX",
+      "default": "onnx-community/Kokoro-82M-v1.0-ONNX",
+      "title": "Model Id",
+      "type": "string"
+    },
+    "node_helper_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Node Helper Hash",
+      "type": "string"
+    },
+    "package_lock_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Package Lock Hash",
+      "type": "string"
+    },
+    "provider": {
+      "const": "kokoro-local",
+      "default": "kokoro-local",
+      "title": "Provider",
+      "type": "string"
+    },
+    "revision": {
+      "const": "1939ad2a8e416c0acfeecc08a694d14ef25f2231",
+      "default": "1939ad2a8e416c0acfeecc08a694d14ef25f2231",
+      "title": "Revision",
+      "type": "string"
+    },
+    "runtime_module_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Runtime Module Hash",
+      "type": "string"
+    },
+    "runtime_version": {
+      "const": "techshort-kokoro-v1",
+      "default": "techshort-kokoro-v1",
+      "title": "Runtime Version",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "total_bytes": {
+      "exclusiveMinimum": 0,
+      "maximum": 2147483648,
+      "title": "Total Bytes",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "node_helper_hash",
+    "runtime_module_hash",
+    "package_lock_hash",
+    "aggregate_sha256",
+    "file_count",
+    "total_bytes",
+    "files"
+  ],
+  "title": "KokoroModelCacheManifest",
+  "type": "object"
+}

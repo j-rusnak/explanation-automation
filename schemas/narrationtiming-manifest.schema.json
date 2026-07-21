@@ -1,0 +1,453 @@
+{
+  "$defs": {
+    "SegmentTiming": {
+      "additionalProperties": false,
+      "description": "An ordered, nonoverlapping interval for one script segment.",
+      "properties": {
+        "end_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "End Seconds",
+          "type": "number"
+        },
+        "segment_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Segment Id",
+          "type": "string"
+        },
+        "segment_index": {
+          "exclusiveMaximum": 2000,
+          "minimum": 0,
+          "title": "Segment Index",
+          "type": "integer"
+        },
+        "start_seconds": {
+          "minimum": 0,
+          "title": "Start Seconds",
+          "type": "number"
+        },
+        "word_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 2000,
+          "minItems": 1,
+          "title": "Word Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "segment_id",
+        "segment_index",
+        "start_seconds",
+        "end_seconds",
+        "word_ids"
+      ],
+      "title": "SegmentTiming",
+      "type": "object"
+    },
+    "TimingAlignmentStats": {
+      "additionalProperties": false,
+      "description": "Deterministic alignment accounting retained even when timing falls back.",
+      "properties": {
+        "coverage": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Coverage",
+          "type": "number"
+        },
+        "deletion_count": {
+          "maximum": 2000,
+          "minimum": 0,
+          "title": "Deletion Count",
+          "type": "integer"
+        },
+        "edit_distance": {
+          "maximum": 10000,
+          "minimum": 0,
+          "title": "Edit Distance",
+          "type": "integer"
+        },
+        "fallback_reason": {
+          "anyOf": [
+            {
+              "maxLength": 400,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fallback Reason"
+        },
+        "insertion_count": {
+          "maximum": 8000,
+          "minimum": 0,
+          "title": "Insertion Count",
+          "type": "integer"
+        },
+        "interpolated_word_count": {
+          "maximum": 2000,
+          "minimum": 0,
+          "title": "Interpolated Word Count",
+          "type": "integer"
+        },
+        "matched_word_count": {
+          "maximum": 2000,
+          "minimum": 0,
+          "title": "Matched Word Count",
+          "type": "integer"
+        },
+        "observation_source": {
+          "anyOf": [
+            {
+              "enum": [
+                "sapi-speak-progress",
+                "local-whisper"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Observation Source"
+        },
+        "proportional_word_count": {
+          "maximum": 2000,
+          "minimum": 0,
+          "title": "Proportional Word Count",
+          "type": "integer"
+        },
+        "provider_word_count": {
+          "maximum": 8000,
+          "minimum": 0,
+          "title": "Provider Word Count",
+          "type": "integer"
+        },
+        "script_word_count": {
+          "maximum": 2000,
+          "minimum": 1,
+          "title": "Script Word Count",
+          "type": "integer"
+        },
+        "substitution_count": {
+          "maximum": 2000,
+          "minimum": 0,
+          "title": "Substitution Count",
+          "type": "integer"
+        },
+        "word_error_rate": {
+          "minimum": 0,
+          "title": "Word Error Rate",
+          "type": "number"
+        }
+      },
+      "required": [
+        "script_word_count",
+        "provider_word_count",
+        "matched_word_count",
+        "insertion_count",
+        "deletion_count",
+        "substitution_count",
+        "edit_distance",
+        "word_error_rate",
+        "coverage",
+        "interpolated_word_count",
+        "proportional_word_count"
+      ],
+      "title": "TimingAlignmentStats",
+      "type": "object"
+    },
+    "WordTiming": {
+      "additionalProperties": false,
+      "description": "Timing for one exact approved-script display token.",
+      "properties": {
+        "canonical": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Canonical",
+          "type": "string"
+        },
+        "char_end": {
+          "exclusiveMinimum": 0,
+          "title": "Char End",
+          "type": "integer"
+        },
+        "char_start": {
+          "minimum": 0,
+          "title": "Char Start",
+          "type": "integer"
+        },
+        "confidence": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confidence"
+        },
+        "display_text": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Display Text",
+          "type": "string"
+        },
+        "end_origin": {
+          "enum": [
+            "engine-event",
+            "asr-event",
+            "interpolated",
+            "proportional",
+            "next-engine-event",
+            "next-asr-event",
+            "segment-boundary",
+            "audio-boundary"
+          ],
+          "title": "End Origin",
+          "type": "string"
+        },
+        "end_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "End Seconds",
+          "type": "number"
+        },
+        "global_word_index": {
+          "exclusiveMaximum": 2000,
+          "minimum": 0,
+          "title": "Global Word Index",
+          "type": "integer"
+        },
+        "quality": {
+          "enum": [
+            "engine-reported",
+            "asr-aligned",
+            "interpolated",
+            "proportional-fallback"
+          ],
+          "title": "Quality",
+          "type": "string"
+        },
+        "segment_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Segment Id",
+          "type": "string"
+        },
+        "segment_word_index": {
+          "exclusiveMaximum": 2000,
+          "minimum": 0,
+          "title": "Segment Word Index",
+          "type": "integer"
+        },
+        "source": {
+          "enum": [
+            "sapi-speak-progress",
+            "local-whisper",
+            "proportional-fallback"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "start_origin": {
+          "enum": [
+            "engine-event",
+            "asr-event",
+            "interpolated",
+            "proportional",
+            "next-engine-event",
+            "next-asr-event",
+            "segment-boundary",
+            "audio-boundary"
+          ],
+          "title": "Start Origin",
+          "type": "string"
+        },
+        "start_seconds": {
+          "minimum": 0,
+          "title": "Start Seconds",
+          "type": "number"
+        },
+        "word_id": {
+          "pattern": "^word-[0-9a-f]{16}$",
+          "title": "Word Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "word_id",
+        "segment_id",
+        "segment_word_index",
+        "global_word_index",
+        "display_text",
+        "canonical",
+        "char_start",
+        "char_end",
+        "start_seconds",
+        "end_seconds",
+        "source",
+        "quality",
+        "start_origin",
+        "end_origin"
+      ],
+      "title": "WordTiming",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Strict provenance for narration timing projected onto approved words.",
+  "properties": {
+    "alignment": {
+      "$ref": "#/$defs/TimingAlignmentStats"
+    },
+    "audio_asset_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Audio Asset Id",
+      "type": "string"
+    },
+    "audio_duration_seconds": {
+      "exclusiveMinimum": 0,
+      "title": "Audio Duration Seconds",
+      "type": "number"
+    },
+    "audio_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Audio Hash",
+      "type": "string"
+    },
+    "audio_path": {
+      "title": "Audio Path",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "quality": {
+      "enum": [
+        "engine-reported",
+        "asr-aligned",
+        "mixed",
+        "proportional-fallback"
+      ],
+      "title": "Quality",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "script_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Script Hash",
+      "type": "string"
+    },
+    "script_text_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Script Text Hash",
+      "type": "string"
+    },
+    "script_version_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "title": "Script Version Id",
+      "type": "string"
+    },
+    "segment_approval_hashes": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Segment Approval Hashes",
+      "type": "object"
+    },
+    "segments": {
+      "items": {
+        "$ref": "#/$defs/SegmentTiming"
+      },
+      "maxItems": 2000,
+      "minItems": 1,
+      "title": "Segments",
+      "type": "array"
+    },
+    "source": {
+      "enum": [
+        "sapi-speak-progress",
+        "local-whisper",
+        "proportional-fallback"
+      ],
+      "title": "Source",
+      "type": "string"
+    },
+    "synthesis_id": {
+      "anyOf": [
+        {
+          "pattern": "^synthesis-[0-9a-f]{16}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Synthesis Id"
+    },
+    "synthesis_receipt_hash": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Synthesis Receipt Hash"
+    },
+    "timing_id": {
+      "pattern": "^timing-[0-9a-f]{16}$",
+      "title": "Timing Id",
+      "type": "string"
+    },
+    "words": {
+      "items": {
+        "$ref": "#/$defs/WordTiming"
+      },
+      "maxItems": 2000,
+      "minItems": 1,
+      "title": "Words",
+      "type": "array"
+    }
+  },
+  "required": [
+    "timing_id",
+    "source",
+    "quality",
+    "audio_asset_id",
+    "audio_path",
+    "audio_hash",
+    "audio_duration_seconds",
+    "script_version_id",
+    "script_hash",
+    "script_text_hash",
+    "segment_approval_hashes",
+    "segments",
+    "words",
+    "alignment"
+  ],
+  "title": "NarrationTimingManifest",
+  "type": "object"
+}

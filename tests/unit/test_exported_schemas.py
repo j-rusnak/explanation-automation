@@ -7,7 +7,7 @@ import pytest
 from pydantic import BaseModel
 
 from scripts.export_schemas import MODELS, schema_filename
-from techshort.audio.providers import NarrationSynthesisReceipt
+from techshort.audio.providers import KokoroModelCacheManifest, NarrationSynthesisReceipt
 from techshort.audio.sound_design import SoundDesignReceipt
 from techshort.domain.creative import RetentionCritique, RetentionPlan
 from techshort.experiments import (
@@ -42,6 +42,7 @@ def test_retention_artifacts_are_in_the_exported_schema_registry() -> None:
 
 PERSISTED_WORKFLOW_MODELS = (
     NarrationSynthesisReceipt,
+    KokoroModelCacheManifest,
     SoundDesignReceipt,
     ExperimentManifest,
     ObservationLog,
