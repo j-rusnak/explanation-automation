@@ -42,6 +42,42 @@
       ],
       "title": "ReviewStatus",
       "type": "string"
+    },
+    "SafeZoneInsets": {
+      "additionalProperties": false,
+      "description": "Resolution-independent insets for shared TikTok/Reels-safe content.",
+      "properties": {
+        "bottom": {
+          "default": 0.17,
+          "maximum": 0.25,
+          "minimum": 0,
+          "title": "Bottom",
+          "type": "number"
+        },
+        "left": {
+          "default": 0.067,
+          "maximum": 0.25,
+          "minimum": 0,
+          "title": "Left",
+          "type": "number"
+        },
+        "right": {
+          "default": 0.14,
+          "maximum": 0.25,
+          "minimum": 0,
+          "title": "Right",
+          "type": "number"
+        },
+        "top": {
+          "default": 0.06,
+          "maximum": 0.25,
+          "minimum": 0,
+          "title": "Top",
+          "type": "number"
+        }
+      },
+      "title": "SafeZoneInsets",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -119,9 +155,22 @@
       "title": "Narration Mode",
       "type": "string"
     },
+    "pacing": {
+      "default": "high-retention",
+      "enum": [
+        "measured",
+        "brisk",
+        "high-retention"
+      ],
+      "title": "Pacing",
+      "type": "string"
+    },
     "project_id": {
       "title": "Project Id",
       "type": "string"
+    },
+    "safe_zone": {
+      "$ref": "#/$defs/SafeZoneInsets"
     },
     "schema_version": {
       "const": "1.0.0",

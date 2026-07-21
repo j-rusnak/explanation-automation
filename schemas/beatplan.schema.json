@@ -97,6 +97,7 @@
         "role": {
           "enum": [
             "hook",
+            "re-hook",
             "setup",
             "mechanism",
             "evidence",

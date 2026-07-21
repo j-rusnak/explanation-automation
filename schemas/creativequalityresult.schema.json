@@ -12,7 +12,8 @@
             "data-visualization",
             "provenance",
             "captions",
-            "accessibility"
+            "accessibility",
+            "engagement"
           ],
           "title": "Category",
           "type": "string"
