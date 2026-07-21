@@ -18,7 +18,12 @@ from techshort.alignment import (
     cues_from_script,
 )
 from techshort.assets import BUILTIN_FONT_ASSET_IDS
-from techshort.audio import active_audio, probe_duration, resolve_narration_transcript
+from techshort.audio import (
+    active_audio,
+    active_synthesis_receipt,
+    probe_duration,
+    resolve_narration_transcript,
+)
 from techshort.audio.sound_design import active_sound_design
 from techshort.domain.creative import (
     BeatPlan,
@@ -852,6 +857,31 @@ def run_qa(
                     f"Narration transcript could not be validated: {exc}",
                 )
             )
+
+    try:
+        synthesis = active_synthesis_receipt(store)
+        checks.append(
+            _check(
+                "narration-synthesis-provenance",
+                True,
+                (
+                    "Synthetic narration receipt matches the approved script, voice controls, "
+                    "audio, and transcript"
+                    if synthesis is not None
+                    else "Narration is not declared as synthetic"
+                ),
+                "Synthetic narration provenance is stale or invalid",
+            )
+        )
+    except (OSError, ValueError) as exc:
+        checks.append(
+            _check(
+                "narration-synthesis-provenance",
+                False,
+                "Synthetic narration provenance is current",
+                f"Synthetic narration provenance is stale or invalid: {exc}",
+            )
+        )
 
     try:
         sound_design = active_sound_design(store)

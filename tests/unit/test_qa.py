@@ -69,6 +69,36 @@ def test_qa_blocks_stale_angle_artifacts(tmp_path: Path) -> None:
     assert stale.hard_blocker
 
 
+def test_qa_hard_fails_declared_synthetic_narration_without_current_receipt(
+    tmp_path: Path,
+) -> None:
+    store = _approved_store(tmp_path)
+    project = store.project()
+    project.active_versions["narration_synthesis"] = "synthesis-1111111111111111"
+    project.dependency_hashes["narration_synthesis"] = "a" * 64
+    store.save_project(project)
+
+    report = run_qa(store, require_media=False)
+
+    check = next(
+        item for item in report.checks if item.check_id == "narration-synthesis-provenance"
+    )
+    assert check.status == "failure"
+    assert check.hard_blocker
+
+
+def test_qa_passes_synthesis_provenance_check_for_non_synthetic_narration(
+    tmp_path: Path,
+) -> None:
+    report = run_qa(_approved_store(tmp_path), require_media=False)
+
+    check = next(
+        item for item in report.checks if item.check_id == "narration-synthesis-provenance"
+    )
+    assert check.status == "pass"
+    assert not check.hard_blocker
+
+
 def test_qa_detects_changed_extracted_source_after_approval(tmp_path: Path) -> None:
     store = _approved_store(tmp_path)
     sources = load_model(store.path("sources/source-index.json"), SourceIndex)

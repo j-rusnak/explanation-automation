@@ -4,7 +4,7 @@ import re
 from typing import Literal
 from uuid import uuid4
 
-from techshort.audio import active_audio, active_transcript
+from techshort.audio import active_audio, active_synthesis_receipt, active_transcript
 from techshort.audio.sound_design import active_sound_design
 from techshort.domain.creative import (
     BeatPlan,
@@ -96,6 +96,7 @@ REQUIRED_FINAL_QA_CHECKS = {
     "codec",
     "media-duration",
     "audio-stream",
+    "narration-synthesis-provenance",
     "missing-frames",
     "render-manifest",
     "blank-frames",
@@ -236,6 +237,9 @@ def current_artifact_hashes(store: ProjectStore) -> dict[str, str]:
         transcript = active_transcript(store)
         if transcript is not None:
             hashes["narration-transcript"] = sha256_file(transcript[1])
+        synthesis = active_synthesis_receipt(store)
+        if synthesis is not None:
+            hashes["narration-synthesis"] = sha256_file(synthesis[1])
     sound_design = active_sound_design(store)
     if sound_design is not None:
         hashes["sound-design-audio"] = sha256_file(sound_design)

@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from techshort.alignment import cues_from_script, write_caption_files
+from techshort.audio.local_tts import active_synthesis_receipt
 from techshort.audio.service import active_audio, probe_duration
 from techshort.audio.sound_design import active_sound_design
 from techshort.domain.creative import (
@@ -252,6 +253,9 @@ def _current_retention_payload(
 
 def render_video(store: ProjectStore, preview: bool) -> Path:
     project = store.project()
+    # Always run the verifier. Recorded narration returns None; any declared
+    # synthetic narration must retain its exact script/audio/transcript receipt.
+    active_synthesis_receipt(store)
     if not preview:
         _require_final_render_approval(store, project)
     repository = _repository_root()
