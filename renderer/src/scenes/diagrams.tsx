@@ -434,7 +434,7 @@ export const RasterScan: React.FC<PrimitiveProps> = ({ scene, themeName }) => {
           <div
             style={{
               position: "absolute",
-              left: 0,
+              left: 92,
               top: 42,
               padding: "12px 17px",
               borderRadius: 999,
@@ -449,13 +449,16 @@ export const RasterScan: React.FC<PrimitiveProps> = ({ scene, themeName }) => {
           <div
             style={{
               position: "absolute",
-              right: 0,
-              bottom: 36,
-              maxWidth: 250,
+              right: 92,
+              bottom: 44,
+              maxWidth: 230,
               textAlign: "right",
               color: tokens.warning,
               fontSize: 25,
               fontWeight: 900,
+              padding: "10px 13px",
+              borderRadius: 12,
+              background: `${tokens.background}e8`,
             }}
           >
             {visual.after_label}
@@ -699,11 +702,14 @@ export const GridWarp: React.FC<PrimitiveProps> = ({ scene, themeName }) => {
           <div
             style={{
               position: "absolute",
-              left: 3,
+              left: 88,
               top: 52,
               color: tokens.accent,
               fontSize: 24,
               fontWeight: 900,
+              padding: "9px 12px",
+              borderRadius: 12,
+              background: `${tokens.background}e8`,
             }}
           >
             {visual.before_label}
@@ -711,11 +717,14 @@ export const GridWarp: React.FC<PrimitiveProps> = ({ scene, themeName }) => {
           <div
             style={{
               position: "absolute",
-              right: 3,
+              right: 88,
               bottom: 50,
               color: tokens.warning,
               fontSize: 26,
               fontWeight: 900,
+              padding: "9px 12px",
+              borderRadius: 12,
+              background: `${tokens.background}e8`,
             }}
           >
             {visual.after_label}

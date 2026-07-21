@@ -196,8 +196,8 @@ export const SourceReceipt: React.FC<PrimitiveProps> = ({
             </div>
             <p
               style={{
-                fontSize: 31,
-                lineHeight: 1.42,
+                fontSize: 36,
+                lineHeight: 1.34,
                 margin: "27px 0 24px",
                 fontWeight: 700,
               }}

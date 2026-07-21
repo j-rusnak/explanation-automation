@@ -344,7 +344,7 @@ const EvidenceBadge: React.FC<{ scene: SceneData; tokens: ThemeTokens }> = ({
           ? `${color(tokens, chapter.primary)}e8`
           : `${tokens.background}d9`,
         boxShadow: kinetic ? `7px 7px 0 ${tokens.background}99` : undefined,
-        fontSize: kinetic ? 19 : 21,
+        fontSize: 21,
         fontWeight: kinetic ? 800 : 700,
         letterSpacing: 1.2,
         zIndex: kinetic ? 4 : undefined,
@@ -573,11 +573,11 @@ export const Frame: React.FC<{
     : null;
   const basePadding =
     kinetic && scene.layout === "full-diagram"
-      ? { top: 142, right: 40, bottom: 330, left: 42 }
+      ? { top: 198, right: 40, bottom: 330, left: 42 }
       : kinetic && scene.layout === "evidence"
-        ? { top: 154, right: 50, bottom: 342, left: 50 }
+        ? { top: 198, right: 50, bottom: 342, left: 50 }
         : kinetic
-          ? { top: 150, right: 52, bottom: 350, left: 52 }
+          ? { top: 198, right: 52, bottom: 350, left: 52 }
           : scene.layout === "full-diagram"
             ? { top: 155, right: 54, bottom: 345, left: 54 }
             : scene.layout === "evidence"
