@@ -98,6 +98,7 @@ class ProjectStore:
         "reviews",
         "renders/previews",
         "renders/final",
+        "experiments",
         "export",
     )
 
