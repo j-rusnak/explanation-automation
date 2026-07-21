@@ -6,6 +6,8 @@ from techshort.domain.creative import (
     BeatPlan,
     EditorialCritique,
     NarrativeBrief,
+    RetentionCritique,
+    RetentionPlan,
     StoryboardGuidance,
     VisualCritique,
 )
@@ -46,6 +48,8 @@ MODELS = (
     NarrativeBrief,
     BeatPlan,
     EditorialCritique,
+    RetentionPlan,
+    RetentionCritique,
     StoryboardGuidance,
     VisualCritique,
     CreativeQualityInput,
@@ -57,12 +61,23 @@ MODELS = (
 )
 
 
-def main() -> None:
-    target = Path("schemas")
+def schema_filename(model: type) -> str:
+    """Return the stable repository filename for a model's JSON Schema."""
+
+    name = model.__name__.replace("Manifest", "-manifest").lower()
+    return f"{name}.schema.json"
+
+
+def export_schemas(target: Path = Path("schemas")) -> None:
+    """Export every persisted or provider-facing model schema deterministically."""
+
     target.mkdir(exist_ok=True)
     for model in MODELS:
-        name = model.__name__.replace("Manifest", "-manifest").lower()
-        atomic_write_json(target / f"{name}.schema.json", model.model_json_schema())
+        atomic_write_json(target / schema_filename(model), model.model_json_schema())
+
+
+def main() -> None:
+    export_schemas()
 
 
 if __name__ == "__main__":
