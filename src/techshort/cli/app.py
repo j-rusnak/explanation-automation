@@ -5,8 +5,9 @@ import os
 import shutil
 import subprocess
 import sys
+from dataclasses import asdict
 from pathlib import Path
-from typing import Annotated, Any, NoReturn
+from typing import Annotated, Any, Literal, NoReturn, cast
 
 import typer
 from rich.console import Console
@@ -15,12 +16,16 @@ from rich.table import Table
 from techshort import __version__
 from techshort.alignment import cues_from_script, write_caption_files
 from techshort.audio import (
+    LocalNarrationUnavailable,
+    WindowsSapiNarrationProvider,
     active_audio,
     import_audio,
     import_transcript,
     probe_duration,
     set_narration_mode,
+    synthesize_local_narration,
 )
+from techshort.audio.sound_design import generate_sound_design
 from techshort.configuration import PACING_PROFILES, set_pacing_profile, set_safe_zone
 from techshort.domain.hashing import sha256_file, stable_hash
 from techshort.domain.models import (
@@ -31,6 +36,15 @@ from techshort.domain.models import (
     ScriptManifest,
 )
 from techshort.domain.storage import ProjectStore, load_model
+from techshort.experiments import (
+    ExperimentStore,
+    analyze_experiment,
+    approve_experiment,
+    approve_recommendation,
+    experiment_status,
+    import_manual_observations,
+    list_experiment_ids,
+)
 from techshort.export import export_project, generate_evidence_page
 from techshort.generation import (
     generate_angles,
@@ -43,6 +57,16 @@ from techshort.generation import (
 )
 from techshort.ingestion import ingest_source
 from techshort.providers import CodexCliProvider
+from techshort.publication import (
+    ManualOrganicProvider,
+    OrganicPackageRequest,
+    OrganicPlatformProvider,
+    OrganicPublicationPackage,
+    PlatformUnavailableError,
+    build_organic_publication_package,
+    official_api_provider,
+    record_publication_consent,
+)
 from techshort.qa import run_qa
 from techshort.rendering import render_video
 from techshort.rendering.tools import media_tool, remotion_browser_readiness
@@ -63,9 +87,11 @@ claims_app = typer.Typer(help="Generate evidence-linked candidate claims.")
 script_app = typer.Typer(help="Generate and manage evidence-linked scripts.")
 storyboard_app = typer.Typer(help="Generate allowlisted structured storyboards.")
 cover_app = typer.Typer(help="Generate and select evidence-linked cover designs.")
-audio_app = typer.Typer(help="Import user-recorded narration.")
+audio_app = typer.Typer(help="Manage recorded or local synthetic narration and sound design.")
 captions_app = typer.Typer(help="Generate deterministic SRT, VTT, and burned-caption cues.")
 style_app = typer.Typer(help="Configure reviewed visual delivery and pacing.")
+experiment_app = typer.Typer(help="Review and analyze controlled organic experiments.")
+publication_app = typer.Typer(help="Build immutable packages for manual organic publication.")
 app.add_typer(claims_app, name="claims")
 app.add_typer(script_app, name="script")
 app.add_typer(storyboard_app, name="storyboard")
@@ -73,6 +99,8 @@ app.add_typer(cover_app, name="cover")
 app.add_typer(audio_app, name="audio")
 app.add_typer(captions_app, name="captions")
 app.add_typer(style_app, name="style")
+app.add_typer(experiment_app, name="experiment")
+app.add_typer(publication_app, name="publication")
 console = Console()
 PROVIDERS = {"fixture", "manual", "codex"}
 ANGLES = {"surprising-result", "everyday-mechanism", "engineering-tradeoff"}
@@ -84,6 +112,8 @@ RIGHTS_STATUSES = {
     "unknown",
     "restricted",
 }
+ORGANIC_PLATFORMS = {"tiktok", "instagram-reels"}
+MAX_CLI_JSON_BYTES = 512 * 1024
 
 
 @style_app.command("pacing")
@@ -140,6 +170,27 @@ def store(slug: str) -> ProjectStore:
 def fail(message: str) -> NoReturn:
     console.print(f"[red]Error:[/red] {message}")
     raise typer.Exit(1)
+
+
+def _read_bounded_json(path: Path, label: str) -> str:
+    if not path.is_file() or path.suffix.casefold() != ".json":
+        raise ValueError(f"{label} must be a regular .json file")
+    if path.stat().st_size > MAX_CLI_JSON_BYTES:
+        raise ValueError(f"{label} exceeds the 512 KiB CLI input limit")
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"{label} must be valid UTF-8 JSON") from exc
+
+
+def _publication_platform(value: str) -> Literal["tiktok", "instagram-reels"]:
+    if value not in ORGANIC_PLATFORMS:
+        raise ValueError("platform must be tiktok or instagram-reels")
+    return cast(Literal["tiktok", "instagram-reels"], value)
+
+
+def _experiment_store(slug: str, experiment_id: str) -> ExperimentStore:
+    return ExperimentStore(store(slug), experiment_id)
 
 
 def _provider(value: str) -> str:
@@ -571,6 +622,132 @@ def audio_import_transcript(slug: str, transcript_file: Path) -> None:
         fail(str(exc))
 
 
+@audio_app.command("voices")
+def audio_voices(
+    json_output: Annotated[bool, typer.Option("--json", help="Machine-readable output.")] = False,
+) -> None:
+    """List enabled zero-cost Windows System.Speech voices."""
+
+    provider = WindowsSapiNarrationProvider()
+    try:
+        voices = provider.list_voices()
+    except LocalNarrationUnavailable as exc:
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {
+                        "provider": provider.provider_id,
+                        "ready": False,
+                        "message": str(exc),
+                        "voices": [],
+                    },
+                    indent=2,
+                )
+            )
+            raise typer.Exit(1) from None
+        fail(str(exc))
+    payload = {
+        "provider": provider.provider_id,
+        "ready": True,
+        "message": f"{len(voices)} enabled local voice(s)",
+        "voices": [asdict(voice) for voice in voices],
+    }
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    table = Table(title="Local narration voices")
+    table.add_column("Name")
+    table.add_column("Culture")
+    table.add_column("Gender")
+    table.add_column("Age")
+    for voice in voices:
+        table.add_row(voice.name, voice.culture, voice.gender, voice.age)
+    console.print(table)
+
+
+@audio_app.command("synthesize")
+def audio_synthesize(
+    slug: str,
+    voice_name: Annotated[str | None, typer.Option("--voice")] = None,
+    rate: Annotated[int, typer.Option(min=-10, max=10)] = 1,
+    volume: Annotated[int, typer.Option(min=1, max=100)] = 100,
+    rights_status: Annotated[
+        str,
+        typer.Option(
+            "--rights-status",
+            help="Defaults to unknown; assert rights only after reviewing installed-voice terms.",
+        ),
+    ] = "unknown",
+    license_name: Annotated[str | None, typer.Option("--license")] = None,
+    required_attribution: Annotated[str | None, typer.Option("--required-attribution")] = None,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Synthesize the current human-approved script with an installed local voice."""
+
+    try:
+        if rights_status not in RIGHTS_STATUSES:
+            raise ValueError("invalid rights status")
+        result = synthesize_local_narration(
+            store(slug),
+            voice_name=voice_name,
+            rate=rate,
+            volume=volume,
+            rights_status=rights_status,
+            license_name=license_name,
+            required_attribution=required_attribution,
+        )
+        payload = {
+            "provider": result.provider,
+            "voice": asdict(result.voice),
+            "audio_path": str(result.audio_path),
+            "transcript_path": str(result.transcript_path),
+            "receipt_path": str(result.receipt_path),
+            "duration_seconds": result.duration_seconds,
+            "rate": result.rate,
+            "volume": result.volume,
+            "rights_status": rights_status,
+        }
+        if json_output:
+            typer.echo(json.dumps(payload, indent=2))
+        else:
+            console.print(
+                f"Synthesized {result.duration_seconds:.1f}s with {result.voice.name}: "
+                f"{result.audio_path}"
+            )
+            console.print(f"Receipt: {result.receipt_path}")
+            if rights_status in {"unknown", "restricted", "citation-only"}:
+                console.print(
+                    "[yellow]Embedding remains blocked until voice-output rights are "
+                    "explicitly reviewed.[/yellow]"
+                )
+    except (OSError, ValueError, LocalNarrationUnavailable) as exc:
+        fail(str(exc))
+
+
+@audio_app.command("sound-design")
+def audio_sound_design(
+    slug: str,
+    preset: Annotated[str, typer.Option(help="subtle or present")] = "subtle",
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Generate original deterministic accents from allowlisted retention cues."""
+
+    try:
+        if preset not in {"subtle", "present"}:
+            raise ValueError("sound-design preset must be subtle or present")
+        receipt = generate_sound_design(store(slug), cast(Literal["subtle", "present"], preset))
+        if json_output:
+            typer.echo(receipt.model_dump_json(indent=2))
+        else:
+            console.print(
+                f"Generated {len(receipt.events)} {receipt.preset} procedural accents: "
+                f"{receipt.output_path}"
+            )
+            console.print("Rights review is now required for the original sound-design asset.")
+    except (OSError, ValueError) as exc:
+        fail(str(exc))
+
+
 def _generate_captions(target: ProjectStore) -> tuple[Path, Path]:
     script = load_model(target.path("script/script.json"), ScriptManifest)
     narration = active_audio(target)
@@ -678,6 +855,260 @@ def export_command(slug: str) -> None:
         path = export_project(store(slug))
         console.print(f"Export complete: {path}")
     except (OSError, ValueError) as exc:
+        fail(str(exc))
+
+
+@experiment_app.command("list")
+def experiment_list(
+    slug: str,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """List locally stored controlled experiments for a project."""
+
+    try:
+        experiment_ids = list_experiment_ids(store(slug))
+        if json_output:
+            typer.echo(json.dumps({"experiments": experiment_ids}, indent=2))
+        elif experiment_ids:
+            console.print("\n".join(experiment_ids))
+        else:
+            console.print("No controlled experiments are stored for this project.")
+    except (OSError, ValueError) as exc:
+        fail(str(exc))
+
+
+@experiment_app.command("approve")
+def experiment_approve(
+    slug: str,
+    experiment_id: str,
+    reviewer: Annotated[str, typer.Option()] = "local-reviewer",
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Human-approve the exact experiment and all locked variants."""
+
+    try:
+        manifest = approve_experiment(_experiment_store(slug, experiment_id), reviewer)
+        if json_output:
+            typer.echo(manifest.model_dump_json(indent=2))
+        else:
+            console.print(
+                f"Approved experiment {manifest.experiment_id} and "
+                f"{len(manifest.variants)} immutable variants as {reviewer}"
+            )
+    except (OSError, ValueError) as exc:
+        fail(str(exc))
+
+
+@experiment_app.command("status")
+def experiment_status_command(
+    slug: str,
+    experiment_id: str,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Show observation, analysis, approval, and integrity blockers."""
+
+    try:
+        status_result = experiment_status(_experiment_store(slug, experiment_id))
+        if json_output:
+            typer.echo(status_result.model_dump_json(indent=2))
+            return
+        console.print(
+            f"{status_result.experiment_id}: {status_result.observed_variant_count}/"
+            f"{status_result.variant_count} variants observed"
+        )
+        console.print("Experiment approved" if status_result.approved else "Experiment pending")
+        if status_result.latest_recommendation_id:
+            console.print(
+                f"Latest recommendation: {status_result.latest_recommendation_id} "
+                f"({status_result.latest_action})"
+            )
+        if status_result.blockers:
+            console.print("\n".join(f"- {blocker}" for blocker in status_result.blockers))
+        else:
+            console.print("No experiment blockers.")
+    except (OSError, ValueError) as exc:
+        fail(str(exc))
+
+
+@experiment_app.command("import-observations")
+def experiment_import_observations(
+    slug: str,
+    experiment_id: str,
+    observations_file: Path,
+    format_name: Annotated[str | None, typer.Option("--format", help="json or csv")] = None,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Import bounded aggregate post metrics; person-level fields are rejected."""
+
+    try:
+        if format_name is not None and format_name not in {"json", "csv"}:
+            raise ValueError("manual metrics format must be json or csv")
+        observations = import_manual_observations(
+            _experiment_store(slug, experiment_id),
+            observations_file,
+            format=cast(Literal["json", "csv"] | None, format_name),
+        )
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    [item.model_dump(mode="json") for item in observations],
+                    indent=2,
+                )
+            )
+        else:
+            console.print(
+                f"Imported {len(observations)} aggregate observation snapshot(s); "
+                "prior recommendations are stale when new data changes the analysis."
+            )
+    except (OSError, UnicodeError, ValueError) as exc:
+        fail(str(exc))
+
+
+@experiment_app.command("analyze")
+def experiment_analyze(
+    slug: str,
+    experiment_id: str,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Analyze comparable aggregate observations without applying a change."""
+
+    try:
+        recommendation = analyze_experiment(_experiment_store(slug, experiment_id))
+        if json_output:
+            typer.echo(recommendation.model_dump_json(indent=2))
+        else:
+            console.print(f"Analysis {recommendation.recommendation_id}: {recommendation.action}")
+            console.print(recommendation.summary)
+            console.print("Human approval is required before any production change.")
+    except (OSError, ValueError) as exc:
+        fail(str(exc))
+
+
+@experiment_app.command("approve-recommendation")
+def experiment_approve_recommendation(
+    slug: str,
+    experiment_id: str,
+    recommendation_id: str,
+    reviewer: Annotated[str, typer.Option()] = "local-reviewer",
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Approve a conclusive recommendation without mutating production artifacts."""
+
+    try:
+        recommendation = approve_recommendation(
+            _experiment_store(slug, experiment_id), recommendation_id, reviewer
+        )
+        if json_output:
+            typer.echo(recommendation.model_dump_json(indent=2))
+        else:
+            console.print(
+                f"Approved recommendation {recommendation.recommendation_id} as {reviewer}; "
+                "no production artifact or post was changed."
+            )
+    except (OSError, ValueError) as exc:
+        fail(str(exc))
+
+
+@publication_app.command("diagnostics")
+def publication_diagnostics(
+    platform: str,
+    provider_name: Annotated[str, typer.Option("--provider", help="manual or official")] = "manual",
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Report offline packaging support without reading platform credentials."""
+
+    try:
+        selected_platform = _publication_platform(platform)
+        provider: OrganicPlatformProvider
+        if provider_name == "manual":
+            provider = ManualOrganicProvider(selected_platform)
+        elif provider_name == "official":
+            provider = official_api_provider(selected_platform)
+        else:
+            raise ValueError("publication provider must be manual or official")
+        diagnostic = provider.diagnostics()
+        if json_output:
+            typer.echo(diagnostic.model_dump_json(indent=2))
+        else:
+            console.print(
+                f"{diagnostic.provider_name} for {diagnostic.platform}: {diagnostic.status}"
+            )
+            console.print(diagnostic.reason)
+            for step in diagnostic.next_steps:
+                console.print(f"- {step}")
+    except (OSError, ValueError) as exc:
+        fail(str(exc))
+
+
+@publication_app.command("package")
+def publication_package(
+    slug: str,
+    request_file: Path,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Build a pending immutable local package; this never uploads or posts."""
+
+    try:
+        request = OrganicPackageRequest.model_validate_json(
+            _read_bounded_json(request_file, "publication request")
+        )
+        result = build_organic_publication_package(store(slug), request)
+        if json_output:
+            typer.echo(result.model_dump_json(indent=2))
+        else:
+            console.print(f"Built pending manual package: {result.package_directory}")
+            console.print(
+                "No upload occurred. Inspect the package and record explicit consent before "
+                "manual publication."
+            )
+    except (OSError, ValueError, PlatformUnavailableError) as exc:
+        fail(str(exc))
+
+
+@publication_app.command("consent-package")
+def publication_consent_package(
+    slug: str,
+    request_file: Path,
+    package_manifest_file: Path,
+    state: Annotated[str, typer.Option(help="granted, declined, or revoked")],
+    reviewer: Annotated[str, typer.Option()] = "local-reviewer",
+    confirmation: Annotated[
+        str,
+        typer.Option(
+            help="Exact authorization phrase for granted consent; decision note otherwise."
+        ),
+    ] = "",
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Create a new immutable package containing an explicit consent decision."""
+
+    try:
+        if state not in {"granted", "declined", "revoked"}:
+            raise ValueError("publication consent state must be granted, declined, or revoked")
+        request = OrganicPackageRequest.model_validate_json(
+            _read_bounded_json(request_file, "publication request")
+        )
+        package = OrganicPublicationPackage.model_validate_json(
+            _read_bounded_json(package_manifest_file, "publication package manifest")
+        )
+        consent = record_publication_consent(
+            package,
+            state=cast(Literal["granted", "declined", "revoked"], state),
+            reviewer_identifier=reviewer,
+            confirmation=confirmation,
+        )
+        result = build_organic_publication_package(store(slug), request, consent=consent)
+        if json_output:
+            typer.echo(result.model_dump_json(indent=2))
+        else:
+            console.print(f"Built immutable {state} package: {result.package_directory}")
+            if state == "granted":
+                console.print(
+                    "Manual upload is authorized for this exact package only; no upload occurred."
+                )
+            else:
+                console.print("Manual upload is not authorized; no upload occurred.")
+    except (OSError, ValueError, PlatformUnavailableError) as exc:
         fail(str(exc))
 
 
