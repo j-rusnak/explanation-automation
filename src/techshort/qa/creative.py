@@ -12,6 +12,7 @@ from techshort.alignment.captions import (
     MAX_CAPTION_CHARACTERS_PER_SECOND,
     MIN_CAPTION_DURATION_SECONDS,
     CaptionCue,
+    has_dangling_caption_ending,
 )
 from techshort.domain.creative import RetentionPlan
 from techshort.domain.models import (
@@ -1153,18 +1154,22 @@ def _caption_orphan_check(snapshot: CreativeQualityInput) -> CreativeQualityChec
         duration = cue.end_seconds - cue.start_seconds
         single_cue_word = len(_words(cue.text)) == 1 and duration < 1.2
         dangling_line = len(lines) > 1 and len(last_line_words) == 1
-        if single_cue_word or dangling_line:
+        dangling_phrase = has_dangling_caption_ending(cue.text)
+        if single_cue_word or dangling_line or dangling_phrase:
             offenders.append(cue.cue_id)
     return _check(
         "caption-orphan-words",
         "captions",
         "warning" if offenders else "pass",
         (
-            f"{len(offenders)} cue(s) leave a word isolated"
+            f"{len(offenders)} cue(s) isolate a word or leave a phrase dangling"
             if offenders
-            else "Captions avoid isolated words"
+            else "Captions avoid isolated words and dangling phrases"
         ),
-        remediation="Rebalance phrase breaks so a final line or cue contains at least two words."
+        remediation=(
+            "Rebalance phrase breaks so cues do not isolate a word or stop on an article, "
+            "conjunction, preposition, or auxiliary verb."
+        )
         if offenders
         else None,
         object_ids=offenders,

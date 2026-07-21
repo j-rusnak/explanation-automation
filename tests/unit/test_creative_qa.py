@@ -245,6 +245,21 @@ def test_caption_timing_and_flashing_proxies_are_actionable() -> None:
     assert checks["motion-intensity-flashing"].details["maximum_flash_events_per_second"] == "4.000"
 
 
+def test_caption_quality_flags_dangling_phrase_boundaries() -> None:
+    payload = _fixture("timeline.json").model_dump(mode="json")
+    captions = payload["captions"]
+    assert isinstance(captions, list)
+    first = captions[0]
+    assert isinstance(first, dict)
+    first["text"] = "The request passes under a"
+
+    result = evaluate_creative_quality(CreativeQualityInput.model_validate(payload))
+    check = next(item for item in result.checks if item.check_id == "caption-orphan-words")
+
+    assert check.status == "warning"
+    assert check.object_ids == ["c1"]
+
+
 def test_precise_run_does_not_masquerade_as_sustained_energetic_motion() -> None:
     payload = _fixture("timeline.json").model_dump(mode="json")
     scenes = payload["scenes"]
