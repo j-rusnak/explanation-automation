@@ -13,7 +13,18 @@ Sources, filenames, manifests, and provider output are hostile data. techshort n
 | Stale or forged approvals | exact content/evidence/audio/transcript hashes, immutable version history, append-only review invalidations, explicit angle selection, configuration/provenance-bound final approval |
 | Fabricated numbers, units, citations, or evidence labels | deterministic assertion-token checks during generation, approval, and QA; scene citations/labels and SourceReceipt IDs must resolve through approved claims |
 | Rights mistakes and source redistribution | explicit asset rights and embedding status; concrete permissive-license metadata; unknown/restricted/citation-only blockers; short excerpts only |
+| Local synthetic narration abuse or secret-bearing text | synthesis accepts only the current approved script; fixed local Windows provider and bounded settings; no arbitrary command, voice cloning, source text, credential, or provider-generated path |
+| Platform credential or account leakage | publication is package-only; diagnostics do not read credentials; manifests cannot contain tokens, cookies, browser profiles, or account sessions; upload remains manual in the platform composer |
+| Viewer privacy leakage | experiment imports accept an allowlisted aggregate schema only; person-level fields and unknown columns are rejected; post references identify content, not viewers |
+| Fabricated or selectively timed performance data | no metric synthesis or API scraping; templates demand actual cumulative snapshots; counts cannot regress; observation windows and current variant hashes are validated; recommendations preserve uncertainty. techshort cannot authenticate manually entered platform totals, so honest operator review remains required |
+| Accidental or unauthorized publication | pending packages are not authorized; consent is an immutable receipt for exact package hashes; even a granted package is never uploaded automatically |
 
 Subprocesses use argument arrays, `shell=False`, timeouts, and bounded output. Normal tests have no network or live-model calls.
+
+Organic observations are still untrusted local input. JSON/CSV imports are size- and row-bounded,
+strictly reject extra fields, require timezone-aware ordered windows, and are stored atomically
+under the active project. New snapshots stale prior recommendations. Experiment analysis re-hashes
+the approved video and cover before producing or approving a recommendation, so changed media
+cannot silently inherit an earlier result.
 
 The PDF parser still runs in-process. Byte/page/output limits reduce common resource-exhaustion risks but are not a full memory-isolation boundary for a novel parser exploit; high-risk PDFs should be pre-screened in a disposable environment.

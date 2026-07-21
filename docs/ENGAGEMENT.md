@@ -97,10 +97,13 @@ below the W3C three-flashes-per-second threshold.
 
 ## Sound, accessibility, and rights
 
-The primary workflow remains user-recorded narration. Narration is required unless the reviewer
-explicitly selects `silent-reviewed`; silence is never an automatic fallback. Retention events may
-carry an allowlisted sound-design suggestion such as `source-click`, but this is inert planning
-metadata--not a file and not an automatically generated or embedded sound.
+User-recorded narration remains supported, and Windows users may explicitly synthesize the
+current approved script with an installed System.Speech voice. Narration is required unless the
+reviewer selects `silent-reviewed`; silence is never an automatic fallback. Synthetic voice
+rights default to `unknown` and block export until reviewed. Retention events may carry an
+allowlisted sound-design suggestion such as `source-click`; it remains inert until a human runs
+`audio sound-design`. That command generates a bounded original procedural track without samples,
+then invalidates rights and downstream review. The renderer never turns arbitrary text into audio.
 
 Any narration, music, or effect actually embedded in an export needs an asset record, embedding
 permission, and rights approval. Adding a sound later also invalidates downstream captions,
@@ -123,8 +126,19 @@ formula:
 - W3C explains the [three-flashes-or-below threshold](https://www.w3.org/WAI/WCAG22/Understanding/three-flashes-or-below-threshold.html)
   and [prerecorded caption requirement](https://www.w3.org/WAI/WCAG22/Understanding/captions-prerecorded).
 
-Actual success must be learned from published-video retention and completion data. V1 neither
-publishes automatically nor calls platform analytics APIs. Teams can compare genuinely different
-approved hooks or visual treatments, record two-second and six-second retention, average watch
-time, completion, saves, shares, and qualified comments, then revise editorial defaults without
-changing the factual locks.
+Actual success must be learned from real published-video observations. techshort neither publishes
+automatically nor calls platform analytics APIs. Its current experiment integration compares two
+or three approved covers around one identical approved MP4. It prepares immutable local packages
+with explicit consent, after which a human posts each variant in the platform's own composer.
+
+The operator may then import actual cumulative post-level totals--never fabricated metrics or
+viewer-level rows--at comparable post ages. Analysis enforces minimum views and window tolerance.
+Completion and skip proportions receive conservative Wilson intervals; views, average watch time,
+and engagement totals remain descriptive because aggregate imports do not provide defensible
+variance or independent-event assumptions. These intervals cover modeled sampling error only.
+Organic distribution, posting time, account state, audience mix, competition, and outside events
+remain confounders, so a leading result is not a causal claim or a promise of future performance.
+
+Analysis writes a recommendation but changes nothing. A human must approve a conclusive result and
+then separately apply it. Application is currently limited to the selected cover and uses normal
+storyboard, rights, and final-gate invalidation. See [local organic experiments](EXPERIMENTS.md).

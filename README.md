@@ -1,6 +1,6 @@
 # techshort
 
-`techshort` is a local-first, human-reviewed technical explainer compiler. It turns PDF, Markdown, or text sources into evidence-linked claims, a clause-level script, a typed deterministic storyboard, a vertical Remotion video, captions, a cited companion page, and an export bundle. It remains useful offline and does not require an API key.
+`techshort` is a local-first, human-reviewed technical explainer compiler. It turns PDF, Markdown, or text sources into evidence-linked claims, a clause-level script, a typed deterministic storyboard, a vertical Remotion video, captions, a cited companion page, and an export bundle. It also supports zero-cost Windows narration, deterministic sound accents, controlled cover variants, aggregate-only organic experiment analysis, and immutable packages for manual TikTok or Instagram Reels upload. It remains useful offline and does not require an API key or platform account integration.
 
 The hard invariant is simple: every factual script clause cites one or more approved claims, and every approved claim cites exact evidence that still resolves in the ingested source. Deterministic QA and five human gates block final export when provenance, rights, staleness, limitation, or media checks fail.
 
@@ -49,9 +49,9 @@ Direct Python dependencies and all npm dependencies are exact-pinned; `requireme
 .\.venv\Scripts\streamlit.exe run reviewer\streamlit_app.py
 ```
 
-Open `http://localhost:8501`. The reviewer has nine restart-safe steps for project, sources, claims/evidence, angles/script, storyboard/assets, narration/captions, preview, QA, and export. It displays source/generated content as escaped inert text; repository Streamlit configuration disables telemetry.
+Open `http://localhost:8501`. The reviewer has ten restart-safe steps for project, sources, claims/evidence, angles/script, storyboard/assets, narration/captions, preview, QA, export, and organic experiments. It displays source/generated content as escaped inert text; repository Streamlit configuration disables telemetry.
 
-The reviewer now exposes three deterministic art directions (`blueprint`, `signal-lab`, and `technical-editorial`), three evidence-linked cover candidates, narrative, retention, and visual critiques, the exact attention-event schedule, scene layout/motion controls, and hash-tracked representative stills. Cover choice is part of storyboard approval: changing the theme, pacing, safe zone, scene treatment, or selected cover invalidates downstream review.
+The reviewer now exposes three deterministic art directions (`blueprint`, `signal-lab`, and `technical-editorial`), three evidence-linked cover candidates, narrative, retention, and visual critiques, the exact attention-event schedule, scene layout/motion controls, local narration and sound controls, hash-tracked representative stills, and the manual organic experiment workflow. Cover choice is part of storyboard approval: changing the theme, pacing, safe zone, scene treatment, or selected cover invalidates downstream review.
 
 ## Complete sample workflow
 
@@ -111,6 +111,89 @@ $env:TECHSHORT_WHISPER_MODEL = 'C:\path\to\model.bin'
 
 The renderer burns deterministic captions into the video. Timing uses probed narration duration when audio is present and otherwise falls back to approved script durations only when `silent-reviewed` was explicitly chosen. Without a transcript or verified local transcription, QA tells the final reviewer to compare narration manually. Changing audio later requires rights approval, caption generation, preview, QA, and final approval to be repeated; changing its transcript requires preview, QA, and final approval to be repeated.
 
+### Zero-cost local synthetic narration and sound design
+
+On Windows, list enabled System.Speech voices after approving the script:
+
+```powershell
+.\.venv\Scripts\techshort.exe audio voices
+.\.venv\Scripts\techshort.exe audio synthesize rolling-shutter --voice "<installed voice name>" --rate 1 --volume 100
+.\.venv\Scripts\techshort.exe audio sound-design rolling-shutter --preset subtle
+```
+
+`audio synthesize` uses only a locally installed Windows voice. It writes hash-bound audio,
+transcript, provenance receipt, and asset records; it does not call a cloud TTS service. The
+default synthetic-voice rights status is `unknown`, which intentionally blocks final export.
+Review the installed voice and output terms, then rerun synthesis with the accurate
+`--rights-status`, `--license`, and `--required-attribution` values when applicable. Do not label
+output original, owned, or permissively licensed without evidence.
+
+`audio sound-design` creates a quiet original procedural WAV from the current allowlisted
+retention cues. It never downloads music or samples. The resulting sound asset still requires
+human rights review, and both audio commands invalidate affected downstream approvals. Generate
+captions, preview, QA, and final approval again after the final audio is selected.
+
+### Zero-cost organic cover experiments
+
+Experiments begin from a current approved export and reviewed cover candidates. They never log
+in, open a browser, upload, post, or fetch analytics. Create and inspect immutable cover variants:
+
+```powershell
+.\.venv\Scripts\techshort.exe experiment create-cover rolling-shutter `
+  --name "rolling-shutter-cover-01" `
+  --hypothesis "A mechanism-first cover may improve completion rate." `
+  --platform tiktok `
+  --primary-metric completion-rate `
+  --minimum-views 500 `
+  --json
+.\.venv\Scripts\techshort.exe experiment list rolling-shutter --json
+.\.venv\Scripts\techshort.exe experiment approve rolling-shutter <experiment-id> --reviewer local-reviewer
+.\.venv\Scripts\techshort.exe experiment status rolling-shutter <experiment-id> --json
+```
+
+Prepare one immutable package per approved variant. The package commands remain local and do not
+publish anything:
+
+```powershell
+.\.venv\Scripts\techshort.exe publication diagnostics tiktok --provider manual --json
+.\.venv\Scripts\techshort.exe publication prepare-request rolling-shutter <experiment-id> <variant-id> `
+  --post-copy "<reviewed post copy>" `
+  --alt-text "<accessible description>" `
+  --hashtag CameraTech `
+  --json
+.\.venv\Scripts\techshort.exe publication package rolling-shutter <request-json-path> --json
+.\.venv\Scripts\techshort.exe publication consent-package rolling-shutter `
+  <request-json-path> <pending-package-manifest-path> `
+  --state granted `
+  --reviewer local-reviewer `
+  --confirmation "I explicitly authorize manual publication of this exact variant package." `
+  --json
+```
+
+Inspect the granted package, then manually upload it in the platform's own composer. No official
+provider, API credential, account session, or automated browser posting is implemented. After
+each real organic post reaches a comparable observation age, manually record only actual
+aggregate totals in JSON or CSV. Never invent metrics and never include viewer identifiers,
+usernames, handles, email addresses, device IDs, or other person-level rows.
+
+```powershell
+.\.venv\Scripts\techshort.exe experiment metrics-template rolling-shutter <experiment-id> --format json --output actual-observations.json
+.\.venv\Scripts\techshort.exe experiment import-observations rolling-shutter <experiment-id> <completed-template-path> --format json
+.\.venv\Scripts\techshort.exe experiment analyze rolling-shutter <experiment-id> --json
+.\.venv\Scripts\techshort.exe experiment approve-recommendation rolling-shutter <experiment-id> <recommendation-id> --reviewer local-reviewer
+.\.venv\Scripts\techshort.exe experiment apply-recommendation rolling-shutter <experiment-id> <recommendation-id> --reviewer local-reviewer
+```
+
+Analysis uses the latest cumulative snapshot for each variant, requires comparable observation
+windows and the configured minimum views, and never changes production. Wilson intervals are
+available only for completion and skip proportions. They cover sampling error under that model,
+not organic distribution, posting time, or audience-mix confounding; other aggregate metrics
+remain explicitly uncertain. Only a conclusive, separately approved cover recommendation can be
+applied, and applying a changed cover invalidates storyboard, rights, and final review.
+
+See [organic experiments](docs/EXPERIMENTS.md) for the observation fields, storage layout,
+interpretation limits, and complete manual workflow.
+
 Successful sample outputs are written to:
 
 - `projects/rolling-shutter/renders/final/final.mp4`
@@ -167,7 +250,7 @@ payload.
 
 Runtime projects live under `projects/<slug>` and are Git-ignored. Writes are atomic and validated. Regeneration archives the prior manifest version. Edits transitively stale downstream artifacts and append invalidation records to review history. Sources, extracted full text, narration, renders, secrets, exports, dependencies, and temporary provider data are excluded from Git.
 
-See [engagement and retention](docs/ENGAGEMENT.md), [architecture](docs/ARCHITECTURE.md), [security threat model](docs/SECURITY.md), [rights policy](docs/RIGHTS.md), and [troubleshooting](docs/TROUBLESHOOTING.md).
+See [engagement and retention](docs/ENGAGEMENT.md), [organic experiments](docs/EXPERIMENTS.md), [architecture](docs/ARCHITECTURE.md), [security threat model](docs/SECURITY.md), [rights policy](docs/RIGHTS.md), and [troubleshooting](docs/TROUBLESHOOTING.md).
 
 ## Current limitations
 
@@ -175,9 +258,10 @@ See [engagement and retention](docs/ENGAGEMENT.md), [architecture](docs/ARCHITEC
 - PDF bounding boxes and printed page labels are stored only when reliably available; pypdf V1 uses page index plus exact character locators.
 - Narration timing falls back to approved segment durations. Without a hash-bound transcript or a configured local Whisper model, QA requires manual narration comparison.
 - Deterministic creative QA catches measurable risks such as dense copy, repeated layouts, missing units, exposed internal IDs, caption speed, and weak cover structure. It is a production aid, not a substitute for watching the preview.
-- Retention plans and creative QA encode useful short-form heuristics, not a guarantee of views or watch time. V1 has no social publishing, audience experimentation, or platform-analytics integration.
+- Retention plans and creative QA encode useful short-form heuristics, not a guarantee of views or watch time. Organic cover experiments use manually imported aggregates and remain observational; there is no platform-analytics integration, account automation, automatic publishing, or causal-performance guarantee.
 - Flash QA checks declared and inferred motion cues and blocks unsafe declared rates, but it is not a full rendered-pixel luminance-and-area analysis. A human must inspect the exact preview, contact sheet, and scene stills.
-- Sound-design cues in retention plans are inert metadata. The renderer neither synthesizes nor embeds effects; any later effect needs a rights record and renewed downstream review.
+- The optional procedural sound-design track uses only allowlisted deterministic cues and is rights-tracked. It is not music, a sample library, adaptive scoring, or proof that sound will improve performance.
+- Local synthetic narration currently uses Windows System.Speech only. Installed voice availability and licensing differ by machine; default `unknown` rights deliberately blocks embedding until reviewed.
 - V2 cover generation is deterministic and specialized for the rolling-shutter fixture. General-source cover drafting still requires manual/provider-specific candidates that satisfy the same strict cover schema.
 - The Streamlit UI is a review surface, not a nonlinear editor.
 - PDF parsing runs in-process; file/page/output bounds reduce but do not eliminate parser memory risk from a novel malicious PDF.

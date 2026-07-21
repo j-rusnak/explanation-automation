@@ -12,6 +12,10 @@
 - Narration is required by default. Silent output is valid only through the explicit `silent-reviewed` mode and final human review.
 - Engagement must remain honest and evidence-linked: no bait, false urgency, deceptive withholding, unsupported certainty, or strobing. Retention heuristics never weaken provenance, limitation, rights, accessibility, or approval gates.
 - Generated scripts require a current typed retention plan and critique. Attention gaps are at most five seconds, declared events are inert allowlisted data, and renderer event timing is narration-scaled and deterministic.
+- Local synthetic narration consumes only the current approved script. Voice-output rights default to `unknown` and must never be relaxed without reviewing the installed voice terms.
+- Organic publication is manual package preparation only. Never add account credentials, browser automation, automatic upload/posting, or claims that a package was published.
+- Experiment observations are actual aggregate post metrics only. Reject viewer identifiers and fabricated, estimated, or regressing counts; preserve observational uncertainty.
+- Experiment analysis never mutates production. A conclusive recommendation requires human approval and a separate explicit application through normal invalidation boundaries.
 - Normal tests are offline; model calls are opt-in only.
 
 ## Commands
@@ -21,5 +25,8 @@
 - Renderer checks: `npm.cmd run format:check`, `npm.cmd run lint`, `npm.cmd run typecheck`, `npm.cmd run test:renderer`
 - Demo: `.venv\\Scripts\\techshort.exe demo rolling-shutter --yes`
 - Reviewer: `.venv\\Scripts\\streamlit.exe run reviewer/streamlit_app.py`
+- Local audio: `.venv\\Scripts\\techshort.exe audio voices`, `audio synthesize <slug>`, `audio sound-design <slug>`
+- Organic experiment: `.venv\\Scripts\\techshort.exe experiment --help`
+- Manual publication package: `.venv\\Scripts\\techshort.exe publication --help`
 
 Do not commit private sources, narration, renders, exports, secrets, dependency directories, or generated project data.

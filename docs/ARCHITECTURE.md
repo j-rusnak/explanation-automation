@@ -7,9 +7,9 @@ and allowlisted application behavior. Python owns strict Pydantic schemas, extra
 evidence resolution, append-only review state, invalidation, captions, QA, and export. Remotion
 consumes only validated scene and retention data; no project value is evaluated as code.
 
-The dependency graph is:
+The production dependency graph is:
 
-`source -> evidence -> claims + independent critique -> candidate angles + selection -> narrative brief + factual locks + beat plan -> script + editorial critique + retention plan + retention critique -> storyboard guidance + typed storyboard + visual critique -> cover candidates + selection + assets + narration mode -> preview + contact sheet + scene stills -> technical and creative QA -> final approval -> final render -> export`
+`source -> evidence -> claims + independent critique -> candidate angles + selection -> narrative brief + factual locks + beat plan -> script + editorial critique + retention plan + retention critique -> storyboard guidance + typed storyboard + visual critique -> cover candidates + selection + assets + narration or explicit silent mode + optional procedural sound -> captions -> preview + contact sheet + scene stills -> technical and creative QA -> final approval -> final render -> export`
 
 Every content edit receives a content-derived manifest version, archives the previous valid
 manifest, and invalidates dependent approvals. Angle generation always yields the three typed
@@ -63,7 +63,8 @@ still require the final human watch-through. Motion QA is a declared/inferred-cu
 rendered-pixel luminance analysis.
 
 Persistence is deliberately filesystem-only. There is no database, authentication, cloud
-service, queue, analytics, social publishing, or custom-scene-code runtime.
+service, queue, platform analytics integration, automated social publishing, or custom-scene-code
+runtime.
 
 ## ADR-002: provider output is drafting data, never proof
 
@@ -73,6 +74,34 @@ login, an excerpt-only temporary directory, read-only/ephemeral execution, sanit
 variables, strict output schemas, timeouts, and one bounded schema-repair retry. Claims receive a
 distinct critique pass; scripts receive deterministic editorial and retention plans and critiques
 regardless of provider. Generation, critique, and engagement scoring never grant approval.
+
+## ADR-003: local audio and human-operated organic experiments
+
+The zero-cost narration provider is Windows System.Speech. It receives only the current
+human-approved script, invokes a fixed local synthesis helper, and writes audio, a transcript, and
+a strict content-derived receipt. Installed voice discovery is local. No cloud TTS endpoint,
+voice cloning, API key, downloaded model, or provider-selected executable path is involved.
+Synthetic voice-output rights default to `unknown`; the resulting asset cannot pass the rights
+gate until a human records accurate terms. Optional sound accents are generated from allowlisted
+retention cue enums with deterministic oscillators, bounded amplitude, and no downloaded samples.
+
+Organic experimentation begins only after a current approved export exists. A cover experiment
+renders two or three approved cover candidates around the exact same video and locks evidence,
+claims, limitation, factual content, and rights hashes. Experiment and variant approval decisions
+are append-only. Immutable publication packages bind approved media, cover, captions, reviewed
+copy, accessibility text, checksums, and a separate human consent receipt. Package generation is
+not publication: the operator uses the platform's own composer manually.
+
+The feedback path is:
+
+`approved export -> controlled cover variants -> experiment approval -> local package + consent -> manual organic posts -> manual aggregate snapshots -> conservative comparison -> recommendation -> recommendation approval -> explicit cover application -> normal downstream invalidation`
+
+Observation manifests accept cumulative post-level totals only and reject person-level fields.
+The evaluator uses comparable post-age windows and configured minimum views. Wilson intervals are
+limited to completion and skip proportions; aggregate metrics without defensible variance remain
+explicitly uncertain. Recommendations never edit factual artifacts, and analysis never applies a
+change. Only a separately approved cover recommendation can reach the existing cover-selection
+service, which invalidates storyboard, rights, and final approval when selection changes.
 
 ## Dependency decisions
 
