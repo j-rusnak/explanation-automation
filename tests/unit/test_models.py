@@ -9,6 +9,7 @@ from techshort.domain.models import (
     AngleSelection,
     AnglesManifest,
     Asset,
+    ComparisonSide,
     Scene,
     ScriptManifest,
     ScriptSegment,
@@ -32,6 +33,21 @@ def test_schema_rejects_unknown_version_and_fields() -> None:
         )
     with pytest.raises(ValidationError):
         VisualSpec(title="safe", arbitrary_javascript="alert(1)")  # type: ignore[call-arg]
+
+
+def test_comparison_side_distortion_is_explicit_and_legacy_hash_safe() -> None:
+    legacy = ComparisonSide(label="Before", value="reference")
+    distorted = ComparisonSide(label="Rolling", value="row timing", distorted=True)
+    reference = ComparisonSide(label="Global", value="shared timing", distorted=False)
+
+    assert "distorted" not in legacy.model_dump(mode="json")
+    assert distorted.model_dump(mode="json")["distorted"] is True
+    assert reference.model_dump(mode="json")["distorted"] is False
+    with pytest.raises(ValidationError):
+        ComparisonSide.model_validate(
+            {"label": "Unsafe", "value": "ambiguous", "distorted": "yes"},
+            strict=True,
+        )
 
 
 def test_factual_segment_and_limitation_are_required() -> None:

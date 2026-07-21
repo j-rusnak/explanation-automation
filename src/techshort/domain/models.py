@@ -582,6 +582,7 @@ class ComparisonSide(BaseModel):
     label: str
     value: str
     detail: str | None = None
+    distorted: bool | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @field_validator("label", "value", "detail")
     @classmethod

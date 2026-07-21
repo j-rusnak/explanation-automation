@@ -10,6 +10,11 @@ import {
   type PrimitiveProps,
 } from "./shared";
 
+export const comparisonSideIsDistorted = (
+  distorted: boolean | null | undefined,
+  index: number,
+): boolean => distorted ?? index === 1;
+
 export const Comparison: React.FC<PrimitiveProps> = ({ scene, themeName }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -62,7 +67,10 @@ export const Comparison: React.FC<PrimitiveProps> = ({ scene, themeName }) => {
             >
               <Shape
                 feature={feature}
-                distorted={index === 1}
+                distorted={comparisonSideIsDistorted(
+                  "distorted" in side ? side.distorted : undefined,
+                  index,
+                )}
                 tokens={tokens}
                 progress={progress}
               />

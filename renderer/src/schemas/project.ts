@@ -263,6 +263,7 @@ const comparisonSide = z
     label: shortText,
     value: shortText,
     detail: shortText.nullable().optional(),
+    distorted: z.boolean().nullable().optional(),
   })
   .strict();
 const comparisonVisual = z

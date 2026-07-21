@@ -404,22 +404,26 @@ class FixtureProvider:
                     label="Specific fix",
                     value="avoids row-timing skew",
                     detail="shared exposure timing",
+                    distorted=False,
                 )
                 right = ComparisonSide(
                     label="Remaining limit",
                     value="other distortions remain",
                     detail="optics, blur, stabilization, processing",
+                    distorted=True,
                 )
             else:
                 left = ComparisonSide(
                     label="Rolling",
                     value="successive row times",
                     detail="motion can become skew",
+                    distorted=True,
                 )
                 right = ComparisonSide(
                     label="Global",
                     value="one shared exposure time",
                     detail="avoids this row-timing skew",
+                    distorted=False,
                 )
             return ComparisonVisual(
                 kind="comparison", feature="straight-edge", left=left, right=right

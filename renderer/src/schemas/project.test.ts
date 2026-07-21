@@ -325,6 +325,38 @@ describe("renderer schema", () => {
     expect(parsed.theme).toBe("technical-editorial");
   });
 
+  it("accepts explicit comparison-side appearance semantics", () => {
+    const comparison = {
+      ...scene,
+      primitive: "Comparison",
+      visual: {
+        kind: "comparison",
+        feature: "straight-edge",
+        left: {
+          label: "Rolling",
+          value: "successive row times",
+          distorted: true,
+        },
+        right: {
+          label: "Global",
+          value: "shared exposure time",
+          distorted: false,
+        },
+      },
+    };
+
+    const parsed = projectSchema.parse({ ...base, scenes: [comparison] });
+
+    expect(parsed.scenes[0]!.visual).toMatchObject({
+      left: { distorted: true },
+      right: { distorted: false },
+    });
+
+    const invalid = structuredClone(comparison);
+    invalid.visual.left.distorted = "yes" as never;
+    expect(() => projectSchema.parse({ ...base, scenes: [invalid] })).toThrow();
+  });
+
   it("rejects a cover selection that does not identify a candidate", () =>
     expect(() =>
       projectSchema.parse({

@@ -214,6 +214,18 @@
           "default": null,
           "title": "Detail"
         },
+        "distorted": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Distorted"
+        },
         "label": {
           "title": "Label",
           "type": "string"

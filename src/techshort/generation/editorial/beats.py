@@ -111,7 +111,7 @@ def _surprising_result_beats() -> list[Beat]:
             "Pivot from mechanism to the controllable timing comparison.",
             "Ask what changes the skew before contrasting simultaneous and successive capture.",
             "What changes the effect?",
-            "Use matched grids: synchronized flash on the left, traveling scanline on the right.",
+            "Use matched grids: traveling scanline on the left, synchronized flash on the right.",
             "Comparison",
             "split-comparison",
             ["roll-scan", "global-flash", "compare-shapes"],

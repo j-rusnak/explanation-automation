@@ -162,6 +162,18 @@ def test_fixture_storyboard_matches_angle_beats_segments_and_evidence_labels(
             "INFERRED" if inferred_claims.intersection(segment.claim_ids) else "DOCUMENTED"
         )
         assert scene.citation_label and "claim-" not in scene.citation_label
+        if scene.visual.kind == "comparison":
+            distortion_by_label = {
+                scene.visual.left.label: scene.visual.left.distorted,
+                scene.visual.right.label: scene.visual.right.distorted,
+            }
+            if "Rolling" in distortion_by_label:
+                assert distortion_by_label == {"Rolling": True, "Global": False}
+            else:
+                assert distortion_by_label == {
+                    "Specific fix": False,
+                    "Remaining limit": True,
+                }
 
 
 def test_fixture_storyboard_openings_are_materially_angle_specific() -> None:
