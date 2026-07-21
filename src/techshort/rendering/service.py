@@ -9,10 +9,10 @@ import struct
 import subprocess
 import tempfile
 import zlib
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 
-from techshort.alignment import cues_from_script, write_caption_files
+from techshort.alignment import resolve_caption_timing, write_caption_files
 from techshort.audio.local_tts import active_synthesis_receipt
 from techshort.audio.service import active_audio, probe_duration
 from techshort.audio.sound_design import active_sound_design
@@ -140,7 +140,12 @@ def renderer_payload(
                     f"evidence scene {scene.scene_id} excerpt no longer matches {evidence_id}"
                 )
         scenes.append(item)
-    captions = [asdict(cue) for cue in cues_from_script(script, target_duration=target_duration)]
+    caption_resolution = resolve_caption_timing(
+        store,
+        script,
+        target_duration=target_duration,
+    )
+    captions = list(caption_resolution.renderer_captions)
     payload: dict[str, object] = {
         "schemaVersion": "1.0.0",
         "title": project.title,
@@ -310,8 +315,12 @@ def render_video(store: ProjectStore, preview: bool) -> Path:
         props_path.write_text(json.dumps(payload, indent=2), encoding="utf-8", newline="\n")
 
         script = load_model(store.path("script/script.json"), ScriptManifest)
-        cues = cues_from_script(script, target_duration=narration_duration)
-        write_caption_files(store.path("captions"), cues)
+        caption_resolution = resolve_caption_timing(
+            store,
+            script,
+            target_duration=narration_duration,
+        )
+        write_caption_files(store.path("captions"), list(caption_resolution.cues))
 
         with tempfile.TemporaryDirectory(prefix="techshort-output-", dir=output.parent) as stage:
             output_stage = Path(stage)

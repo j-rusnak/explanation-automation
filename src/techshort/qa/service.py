@@ -16,6 +16,7 @@ from techshort.alignment import (
     caption_warnings,
     compare_narration,
     cues_from_script,
+    resolve_caption_timing,
 )
 from techshort.assets import BUILTIN_FONT_ASSET_IDS
 from techshort.audio import (
@@ -916,7 +917,46 @@ def run_qa(
         )
     )
 
-    cues = cues_from_script(script, target_duration=narration_duration)
+    try:
+        caption_resolution = resolve_caption_timing(
+            store,
+            script,
+            target_duration=narration_duration,
+        )
+        cues = list(caption_resolution.cues)
+        if caption_resolution.fallback_reason is not None:
+            checks.append(
+                _warning(
+                    "narration-timing-provenance",
+                    caption_resolution.fallback_reason,
+                )
+            )
+        else:
+            timing = caption_resolution.manifest
+            if timing is None:
+                raise AssertionError("caption timing resolver omitted its fallback reason")
+            checks.append(
+                _check(
+                    "narration-timing-provenance",
+                    True,
+                    "Narration timing is current and covers every approved script word "
+                    f"({timing.alignment.coverage:.1%} alignment coverage)",
+                    "Narration timing provenance is stale or invalid",
+                )
+            )
+    except (OSError, ValueError) as exc:
+        checks.append(
+            _check(
+                "narration-timing-provenance",
+                False,
+                "Narration timing provenance is current",
+                f"Narration timing provenance is stale or invalid: {exc}",
+            )
+        )
+        # Continue independent accessibility checks with the deterministic
+        # approved-script fallback. This never turns the provenance failure into
+        # a pass, and keeps one corrupt artifact from hiding unrelated defects.
+        cues = cues_from_script(script, target_duration=narration_duration)
     if selected_cover is not None:
         cover_input = CreativeCoverInput(
             cover_id=selected_cover.candidate_id,

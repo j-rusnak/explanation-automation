@@ -52,6 +52,11 @@ def _comparison_check(store: ProjectStore) -> QACheck:
     return next(check for check in report.checks if check.check_id == "narration-script-comparison")
 
 
+def _timing_check(store: ProjectStore) -> QACheck:
+    report = run_qa(store, require_media=False)
+    return next(check for check in report.checks if check.check_id == "narration-timing-provenance")
+
+
 def test_qa_passes_matching_local_narration_transcript(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -109,3 +114,37 @@ def test_qa_hard_fails_material_narration_difference(
 
     assert check.status == "failure"
     assert check.hard_blocker
+
+
+def test_qa_warns_when_legacy_project_uses_proportional_caption_timing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store, _script = _approved_store(tmp_path)
+    narration = tmp_path / "narration.wav"
+    narration.write_bytes(b"test fixture")
+    _patch_audio(monkeypatch, narration)
+
+    check = _timing_check(store)
+
+    assert check.status == "warning"
+    assert not check.hard_blocker
+    assert "no active narration timing manifest" in check.message
+
+
+def test_qa_hard_fails_declared_but_missing_timing_manifest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    store, _script = _approved_store(tmp_path)
+    narration = tmp_path / "narration.wav"
+    narration.write_bytes(b"test fixture")
+    _patch_audio(monkeypatch, narration)
+    project = store.project()
+    project.active_versions["narration_timing"] = "timing-1111111111111111"
+    project.dependency_hashes["narration_timing"] = "a" * 64
+    store.save_project(project)
+
+    check = _timing_check(store)
+
+    assert check.status == "failure"
+    assert check.hard_blocker
+    assert "missing or changed" in check.message

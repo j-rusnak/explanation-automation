@@ -14,9 +14,12 @@ from techshort.alignment.comparison import (
     normalized_words,
 )
 from techshort.alignment.service import (
+    CaptionTimingResolution,
     active_narration_timing,
     build_narration_timing_manifest,
+    register_active_synthesis_timing,
     register_narration_timing,
+    resolve_caption_timing,
     verify_narration_timing,
 )
 from techshort.alignment.timing import (
@@ -30,6 +33,7 @@ from techshort.alignment.timing import (
     canonical_script_text,
     canonical_script_words,
     derive_narration_timing_id,
+    proportional_segment_timing_projection,
     proportional_timing_projection,
     validate_timing_projection,
 )
@@ -56,10 +60,14 @@ __all__ = [
     "canonical_script_words",
     "align_engine_observations",
     "proportional_timing_projection",
+    "proportional_segment_timing_projection",
     "derive_narration_timing_id",
     "validate_timing_projection",
     "build_narration_timing_manifest",
     "register_narration_timing",
+    "register_active_synthesis_timing",
     "active_narration_timing",
     "verify_narration_timing",
+    "CaptionTimingResolution",
+    "resolve_caption_timing",
 ]

@@ -710,6 +710,107 @@ def proportional_timing_projection(
     return _proportional_projection(script, canonical, audio_duration_seconds, stats)
 
 
+def proportional_segment_timing_projection(
+    script: ScriptManifest,
+    audio_duration_seconds: float,
+    segment_intervals: list[tuple[str, float, float]],
+) -> TimingProjection:
+    """Project words only inside exact receipted segment PCM intervals."""
+
+    if audio_duration_seconds <= 0:
+        raise ValueError("timing audio duration must be positive")
+    if [item[0] for item in segment_intervals] != [
+        segment.segment_id for segment in script.segments
+    ]:
+        raise ValueError("receipted timing intervals must match ordered script segments")
+    for index, (_segment_id, start, end) in enumerate(segment_intervals):
+        if start < 0 or end <= start or end > audio_duration_seconds + _TIMING_TOLERANCE:
+            raise ValueError("receipted segment interval is outside the active audio duration")
+        if index and start < segment_intervals[index - 1][2] - _TIMING_TOLERANCE:
+            raise ValueError("receipted segment intervals must be ordered and nonoverlapping")
+
+    canonical = canonical_script_words(script)
+    words: list[WordTiming] = []
+    segments: list[SegmentTiming] = []
+    canonical_cursor = 0
+    for segment_index, (segment_id, start, end) in enumerate(segment_intervals):
+        linked: list[CanonicalScriptWord] = []
+        while canonical_cursor + len(linked) < len(canonical):
+            word = canonical[canonical_cursor + len(linked)]
+            if word.segment_id != segment_id:
+                break
+            linked.append(word)
+        if not linked:
+            raise ValueError(f"script segment {segment_id} contains no timing words")
+        weights = [max(1, len(word.canonical)) for word in linked]
+        total_weight = sum(weights)
+        elapsed_weight = 0
+        segment_words: list[WordTiming] = []
+        for word_index, (word, weight) in enumerate(zip(linked, weights, strict=True)):
+            word_start = start + (end - start) * elapsed_weight / total_weight
+            elapsed_weight += weight
+            word_end = (
+                end
+                if word_index == len(linked) - 1
+                else start + (end - start) * elapsed_weight / total_weight
+            )
+            segment_words.append(
+                WordTiming(
+                    word_id=word.word_id,
+                    segment_id=word.segment_id,
+                    segment_word_index=word.segment_word_index,
+                    global_word_index=word.global_word_index,
+                    display_text=word.display_text,
+                    canonical=word.canonical,
+                    char_start=word.char_start,
+                    char_end=word.char_end,
+                    start_seconds=word_start,
+                    end_seconds=word_end,
+                    source="proportional-fallback",
+                    quality="proportional-fallback",
+                    start_origin="proportional",
+                    end_origin=(
+                        "segment-boundary"
+                        if word_index == len(linked) - 1
+                        else "proportional"
+                    ),
+                )
+            )
+        words.extend(segment_words)
+        segments.append(
+            SegmentTiming(
+                segment_id=segment_id,
+                segment_index=segment_index,
+                start_seconds=start,
+                end_seconds=end,
+                word_ids=[word.word_id for word in segment_words],
+            )
+        )
+        canonical_cursor += len(linked)
+    stats = TimingAlignmentStats(
+        observation_source=None,
+        script_word_count=len(canonical),
+        provider_word_count=0,
+        matched_word_count=0,
+        insertion_count=0,
+        deletion_count=len(canonical),
+        substitution_count=0,
+        edit_distance=len(canonical),
+        word_error_rate=1.0,
+        coverage=0.0,
+        interpolated_word_count=0,
+        proportional_word_count=len(canonical),
+        fallback_reason="synthesis receipt contains no word-boundary events",
+    )
+    return TimingProjection(
+        source="proportional-fallback",
+        quality="proportional-fallback",
+        segments=tuple(segments),
+        words=tuple(words),
+        alignment=stats,
+    )
+
+
 def align_engine_observations(
     script: ScriptManifest,
     observations: list[EngineWordObservation],

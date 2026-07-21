@@ -234,3 +234,43 @@ def test_transcript_sidecar_rejects_changed_bytes(tmp_path: Path, generated_audi
 
     with pytest.raises(ValueError, match="changed after import"):
         active_transcript(store)
+
+
+def test_changed_audio_deactivates_exact_word_timing_metadata(
+    tmp_path: Path, generated_audio: Path
+) -> None:
+    store = _store(tmp_path, "audio-timing-invalidation")
+    import_audio(store, generated_audio, rights_status="user-owned")
+    project = store.project()
+    project.active_versions["narration_timing"] = "timing-1111111111111111"
+    project.dependency_hashes["narration_timing"] = "a" * 64
+    store.save_project(project)
+    alternate = tmp_path / "alternate.wav"
+    content = bytearray(generated_audio.read_bytes())
+    content[-1] ^= 1
+    alternate.write_bytes(content)
+
+    import_audio(store, alternate, rights_status="user-owned")
+
+    updated = store.project()
+    assert "narration_timing" not in updated.active_versions
+    assert "narration_timing" not in updated.dependency_hashes
+
+
+def test_changed_transcript_deactivates_exact_word_timing_metadata(
+    tmp_path: Path, generated_audio: Path
+) -> None:
+    store = _store(tmp_path, "transcript-timing-invalidation")
+    import_audio(store, generated_audio, rights_status="user-owned")
+    project = store.project()
+    project.active_versions["narration_timing"] = "timing-1111111111111111"
+    project.dependency_hashes["narration_timing"] = "a" * 64
+    store.save_project(project)
+    transcript = tmp_path / "narration.txt"
+    transcript.write_text("Current reviewed narration.", encoding="utf-8")
+
+    import_transcript(store, transcript)
+
+    updated = store.project()
+    assert "narration_timing" not in updated.active_versions
+    assert "narration_timing" not in updated.dependency_hashes

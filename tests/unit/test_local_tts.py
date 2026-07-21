@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from techshort.alignment import active_narration_timing
 from techshort.audio import (
     NarrationVoice,
     WindowsSapiNarrationProvider,
@@ -442,6 +443,10 @@ def test_synthesis_registers_hash_bound_transcript_and_unresolved_voice_rights(
     assert receipt.rights_status == "unknown"
     assert store.project().active_versions["narration_synthesis"] == receipt.synthesis_id
     assert active_synthesis_receipt(store) == (receipt, result.receipt_path)
+    timing = active_narration_timing(store)
+    assert timing is not None
+    assert timing[0].synthesis_id == receipt.synthesis_id
+    assert timing[0].quality == "proportional-fallback"
     assert result.duration_seconds == pytest.approx(expected_frames / 48_000, abs=1e-9)
     asset = load_model(store.path("assets/asset-manifest.json"), AssetManifest).assets[0]
     assert asset.origin == "local synthetic narration (windows-sapi)"

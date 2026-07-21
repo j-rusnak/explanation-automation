@@ -4,6 +4,7 @@ import re
 from typing import Literal
 from uuid import uuid4
 
+from techshort.alignment import active_narration_timing
 from techshort.audio import active_audio, active_synthesis_receipt, active_transcript
 from techshort.audio.sound_design import active_sound_design
 from techshort.domain.creative import (
@@ -240,6 +241,9 @@ def current_artifact_hashes(store: ProjectStore) -> dict[str, str]:
         synthesis = active_synthesis_receipt(store)
         if synthesis is not None:
             hashes["narration-synthesis"] = sha256_file(synthesis[1])
+    narration_timing = active_narration_timing(store)
+    if narration_timing is not None:
+        hashes["narration-timing"] = sha256_file(narration_timing[1])
     sound_design = active_sound_design(store)
     if sound_design is not None:
         hashes["sound-design-audio"] = sha256_file(sound_design)

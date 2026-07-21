@@ -871,9 +871,17 @@ class WindowsSapiNarrationProvider:
         )
         receipt_path = _write_synthesis_receipt(store, receipt)
         project = store.project()
+        # A replacement synthesis receipt invalidates any word timing derived
+        # from the previous engine events, even when output audio hashes happen
+        # to match. The alignment service registers the new timing below.
+        project.active_versions.pop("narration_timing", None)
+        project.dependency_hashes.pop("narration_timing", None)
         project.active_versions["narration_synthesis"] = receipt.synthesis_id
         project.dependency_hashes["narration_synthesis"] = sha256_file(receipt_path)
         store.save_project(project)
+        from techshort.alignment import register_active_synthesis_timing
+
+        register_active_synthesis_timing(store)
         return SynthesizedNarration(
             provider=self.provider_id,
             voice=voice,

@@ -221,6 +221,11 @@ def import_audio(
         # deactivates the old receipt; a provider may then register a new one.
         project.active_versions.pop("narration_synthesis", None)
         project.dependency_hashes.pop("narration_synthesis", None)
+        # Word timing is bound to exact audio bytes, script approvals, and any
+        # synthesis receipt. Keep archived bytes, but never leave stale timing
+        # active after narration replacement.
+        project.active_versions.pop("narration_timing", None)
+        project.dependency_hashes.pop("narration_timing", None)
     store.save_project(project)
     if not unchanged:
         store.invalidate_from("rights", f"narration asset {asset_id} imported or changed")
@@ -299,6 +304,9 @@ def import_transcript(store: ProjectStore, source: Path) -> Path:
     )
     project.active_versions["narration_transcript"] = f"transcript-{transcript_hash[:12]}"
     project.dependency_hashes["narration_transcript"] = transcript_hash
+    if not unchanged:
+        project.active_versions.pop("narration_timing", None)
+        project.dependency_hashes.pop("narration_timing", None)
     store.save_project(project)
     if not unchanged:
         store.invalidate_from("final", "narration transcript imported or changed")

@@ -114,6 +114,24 @@ def test_reviewed_artifact_snapshot_binds_narration_and_transcript_bytes(
     assert before["narration-transcript"] != after["narration-transcript"]
 
 
+def test_reviewed_artifact_snapshot_binds_verified_narration_timing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _storyboard_store(tmp_path, "timing-snapshot")
+    timing = store.path("audio/narration-timing.json")
+    timing.write_bytes(b"first timing manifest")
+    monkeypatch.setattr(
+        "techshort.review.service.active_narration_timing",
+        lambda _store: (object(), timing),
+    )
+
+    before = current_artifact_hashes(store)
+    timing.write_bytes(b"changed timing manifest")
+    after = current_artifact_hashes(store)
+
+    assert before["narration-timing"] != after["narration-timing"]
+
+
 def test_unused_legacy_source_does_not_block_current_evidence_snapshot(tmp_path: Path) -> None:
     store = _storyboard_store(tmp_path, "unused-legacy-source")
     index_path = store.path("sources/source-index.json")
