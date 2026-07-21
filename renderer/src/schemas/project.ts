@@ -434,16 +434,90 @@ export const typedVisualSchema = z.discriminatedUnion("kind", [
 ]);
 export const visualSchema = z.union([legacyVisualSchema, typedVisualSchema]);
 
+export const captionTimingSourceSchema = z.enum([
+  "legacy-cue",
+  "estimated-script",
+  "sapi-bookmark",
+  "aligned-local",
+  "manual-reviewed",
+]);
+
+export const captionTokenSchema = z
+  .object({
+    text: inertText
+      .min(1)
+      .max(42)
+      .refine((value) => value === value.trim() && !/\s/u.test(value), {
+        message: "caption token text must be one trimmed token",
+      }),
+    start: z.number().finite().nonnegative().max(300),
+    end: z.number().finite().positive().max(300),
+    group: z.number().int().nonnegative().max(19),
+  })
+  .strict()
+  .refine((token) => token.end > token.start, {
+    message: "caption token end must be after its start",
+  });
+
+const normalizedCaptionText = (value: string): string =>
+  value.trim().replace(/\s+/gu, " ");
+
 export const captionSchema = z
   .object({
     index: z.number().int().positive(),
-    start: z.number().nonnegative(),
-    end: z.number().positive(),
+    start: z.number().finite().nonnegative().max(300),
+    end: z.number().finite().positive().max(300),
     text: inertText.min(1).max(42),
+    cueId: stableId.optional(),
+    segmentId: stableId.optional(),
+    timingSource: captionTimingSourceSchema.default("legacy-cue"),
+    tokens: z.array(captionTokenSchema).max(20).default([]),
   })
   .strict()
-  .refine((cue) => cue.end > cue.start, {
-    message: "caption end must be after its start",
+  .superRefine((cue, context) => {
+    if (cue.end <= cue.start) {
+      context.addIssue({
+        code: "custom",
+        path: ["end"],
+        message: "caption end must be after its start",
+      });
+    }
+    if (cue.tokens.length === 0) return;
+
+    const reconstructed = cue.tokens.map((token) => token.text).join(" ");
+    if (
+      normalizedCaptionText(reconstructed) !== normalizedCaptionText(cue.text)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["tokens"],
+        message: "caption tokens must reconstruct the normalized cue text",
+      });
+    }
+    cue.tokens.forEach((token, tokenIndex) => {
+      if (token.start < cue.start || token.end > cue.end) {
+        context.addIssue({
+          code: "custom",
+          path: ["tokens", tokenIndex],
+          message: "caption token timing must remain inside its cue",
+        });
+      }
+      const previous = cue.tokens[tokenIndex - 1];
+      if (previous && token.start < previous.end) {
+        context.addIssue({
+          code: "custom",
+          path: ["tokens", tokenIndex, "start"],
+          message: "caption tokens must be monotonic and nonoverlapping",
+        });
+      }
+      if (previous && token.group < previous.group) {
+        context.addIssue({
+          code: "custom",
+          path: ["tokens", tokenIndex, "group"],
+          message: "caption token groups must be ordered",
+        });
+      }
+    });
   });
 
 export const retentionEventKindSchema = z.enum([
@@ -737,6 +811,7 @@ export const projectSchema = z
 
 export type ProjectData = z.infer<typeof projectSchema>;
 export type SceneData = z.infer<typeof sceneSchema>;
+export type CaptionTokenData = z.infer<typeof captionTokenSchema>;
 export type TypedVisual = z.infer<typeof typedVisualSchema>;
 export type CoverCandidate = z.infer<typeof coverCandidateSchema>;
 export type PacingPreset = z.infer<typeof pacingSchema>;

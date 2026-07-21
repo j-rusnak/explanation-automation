@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { projectSchema, sceneSchema } from "./project";
+import { captionSchema, projectSchema, sceneSchema } from "./project";
 
 const base = {
   schemaVersion: "1.0.0",
@@ -503,4 +503,94 @@ describe("renderer schema", () => {
         },
       }),
     ).toThrow(/inside the data range/));
+});
+
+describe("caption schema", () => {
+  const timedCaption = {
+    index: 1,
+    start: 1,
+    end: 3,
+    text: "Rows expose at different moments.",
+    cueId: "caption-01",
+    segmentId: "segment-01",
+    timingSource: "estimated-script",
+    tokens: [
+      { text: "Rows", start: 1, end: 1.4, group: 0 },
+      { text: "expose", start: 1.4, end: 1.8, group: 0 },
+      { text: "at", start: 1.8, end: 2, group: 1 },
+      { text: "different", start: 2, end: 2.5, group: 1 },
+      { text: "moments.", start: 2.5, end: 3, group: 1 },
+    ],
+  } as const;
+
+  it("keeps legacy cues valid and supplies inert defaults", () => {
+    const parsed = captionSchema.parse({
+      index: 1,
+      start: 0,
+      end: 1,
+      text: "Legacy cue",
+    });
+
+    expect(parsed.timingSource).toBe("legacy-cue");
+    expect(parsed.tokens).toEqual([]);
+    expect(parsed.cueId).toBeUndefined();
+    expect(parsed.segmentId).toBeUndefined();
+  });
+
+  it("accepts ordered phrase-grouped tokens that reconstruct the cue", () => {
+    expect(captionSchema.parse(timedCaption)).toMatchObject(timedCaption);
+  });
+
+  it.each([
+    [
+      "different text",
+      { tokens: [{ text: "Wrong", start: 1, end: 3, group: 0 }] },
+    ],
+    [
+      "overlap",
+      {
+        tokens: timedCaption.tokens.map((token, index) =>
+          index === 1 ? { ...token, start: 1.3 } : token,
+        ),
+      },
+    ],
+    [
+      "outside cue",
+      {
+        tokens: timedCaption.tokens.map((token, index) =>
+          index === 0 ? { ...token, start: 0.9 } : token,
+        ),
+      },
+    ],
+    [
+      "decreasing groups",
+      {
+        tokens: timedCaption.tokens.map((token, index) =>
+          index === 4 ? { ...token, group: 0 } : token,
+        ),
+      },
+    ],
+  ])("rejects %s in token timing", (_label, replacement) => {
+    expect(() =>
+      captionSchema.parse({ ...timedCaption, ...replacement }),
+    ).toThrow();
+  });
+
+  it("bounds token count and rejects non-finite timing", () => {
+    expect(() =>
+      captionSchema.parse({
+        ...timedCaption,
+        text: "x ".repeat(21).trim(),
+        tokens: Array.from({ length: 21 }, (_, index) => ({
+          text: "x",
+          start: 1 + index * 0.08,
+          end: 1.07 + index * 0.08,
+          group: Math.min(19, index),
+        })),
+      }),
+    ).toThrow();
+    expect(() =>
+      captionSchema.parse({ ...timedCaption, start: Number.NaN }),
+    ).toThrow();
+  });
 });

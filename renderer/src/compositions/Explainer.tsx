@@ -7,6 +7,10 @@ import {
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
+import {
+  activeEmphasisTokenIndexes,
+  captionTokenPresentation,
+} from "../captions/emphasis";
 import type { ProjectData, SceneData } from "../schemas/project";
 import {
   PacingProvider,
@@ -27,9 +31,15 @@ const CaptionCard: React.FC<{
 }> = ({ cue, currentTime, tokens, themeName }) => {
   const motion = captionMotionFor(currentTime, cue.start, cue.end);
   const safeZone = useSafeZone();
+  const activeTokenIndexes = new Set(
+    activeEmphasisTokenIndexes(cue.tokens, currentTime, cue.end),
+  );
   return (
     <div
       data-caption-index={cue.index}
+      data-caption-id={cue.cueId ?? `caption-${cue.index}`}
+      data-caption-segment-id={cue.segmentId}
+      data-caption-timing-source={cue.timingSource}
       style={{
         position: "absolute",
         left: Math.max(62, safeZone.left),
@@ -59,7 +69,33 @@ const CaptionCard: React.FC<{
         zIndex: 20,
       }}
     >
-      {cue.text}
+      <span data-caption-text="true">
+        {cue.tokens.length > 0
+          ? cue.tokens.map((token, tokenIndex) => {
+              const active = activeTokenIndexes.has(tokenIndex);
+              return (
+                <React.Fragment
+                  key={`${cue.cueId ?? cue.index}-token-${tokenIndex}`}
+                >
+                  {tokenIndex > 0 ? " " : null}
+                  <span
+                    data-caption-token-index={tokenIndex}
+                    data-caption-token-group={token.group}
+                    data-caption-token-active={active ? "true" : "false"}
+                    style={captionTokenPresentation(
+                      active,
+                      themeName === "technical-editorial"
+                        ? "#ffd166"
+                        : tokens.warning,
+                    )}
+                  >
+                    {token.text}
+                  </span>
+                </React.Fragment>
+              );
+            })
+          : cue.text}
+      </span>
       <div
         aria-hidden="true"
         style={{
