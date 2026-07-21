@@ -75,14 +75,46 @@ try {
             $prompt.AppendBreak([TimeSpan]::FromMilliseconds(140))
         }
     }
-    $synthesizer.SetOutputToWaveFile([IO.Path]::GetFullPath($OutputWav))
-    $synthesizer.Speak($prompt)
-    $synthesizer.SetOutputToNull()
+    $maxProgressEvents = 4096
+    $maxProgressTextCharacters = 512
+    $progressState = @{
+        events = [System.Collections.Generic.List[object]]::new()
+        truncated = $false
+    }
+    $progressHandler = {
+        param($sender, $eventArgs)
+        if (
+            $progressState.events.Count -ge $maxProgressEvents -or
+            $eventArgs.Text.Length -gt $maxProgressTextCharacters
+        ) {
+            $progressState.truncated = $true
+            return
+        }
+        $progressState.events.Add(
+            [ordered]@{
+                spokenText = $eventArgs.Text
+                audioPositionSeconds = [Math]::Round($eventArgs.AudioPosition.TotalSeconds, 6)
+                characterPosition = $eventArgs.CharacterPosition
+                characterCount = $eventArgs.CharacterCount
+            }
+        )
+    }.GetNewClosure()
+    $synthesizer.add_SpeakProgress($progressHandler)
+    try {
+        $synthesizer.SetOutputToWaveFile([IO.Path]::GetFullPath($OutputWav))
+        $synthesizer.Speak($prompt)
+        $synthesizer.SetOutputToNull()
+    }
+    finally {
+        $synthesizer.remove_SpeakProgress($progressHandler)
+    }
     [ordered]@{
         voice = $Voice
         rate = $Rate
         volume = $Volume
         output = [IO.Path]::GetFileName($OutputWav)
+        progress = @($progressState.events)
+        progressTruncated = $progressState.truncated
     } | ConvertTo-Json -Compress
 }
 finally {

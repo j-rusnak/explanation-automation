@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import platform
 import tempfile
@@ -38,7 +39,8 @@ def test_repository_sapi_helper_produces_real_local_wav() -> None:
             "This is an offline narration test.\nThe second segment follows a safe pause.\n",
             encoding="utf-8",
         )
-        _run_sapi(
+        metadata = json.loads(
+            _run_sapi(
             [
                 "-Action",
                 "synthesize",
@@ -54,11 +56,26 @@ def test_repository_sapi_helper_produces_real_local_wav() -> None:
                 "100",
             ],
             timeout=30,
+            )
         )
 
         assert output.is_file()
         assert output.stat().st_size > 44
         assert probe_duration(output) == pytest.approx(3.0, abs=2.5)
+        assert metadata["voice"] == voice.name
+        assert metadata["progressTruncated"] is False
+        assert isinstance(metadata["progress"], list)
+        assert metadata["progress"]
+        assert all(
+            set(event)
+            == {
+                "spokenText",
+                "audioPositionSeconds",
+                "characterPosition",
+                "characterCount",
+            }
+            for event in metadata["progress"]
+        )
 
 
 @pytest.mark.skipif(

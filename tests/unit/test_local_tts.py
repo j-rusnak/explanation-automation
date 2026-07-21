@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import wave
 from pathlib import Path
 from typing import Any
 
@@ -16,9 +17,22 @@ from techshort.audio import (
     discover_windows_voices,
     local_narration_readiness,
 )
-from techshort.audio.local_tts import _silence_trim_bounds, _write_synthesis_receipt
-from techshort.audio.providers import NarrationSynthesisReceipt, derive_synthesis_id
-from techshort.domain.hashing import sha256_file
+from techshort.audio.local_tts import (
+    SEGMENT_PAUSE_FRAMES,
+    _concatenate_pcm,
+    _parse_sapi_synthesis_output,
+    _silence_trim_bounds,
+    _verify_engine_event_text,
+    _write_synthesis_receipt,
+)
+from techshort.audio.providers import (
+    NarrationConcatenationReceipt,
+    NarrationEngineEvent,
+    NarrationSegmentReceipt,
+    NarrationSynthesisReceipt,
+    derive_synthesis_id,
+)
+from techshort.domain.hashing import sha256_bytes, sha256_file
 from techshort.domain.models import AssetManifest, ScriptManifest
 from techshort.domain.storage import ProjectStore, load_model
 from techshort.generation import fixture_claims, fixture_script, generate_angles, select_angle
@@ -129,6 +143,160 @@ def test_silence_trim_preserves_internal_segment_pauses() -> None:
     assert end == pytest.approx(4.73)
 
 
+def _write_test_pcm(path: Path, sample: int, frame_count: int) -> None:
+    frame = sample.to_bytes(2, "little", signed=True)
+    with wave.open(str(path), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(48_000)
+        output.writeframes(frame * frame_count)
+
+
+def test_pcm_concatenation_is_exact_and_repeatable(tmp_path: Path) -> None:
+    first = tmp_path / "first.wav"
+    second = tmp_path / "second.wav"
+    output = tmp_path / "output.wav"
+    repeated = tmp_path / "repeated.wav"
+    _write_test_pcm(first, 101, 11)
+    _write_test_pcm(second, -202, 7)
+
+    info = _concatenate_pcm([first, second], output)
+    repeated_info = _concatenate_pcm([first, second], repeated)
+
+    assert info == repeated_info
+    assert info.frame_count == 11 + SEGMENT_PAUSE_FRAMES + 7
+    assert sha256_file(output) == sha256_file(repeated)
+    with wave.open(str(output), "rb") as audio:
+        assert audio.readframes(11) == (101).to_bytes(2, "little", signed=True) * 11
+        assert audio.readframes(SEGMENT_PAUSE_FRAMES) == b"\x00\x00" * SEGMENT_PAUSE_FRAMES
+        assert audio.readframes(7) == (-202).to_bytes(2, "little", signed=True) * 7
+        assert not audio.readframes(1)
+
+
+def test_sapi_progress_parser_uses_raw_utf16_ranges_and_rejects_truncation() -> None:
+    text = "Lens 📷 scan"
+    camera_position = len("Lens ".encode("utf-16-le")) // 2
+    payload = {
+        "voice": "Fixture Voice",
+        "rate": 1,
+        "volume": 100,
+        "output": "segment.wav",
+        "progress": [
+            {
+                "spokenText": "📷",
+                "audioPositionSeconds": 0.125,
+                "characterPosition": camera_position,
+                "characterCount": 2,
+            }
+        ],
+        "progressTruncated": False,
+    }
+
+    events = _parse_sapi_synthesis_output(
+        json.dumps(payload),
+        expected_voice="Fixture Voice",
+        expected_rate=1,
+        expected_volume=100,
+        expected_output_name="segment.wav",
+        approved_text=text,
+    )
+
+    assert events[0].spoken_text == "📷"
+    payload["progressTruncated"] = True
+    with pytest.raises(RuntimeError, match="exceeded its safety bound"):
+        _parse_sapi_synthesis_output(
+            json.dumps(payload),
+            expected_voice="Fixture Voice",
+            expected_rate=1,
+            expected_volume=100,
+            expected_output_name="segment.wav",
+            approved_text=text,
+        )
+
+
+def test_segment_receipt_rejects_traversal_and_event_text_mismatch() -> None:
+    event = NarrationEngineEvent(
+        spoken_text="scan",
+        normalized_start_seconds=0.0,
+        raw_character_position=0,
+        raw_character_count=4,
+    )
+    with pytest.raises(ValueError, match="traversal-free"):
+        NarrationSegmentReceipt(
+            segment_id="segment-1",
+            order=0,
+            text_hash="a" * 64,
+            approval_hash="b" * 64,
+            output_path="../../outside.wav",
+            output_hash="c" * 64,
+            frame_count=48_000,
+            duration_seconds=1.0,
+            engine_events=[event],
+        )
+    with pytest.raises(ValueError, match="does not match"):
+        _verify_engine_event_text("roll", [event])
+
+
+def test_v11_receipt_binds_ordered_segments_to_approval_hashes() -> None:
+    event = NarrationEngineEvent(
+        spoken_text="scan",
+        normalized_start_seconds=0.0,
+        raw_character_position=0,
+        raw_character_count=4,
+    )
+    segment = NarrationSegmentReceipt(
+        segment_id="segment-1",
+        order=0,
+        text_hash=sha256_bytes(b"scan"),
+        approval_hash="b" * 64,
+        output_path=f"audio/narration-segments/{'c' * 64}.wav",
+        output_hash="c" * 64,
+        frame_count=48_000,
+        duration_seconds=1.0,
+        engine_events=[event],
+    )
+    concatenation = NarrationConcatenationReceipt(
+        output_frame_count=48_000,
+        output_duration_seconds=1.0,
+    )
+    payload: dict[str, object] = {
+        "schema_version": "1.1.0",
+        "provider": "windows-sapi",
+        "voice_name": "Fixture Voice",
+        "voice_culture": "en-US",
+        "voice_gender": "Neutral",
+        "voice_age": "Adult",
+        "rate": 1,
+        "volume": 100,
+        "segment_pause_milliseconds": 140,
+        "script_version_id": "script-fixture",
+        "script_hash": "a" * 64,
+        "script_text_hash": "d" * 64,
+        "segment_approval_hashes": {"segment-1": "e" * 64},
+        "audio_asset_id": "asset-narration-fixture",
+        "output_path": "audio/narration.wav",
+        "output_hash": "f" * 64,
+        "output_duration_seconds": 1.0,
+        "transcript_hash": "1" * 64,
+        "segments": [segment.model_dump(mode="json")],
+        "concatenation": concatenation.model_dump(mode="json"),
+        "rights_status": "unknown",
+    }
+    with pytest.raises(ValueError, match="approved segment hashes"):
+        NarrationSynthesisReceipt(
+            synthesis_id=derive_synthesis_id(payload),
+            **payload,
+        )
+
+    payload["segment_approval_hashes"] = {"segment-1": "b" * 64}
+    receipt = NarrationSynthesisReceipt(
+        synthesis_id=derive_synthesis_id(payload),
+        **payload,
+    )
+    assert receipt.schema_version == "1.1.0"
+    assert receipt.segments == [segment]
+
+
 def test_synthesis_receipts_archive_previous_valid_version(tmp_path: Path) -> None:
     store = ProjectStore(tmp_path / "projects", "receipt-archive")
     store.initialize("Receipt archive")
@@ -158,6 +326,10 @@ def test_synthesis_receipts_archive_previous_valid_version(tmp_path: Path) -> No
     second = NarrationSynthesisReceipt(
         synthesis_id=derive_synthesis_id(second_payload), **second_payload
     )
+    assert first.schema_version == "1.0.0"
+    assert first.segments == []
+    assert first.concatenation is None
+    assert NarrationSynthesisReceipt.model_validate_json(first.model_dump_json()) == first
 
     _write_synthesis_receipt(store, first)
     current = _write_synthesis_receipt(store, second)
@@ -203,14 +375,36 @@ def test_synthesis_registers_hash_bound_transcript_and_unresolved_voice_rights(
     provider = WindowsSapiNarrationProvider()
     monkeypatch.setattr(provider, "list_voices", lambda: [voice])
 
+    calls: list[str] = []
+
     def fake_sapi(arguments: list[str], *, timeout: int = 120) -> str:
         del timeout
+        input_path = Path(arguments[arguments.index("-InputText") + 1])
         output = Path(arguments[arguments.index("-OutputWav") + 1])
+        text = input_path.read_text(encoding="utf-8").strip()
+        calls.append(text)
         shutil.copyfile(short_wav, output)
-        return "{}"
+        return json.dumps(
+            {
+                "voice": "Fixture Voice",
+                "rate": 1,
+                "volume": 100,
+                "output": output.name,
+                "progress": [
+                    {
+                        "spokenText": text,
+                        "audioPositionSeconds": 0.0,
+                        "characterPosition": 0,
+                        "characterCount": len(text.encode("utf-16-le")) // 2,
+                    }
+                ],
+                "progressTruncated": False,
+            }
+        )
 
-    def fake_normalize(_source: Path, destination: Path) -> None:
+    def fake_normalize(_source: Path, destination: Path) -> float:
         shutil.copyfile(short_wav, destination)
+        return 0.0
 
     monkeypatch.setattr("techshort.audio.local_tts._run_sapi", fake_sapi)
     monkeypatch.setattr("techshort.audio.local_tts._normalize_audio", fake_normalize)
@@ -231,11 +425,24 @@ def test_synthesis_registers_hash_bound_transcript_and_unresolved_voice_rights(
     assert receipt.output_hash == sha256_file(result.audio_path)
     assert receipt.transcript_hash == sha256_file(result.transcript_path)
     assert receipt.voice_name == "Fixture Voice"
+    assert receipt.schema_version == "1.1.0"
     assert receipt.segment_pause_milliseconds == 140
+    assert len(receipt.segments) == len(script.segments)
+    assert calls == [" ".join(segment.text.split()) for segment in script.segments]
+    assert [segment.segment_id for segment in receipt.segments] == [
+        segment.segment_id for segment in script.segments
+    ]
+    assert all(segment.engine_events for segment in receipt.segments)
+    assert receipt.concatenation is not None
+    expected_frames = (
+        sum(segment.frame_count for segment in receipt.segments)
+        + (len(receipt.segments) - 1) * SEGMENT_PAUSE_FRAMES
+    )
+    assert receipt.concatenation.output_frame_count == expected_frames
     assert receipt.rights_status == "unknown"
     assert store.project().active_versions["narration_synthesis"] == receipt.synthesis_id
     assert active_synthesis_receipt(store) == (receipt, result.receipt_path)
-    assert result.duration_seconds == pytest.approx(0.25, abs=0.02)
+    assert result.duration_seconds == pytest.approx(expected_frames / 48_000, abs=1e-9)
     asset = load_model(store.path("assets/asset-manifest.json"), AssetManifest).assets[0]
     assert asset.origin == "local synthetic narration (windows-sapi)"
     assert asset.creator == "Windows System.Speech voice: Fixture Voice"
@@ -243,6 +450,11 @@ def test_synthesis_registers_hash_bound_transcript_and_unresolved_voice_rights(
     assert not asset.embedding_allowed
     assert asset.review_status == "pending"
     assert store.project().approvals.rights == "stale"
+
+    segment_path = store.path(receipt.segments[0].output_path)
+    segment_path.write_bytes(b"tampered")
+    with pytest.raises(ValueError, match="segment audio is missing or changed"):
+        active_synthesis_receipt(store)
 
 
 def test_synthesis_rejects_uninstalled_voice_before_writing_audio(

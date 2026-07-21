@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import platform
 import re
 import shutil
 import subprocess
 import tempfile
+import wave
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from techshort.audio.providers import (
+    NarrationConcatenationReceipt,
+    NarrationEngineEvent,
+    NarrationSegmentReceipt,
     NarrationSynthesisReceipt,
     NarrationVoice,
     SynthesizedNarration,
@@ -36,7 +42,38 @@ SAPI_PROVIDER_ID = "windows-sapi"
 SAPI_TIMEOUT_SECONDS = 120
 NORMALIZATION_TIMEOUT_SECONDS = 120
 MAX_SYNTHESIS_TEXT_BYTES = 128 * 1024
+MAX_ENGINE_EVENTS = 4096
+PCM_SAMPLE_RATE = 48_000
+PCM_CHANNELS = 1
+PCM_SAMPLE_WIDTH = 2
+SEGMENT_PAUSE_MILLISECONDS = 140
+SEGMENT_PAUSE_FRAMES = 6_720
 SILENCE_EVENT = re.compile(r"silence_(start|end):\s*(-?\d+(?:\.\d+)?)")
+
+
+@dataclass(frozen=True)
+class _ApprovedNarrationSegment:
+    segment_id: str
+    order: int
+    text: str
+    approval_hash: str
+
+
+@dataclass(frozen=True)
+class _RawEngineEvent:
+    spoken_text: str
+    audio_position_seconds: float
+    raw_character_position: int
+    raw_character_count: int
+
+
+@dataclass(frozen=True)
+class _PcmInfo:
+    frame_count: int
+
+    @property
+    def duration_seconds(self) -> float:
+        return self.frame_count / PCM_SAMPLE_RATE
 
 
 class LocalNarrationUnavailable(RuntimeError):
@@ -158,7 +195,9 @@ def local_narration_readiness() -> tuple[bool, str]:
     )
 
 
-def _approved_script_text(store: ProjectStore) -> str:
+def _approved_script_segments(
+    store: ProjectStore,
+) -> tuple[ScriptManifest, list[_ApprovedNarrationSegment]]:
     script_path = store.path("script/script.json")
     if not script_path.is_file():
         raise ValueError("generate and approve a script before synthesizing narration")
@@ -181,18 +220,38 @@ def _approved_script_text(store: ProjectStore) -> str:
         raise ValueError(
             "every active script segment must have a current approval before synthesis"
         )
-    # Each approved segment becomes one plain-text line. The trusted helper maps
-    # line boundaries to a fixed pause through PromptBuilder; project text never
-    # becomes SSML or code.
-    text = "\n".join(" ".join(segment.text.split()) for segment in script.segments).strip()
+
+    approved: list[_ApprovedNarrationSegment] = []
+    for order, segment in enumerate(script.segments):
+        text = " ".join(segment.text.split())
+        if not text:
+            raise ValueError(f"approved script segment {segment.segment_id} has no narration text")
+        if "\x00" in text:
+            raise ValueError("approved narration may not contain NUL bytes")
+        approval_hash = segment.approval_hash
+        if approval_hash is None:  # Defensive narrowing after the approval check above.
+            raise ValueError(f"approved script segment {segment.segment_id} has no approval hash")
+        approved.append(
+            _ApprovedNarrationSegment(
+                segment_id=segment.segment_id,
+                order=order,
+                text=text,
+                approval_hash=approval_hash,
+            )
+        )
+
+    text = "\n".join(segment.text for segment in approved)
     encoded = text.encode("utf-8")
     if not text:
         raise ValueError("the approved script has no narration text")
     if len(encoded) > MAX_SYNTHESIS_TEXT_BYTES:
         raise ValueError("approved narration exceeds the 128 KiB local synthesis safety limit")
-    if "\x00" in text:
-        raise ValueError("approved narration may not contain NUL bytes")
-    return text
+    return script, approved
+
+
+def _approved_script_text(store: ProjectStore) -> str:
+    _, segments = _approved_script_segments(store)
+    return "\n".join(segment.text for segment in segments)
 
 
 def _write_synthesis_receipt(store: ProjectStore, receipt: NarrationSynthesisReceipt) -> Path:
@@ -212,6 +271,129 @@ def _write_synthesis_receipt(store: ProjectStore, receipt: NarrationSynthesisRec
             raise ValueError("synthesis receipt archive collision")
     atomic_write_model(destination, receipt)
     return destination
+
+
+def _utf16_slice(text: str, position: int, count: int) -> str:
+    """Resolve System.Speech UTF-16 character offsets without guessing code points."""
+
+    encoded = text.encode("utf-16-le")
+    start = position * 2
+    end = (position + count) * 2
+    if position < 0 or count <= 0 or end > len(encoded):
+        raise ValueError("speech progress character range is outside its approved segment")
+    try:
+        return encoded[start:end].decode("utf-16-le")
+    except UnicodeDecodeError as exc:
+        raise ValueError("speech progress character range splits a UTF-16 character") from exc
+
+
+def _verify_engine_event_text(
+    text: str,
+    events: list[NarrationEngineEvent],
+) -> None:
+    for event in events:
+        selected = _utf16_slice(
+            text,
+            event.raw_character_position,
+            event.raw_character_count,
+        )
+        if selected != event.spoken_text:
+            raise ValueError("speech progress text does not match its approved character range")
+
+
+def _parse_sapi_synthesis_output(
+    output: str,
+    *,
+    expected_voice: str,
+    expected_rate: int,
+    expected_volume: int,
+    expected_output_name: str,
+    approved_text: str,
+) -> list[_RawEngineEvent]:
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError as exc:
+        raise LocalNarrationUnavailable(
+            "System.Speech returned invalid synthesis metadata"
+        ) from exc
+    expected_keys = {
+        "voice",
+        "rate",
+        "volume",
+        "output",
+        "progress",
+        "progressTruncated",
+    }
+    if not isinstance(payload, dict) or set(payload) != expected_keys:
+        raise LocalNarrationUnavailable("System.Speech returned malformed synthesis metadata")
+    if (
+        payload["voice"] != expected_voice
+        or payload["rate"] != expected_rate
+        or payload["volume"] != expected_volume
+        or payload["output"] != expected_output_name
+    ):
+        raise LocalNarrationUnavailable("System.Speech synthesis metadata changed unexpectedly")
+    if payload["progressTruncated"] is not False:
+        raise LocalNarrationUnavailable("System.Speech progress metadata exceeded its safety bound")
+    progress = payload["progress"]
+    if not isinstance(progress, list) or not 1 <= len(progress) <= MAX_ENGINE_EVENTS:
+        raise LocalNarrationUnavailable(
+            "System.Speech returned missing or excessive progress metadata"
+        )
+
+    events: list[_RawEngineEvent] = []
+    for item in progress:
+        if not isinstance(item, dict) or set(item) != {
+            "spokenText",
+            "audioPositionSeconds",
+            "characterPosition",
+            "characterCount",
+        }:
+            raise LocalNarrationUnavailable("System.Speech returned malformed progress metadata")
+        spoken_text = item["spokenText"]
+        audio_position = item["audioPositionSeconds"]
+        character_position = item["characterPosition"]
+        character_count = item["characterCount"]
+        if (
+            not isinstance(spoken_text, str)
+            or not spoken_text
+            or len(spoken_text) > 512
+            or "\x00" in spoken_text
+            or not isinstance(audio_position, (int, float))
+            or isinstance(audio_position, bool)
+            or not math.isfinite(float(audio_position))
+            or float(audio_position) < 0
+            or not isinstance(character_position, int)
+            or isinstance(character_position, bool)
+            or character_position < 0
+            or not isinstance(character_count, int)
+            or isinstance(character_count, bool)
+            or character_count <= 0
+        ):
+            raise LocalNarrationUnavailable("System.Speech returned invalid progress metadata")
+        try:
+            selected = _utf16_slice(approved_text, character_position, character_count)
+        except ValueError as exc:
+            raise LocalNarrationUnavailable(str(exc)) from exc
+        if selected != spoken_text:
+            raise LocalNarrationUnavailable(
+                "System.Speech progress text does not match the approved segment"
+            )
+        events.append(
+            _RawEngineEvent(
+                spoken_text=spoken_text,
+                audio_position_seconds=float(audio_position),
+                raw_character_position=character_position,
+                raw_character_count=character_count,
+            )
+        )
+    if [event.audio_position_seconds for event in events] != sorted(
+        event.audio_position_seconds for event in events
+    ) or [event.raw_character_position for event in events] != sorted(
+        event.raw_character_position for event in events
+    ):
+        raise LocalNarrationUnavailable("System.Speech progress metadata is out of order")
+    return events
 
 
 def active_synthesis_receipt(
@@ -243,13 +425,9 @@ def active_synthesis_receipt(
         raise ValueError("synthesis receipt does not match the active narration transcript")
 
     script_path = store.path("script/script.json")
-    script = load_model(script_path, ScriptManifest)
-    text = _approved_script_text(store)
-    segment_hashes = {
-        segment.segment_id: segment.approval_hash
-        for segment in script.segments
-        if segment.approval_hash is not None
-    }
+    script, approved_segments = _approved_script_segments(store)
+    text = "\n".join(segment.text for segment in approved_segments)
+    segment_hashes = {segment.segment_id: segment.approval_hash for segment in approved_segments}
     if (
         script.version_id != receipt.script_version_id
         or sha256_file(script_path) != receipt.script_hash
@@ -260,6 +438,8 @@ def active_synthesis_receipt(
     duration = probe_duration(narration)
     if duration is None or abs(duration - receipt.output_duration_seconds) > 0.05:
         raise ValueError("synthesis receipt does not match the active narration duration")
+    if receipt.schema_version == "1.1.0":
+        _verify_segmented_synthesis(store, narration, receipt, approved_segments)
     return receipt, path
 
 
@@ -318,7 +498,135 @@ def _detect_silence(ffmpeg: str, source: Path) -> str:
     return result.stderr if result.returncode == 0 else ""
 
 
-def _normalize_audio(source: Path, destination: Path) -> None:
+def _pcm_info(path: Path) -> _PcmInfo:
+    try:
+        with wave.open(str(path), "rb") as audio:
+            if (
+                audio.getnchannels() != PCM_CHANNELS
+                or audio.getsampwidth() != PCM_SAMPLE_WIDTH
+                or audio.getframerate() != PCM_SAMPLE_RATE
+                or audio.getcomptype() != "NONE"
+            ):
+                raise ValueError("narration segment must be 48 kHz mono 16-bit PCM")
+            frame_count = audio.getnframes()
+    except (EOFError, OSError, wave.Error) as exc:
+        raise ValueError("narration segment is not a readable PCM WAV") from exc
+    if frame_count <= 0:
+        raise ValueError("narration segment contains no PCM frames")
+    return _PcmInfo(frame_count=frame_count)
+
+
+def _concatenate_pcm(segment_paths: list[Path], destination: Path) -> _PcmInfo:
+    """Join canonical PCM segment bytes with an exact, deterministic zero pause."""
+
+    if not segment_paths:
+        raise ValueError("narration concatenation requires at least one segment")
+    infos = [_pcm_info(path) for path in segment_paths]
+    try:
+        with wave.open(str(destination), "wb") as output:
+            output.setnchannels(PCM_CHANNELS)
+            output.setsampwidth(PCM_SAMPLE_WIDTH)
+            output.setframerate(PCM_SAMPLE_RATE)
+            for index, (path, info) in enumerate(zip(segment_paths, infos, strict=True)):
+                with wave.open(str(path), "rb") as source:
+                    remaining = info.frame_count
+                    while remaining:
+                        frame_batch = min(remaining, 65_536)
+                        frames = source.readframes(frame_batch)
+                        if len(frames) != frame_batch * PCM_CHANNELS * PCM_SAMPLE_WIDTH:
+                            raise ValueError(
+                                "narration segment ended before its declared frame count"
+                            )
+                        output.writeframesraw(frames)
+                        remaining -= frame_batch
+                if index < len(segment_paths) - 1:
+                    output.writeframesraw(
+                        b"\x00" * SEGMENT_PAUSE_FRAMES * PCM_CHANNELS * PCM_SAMPLE_WIDTH
+                    )
+    except (EOFError, OSError, wave.Error) as exc:
+        raise ValueError("could not concatenate narration segment PCM") from exc
+    result = _pcm_info(destination)
+    expected_frames = (
+        sum(info.frame_count for info in infos) + (len(infos) - 1) * SEGMENT_PAUSE_FRAMES
+    )
+    if result.frame_count != expected_frames:
+        raise ValueError("concatenated narration frame count is not deterministic")
+    return result
+
+
+def _verify_pcm_concatenation(output_path: Path, segment_paths: list[Path]) -> None:
+    """Compare every final PCM frame with the receipted ordered inputs and pauses."""
+
+    try:
+        with wave.open(str(output_path), "rb") as output:
+            for index, path in enumerate(segment_paths):
+                info = _pcm_info(path)
+                with wave.open(str(path), "rb") as source:
+                    remaining = info.frame_count
+                    while remaining:
+                        frame_batch = min(remaining, 65_536)
+                        expected = source.readframes(frame_batch)
+                        actual = output.readframes(frame_batch)
+                        if actual != expected:
+                            raise ValueError(
+                                "active narration is not the receipted segment concatenation"
+                            )
+                        remaining -= frame_batch
+                if index < len(segment_paths) - 1:
+                    pause = output.readframes(SEGMENT_PAUSE_FRAMES)
+                    if pause != (b"\x00" * SEGMENT_PAUSE_FRAMES * PCM_CHANNELS * PCM_SAMPLE_WIDTH):
+                        raise ValueError("active narration segment pause is not exact zero PCM")
+            if output.readframes(1):
+                raise ValueError("active narration has unreceipted trailing PCM frames")
+    except (EOFError, OSError, wave.Error) as exc:
+        raise ValueError("active narration concatenation is not readable PCM") from exc
+
+
+def _verify_segmented_synthesis(
+    store: ProjectStore,
+    narration: Path,
+    receipt: NarrationSynthesisReceipt,
+    approved_segments: list[_ApprovedNarrationSegment],
+) -> None:
+    concatenation = receipt.concatenation
+    if concatenation is None or len(receipt.segments) != len(approved_segments):
+        raise ValueError("segmented synthesis receipt is incomplete")
+    segment_paths: list[Path] = []
+    for approved, segment in zip(approved_segments, receipt.segments, strict=True):
+        if (
+            segment.order != approved.order
+            or segment.segment_id != approved.segment_id
+            or segment.text_hash != sha256_bytes(approved.text.encode("utf-8"))
+            or segment.approval_hash != approved.approval_hash
+        ):
+            raise ValueError("segment receipt does not match its currently approved script segment")
+        expected_path = f"audio/narration-segments/{segment.output_hash}.wav"
+        if segment.output_path != expected_path:
+            raise ValueError("segment receipt does not use its content-addressed audio path")
+        segment_path = store.path(segment.output_path)
+        if not segment_path.is_file() or sha256_file(segment_path) != segment.output_hash:
+            raise ValueError("receipted narration segment audio is missing or changed")
+        info = _pcm_info(segment_path)
+        if (
+            info.frame_count != segment.frame_count
+            or abs(info.duration_seconds - segment.duration_seconds) > 1e-9
+        ):
+            raise ValueError("receipted narration segment PCM duration is stale")
+        _verify_engine_event_text(approved.text, segment.engine_events)
+        segment_paths.append(segment_path)
+
+    output_info = _pcm_info(narration)
+    if (
+        output_info.frame_count != concatenation.output_frame_count
+        or abs(output_info.duration_seconds - concatenation.output_duration_seconds) > 1e-9
+        or concatenation.pause_milliseconds != SEGMENT_PAUSE_MILLISECONDS
+        or concatenation.pause_frames != SEGMENT_PAUSE_FRAMES
+    ):
+        raise ValueError("active narration PCM does not match its concatenation receipt")
+    _verify_pcm_concatenation(narration, segment_paths)
+
+
+def _normalize_audio(source: Path, destination: Path) -> float:
     # Keep renderer startup out of audio package import time. The rendering
     # package imports review services, which in turn resolve active audio.
     from techshort.rendering.tools import media_tool
@@ -374,6 +682,8 @@ def _normalize_audio(source: Path, destination: Path) -> None:
             "FFmpeg rejected synthesized narration"
             + (f": {detail}" if detail else f" with exit code {result.returncode}")
         )
+    _pcm_info(destination)
+    return start
 
 
 class WindowsSapiNarrationProvider:
@@ -409,7 +719,8 @@ class WindowsSapiNarrationProvider:
         ):
             raise ValueError("local narration voice name is invalid")
 
-        text = _approved_script_text(store)
+        script, approved_segments = _approved_script_segments(store)
+        text = "\n".join(segment.text for segment in approved_segments)
         voices = self.list_voices()
         voice = (
             _default_voice(voices)
@@ -424,31 +735,87 @@ class WindowsSapiNarrationProvider:
         with tempfile.TemporaryDirectory(prefix=".local-tts-", dir=audio_directory) as temporary:
             working = Path(temporary)
             text_path = working / "approved-script.txt"
-            raw_path = working / "sapi-raw.wav"
-            normalized_path = working / "narration.wav"
+            concatenated_path = working / "narration.wav"
             text_path.write_text(text + "\n", encoding="utf-8", newline="\n")
-            _run_sapi(
-                [
-                    "-Action",
-                    "synthesize",
-                    "-InputText",
-                    str(text_path),
-                    "-OutputWav",
-                    str(raw_path),
-                    "-Voice",
-                    voice.name,
-                    "-Rate",
-                    str(rate),
-                    "-Volume",
-                    str(volume),
+            segment_receipts: list[NarrationSegmentReceipt] = []
+            normalized_paths: list[Path] = []
+            for approved in approved_segments:
+                segment_text_path = working / f"segment-{approved.order:04d}.txt"
+                raw_path = working / f"segment-{approved.order:04d}-raw.wav"
+                normalized_path = working / f"segment-{approved.order:04d}.wav"
+                segment_text_path.write_text(approved.text + "\n", encoding="utf-8", newline="\n")
+                sapi_output = _run_sapi(
+                    [
+                        "-Action",
+                        "synthesize",
+                        "-InputText",
+                        str(segment_text_path),
+                        "-OutputWav",
+                        str(raw_path),
+                        "-Voice",
+                        voice.name,
+                        "-Rate",
+                        str(rate),
+                        "-Volume",
+                        str(volume),
+                    ]
+                )
+                raw_events = _parse_sapi_synthesis_output(
+                    sapi_output,
+                    expected_voice=voice.name,
+                    expected_rate=rate,
+                    expected_volume=volume,
+                    expected_output_name=raw_path.name,
+                    approved_text=approved.text,
+                )
+                if not raw_path.is_file() or raw_path.stat().st_size == 0:
+                    raise LocalNarrationUnavailable("System.Speech did not produce a WAV file")
+                trim_start = _normalize_audio(raw_path, normalized_path)
+                info = _pcm_info(normalized_path)
+                output_hash = sha256_file(normalized_path)
+                events = [
+                    NarrationEngineEvent(
+                        spoken_text=event.spoken_text,
+                        normalized_start_seconds=round(
+                            min(
+                                info.duration_seconds,
+                                max(0.0, event.audio_position_seconds - trim_start),
+                            ),
+                            6,
+                        ),
+                        raw_character_position=event.raw_character_position,
+                        raw_character_count=event.raw_character_count,
+                    )
+                    for event in raw_events
                 ]
-            )
-            if not raw_path.is_file() or raw_path.stat().st_size == 0:
-                raise LocalNarrationUnavailable("System.Speech did not produce a WAV file")
-            _normalize_audio(raw_path, normalized_path)
+                segment_receipts.append(
+                    NarrationSegmentReceipt(
+                        segment_id=approved.segment_id,
+                        order=approved.order,
+                        text_hash=sha256_bytes(approved.text.encode("utf-8")),
+                        approval_hash=approved.approval_hash,
+                        output_path=f"audio/narration-segments/{output_hash}.wav",
+                        output_hash=output_hash,
+                        frame_count=info.frame_count,
+                        duration_seconds=info.duration_seconds,
+                        engine_events=events,
+                    )
+                )
+                normalized_paths.append(normalized_path)
+
+            concatenation_info = _concatenate_pcm(normalized_paths, concatenated_path)
+            segment_directory = store.path("audio/narration-segments")
+            segment_directory.mkdir(parents=True, exist_ok=True)
+            for segment, normalized_path in zip(segment_receipts, normalized_paths, strict=True):
+                destination = store.path(segment.output_path)
+                if destination.is_file() and sha256_file(destination) != segment.output_hash:
+                    raise ValueError("content-addressed narration segment has unexpected bytes")
+                if not destination.exists():
+                    atomic_copy_file(normalized_path, destination)
+
             imported = import_audio(
                 store,
-                normalized_path,
+                concatenated_path,
                 rights_status,
                 creator=f"Windows System.Speech voice: {voice.name}",
                 license_name=license_name,
@@ -457,15 +824,18 @@ class WindowsSapiNarrationProvider:
             )
             transcript = import_transcript(store, text_path)
 
-        duration = probe_duration(imported)
-        if duration is None:
-            raise LocalNarrationUnavailable("FFprobe could not read synthesized narration duration")
+        duration = concatenation_info.duration_seconds
+        probed_duration = probe_duration(imported)
+        if probed_duration is None or abs(probed_duration - duration) > 0.05:
+            raise LocalNarrationUnavailable(
+                "FFprobe could not verify synthesized narration duration"
+            )
         script_path = store.path("script/script.json")
-        script = load_model(script_path, ScriptManifest)
         assets = load_model(store.path("assets/asset-manifest.json"), AssetManifest)
         asset_id = store.project().active_versions["audio_asset"]
         asset = next(item for item in assets.assets if item.asset_id == asset_id)
         receipt_payload = {
+            "schema_version": "1.1.0",
             "provider": self.provider_id,
             "voice_name": voice.name,
             "voice_culture": voice.culture,
@@ -473,20 +843,23 @@ class WindowsSapiNarrationProvider:
             "voice_age": voice.age,
             "rate": rate,
             "volume": volume,
-            "segment_pause_milliseconds": 140,
+            "segment_pause_milliseconds": SEGMENT_PAUSE_MILLISECONDS,
             "script_version_id": script.version_id,
             "script_hash": sha256_file(script_path),
             "script_text_hash": sha256_bytes(text.encode("utf-8")),
             "segment_approval_hashes": {
-                segment.segment_id: segment.approval_hash
-                for segment in script.segments
-                if segment.approval_hash is not None
+                segment.segment_id: segment.approval_hash for segment in approved_segments
             },
             "audio_asset_id": asset.asset_id,
             "output_path": asset.local_path,
             "output_hash": sha256_file(imported),
             "output_duration_seconds": duration,
             "transcript_hash": sha256_file(transcript),
+            "segments": [segment.model_dump(mode="json") for segment in segment_receipts],
+            "concatenation": NarrationConcatenationReceipt(
+                output_frame_count=concatenation_info.frame_count,
+                output_duration_seconds=concatenation_info.duration_seconds,
+            ).model_dump(mode="json"),
             "rights_status": asset.rights_status,
             "license_name": license_name,
             "required_attribution": required_attribution,
