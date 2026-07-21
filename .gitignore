@@ -10,6 +10,7 @@ __pycache__/
 .streamlit/secrets.toml
 .env
 .tooling-*
+.techshort/
 projects/*/
 !projects/.gitkeep
 renderer/public/project-data.json
