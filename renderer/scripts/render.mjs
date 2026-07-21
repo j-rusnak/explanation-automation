@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 
+import { buildRemotionArgs } from "./render-command.mjs";
+
 const mode = process.argv[2];
 const outputIndex = process.argv.indexOf("--output");
 const propsIndex = process.argv.indexOf("--props");
@@ -31,28 +33,7 @@ if (!Number.isFinite(scale) || scale <= 0) {
   process.exit(2);
 }
 const remotion = resolve("node_modules/@remotion/cli/remotion-cli.js");
-const args =
-  mode === "cover"
-    ? [
-        "still",
-        "renderer/src/index.ts",
-        "TechShortCover",
-        output,
-        `--props=${props}`,
-        `--scale=${scale}`,
-        "--image-format=png",
-      ]
-    : [
-        "render",
-        "renderer/src/index.ts",
-        "TechShort",
-        output,
-        `--props=${props}`,
-        `--scale=${scale}`,
-        "--codec=h264",
-        "--pixel-format=yuv420p",
-        mode === "preview" ? "--crf=28" : "--crf=18",
-      ];
+const args = buildRemotionArgs({ mode, output, props, scale });
 const result = spawnSync(process.execPath, [remotion, ...args], {
   stdio: "inherit",
   shell: false,
