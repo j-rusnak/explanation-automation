@@ -78,9 +78,9 @@ class RecommendationApplication(StrictModel):
     previous_selection_id: str
     resulting_selection_id: str
     changed_production_default: bool
-    invalidated_gates: list[
-        Literal["storyboard", "rights", "final"]
-    ] = Field(default_factory=list, max_length=3)
+    invalidated_gates: list[Literal["storyboard", "rights", "final"]] = Field(
+        default_factory=list, max_length=3
+    )
     reviewer_identifier: str = Field(min_length=1, max_length=80)
     applied_at: datetime
     application_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -264,7 +264,9 @@ def apply_approved_cover_recommendation(
     if existing is not None:
         _, selection = _current_cover_context(experiment_store.project_store)
         if selection.selection_id != existing.resulting_selection_id:
-            raise ValueError("the applied cover recommendation is historical; current cover changed")
+            raise ValueError(
+                "the applied cover recommendation is historical; current cover changed"
+            )
         return existing
 
     manifest = experiment_store.manifest()
@@ -289,7 +291,11 @@ def apply_approved_cover_recommendation(
     if recommendation.action is RecommendationAction.COLLECT_MORE_DATA:
         raise ValueError("an inconclusive recommendation cannot change production")
     variant = next(
-        (item for item in manifest.variants if item.variant_id == recommendation.proposed_variant_id),
+        (
+            item
+            for item in manifest.variants
+            if item.variant_id == recommendation.proposed_variant_id
+        ),
         None,
     )
     if variant is None or variant.review_status is not ReviewStatus.APPROVED:

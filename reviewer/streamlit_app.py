@@ -859,9 +859,7 @@ def _grant_publication_package(
     if request_path.is_symlink() or package_manifest_path.is_symlink():
         raise ValueError("publication consent inputs cannot be symbolic links")
     request = load_model(within(store.root, request_path), OrganicPackageRequest)
-    package = load_model(
-        within(store.root, package_manifest_path), OrganicPublicationPackage
-    )
+    package = load_model(within(store.root, package_manifest_path), OrganicPublicationPackage)
     consent = record_publication_consent(
         package,
         state="granted",
@@ -2154,9 +2152,7 @@ def _load_variant_publication_packages(
     for path in sorted(root.glob("organic-package-*/package-manifest.json")):
         if path.is_symlink() or path.parent.is_symlink():
             raise ValueError("publication package cannot use symbolic links")
-        packages.append(
-            (path, load_model(within(store.root, path), OrganicPublicationPackage))
-        )
+        packages.append((path, load_model(within(store.root, path), OrganicPublicationPackage)))
     return packages
 
 

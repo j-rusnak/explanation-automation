@@ -188,9 +188,7 @@ def test_approved_cover_recommendation_uses_normal_invalidation_and_append_only_
     assert project.approvals.storyboard is ReviewStatus.STALE
     assert project.approvals.rights is ReviewStatus.STALE
     assert project.approvals.final is ReviewStatus.STALE
-    log = load_model(
-        experiment_store.root / "applications.json", RecommendationApplicationLog
-    )
+    log = load_model(experiment_store.root / "applications.json", RecommendationApplicationLog)
     assert log.applications == [receipt]
     assert (
         apply_approved_cover_recommendation(

@@ -331,9 +331,7 @@ def test_organic_experiment_step_builds_pending_and_explicit_consent_packages(
     assert app.selectbox(key="organic-experiment-selector").value == manifest.experiment_id
     assert app.button(key=f"experiment-approve-{manifest.experiment_id}").disabled
     assert app.selectbox(key=f"publication-variant-{manifest.experiment_id}")
-    assert app.download_button(
-        key=f"experiment-template-download-{manifest.experiment_id}"
-    )
+    assert app.download_button(key=f"experiment-template-download-{manifest.experiment_id}")
     warnings = " ".join(item.value for item in app.warning)
     assert "does not log into an account" in warnings
     assert "claim that publication occurred" in warnings

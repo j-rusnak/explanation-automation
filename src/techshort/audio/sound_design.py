@@ -66,9 +66,7 @@ class SoundDesignReceipt(StrictModel):
 
 def _receipt_id(payload: dict[str, object]) -> str:
     stable = {
-        key: value
-        for key, value in payload.items()
-        if key not in {"sound_design_id", "created_at"}
+        key: value for key, value in payload.items() if key not in {"sound_design_id", "created_at"}
     }
     return f"sound-design-{stable_hash(stable)[:16]}"
 
@@ -222,10 +220,7 @@ def generate_sound_design(
     previous_receipt = (
         load_model(receipt_path, SoundDesignReceipt) if receipt_path.is_file() else None
     )
-    if (
-        previous_receipt is not None
-        and previous_receipt.sound_design_id == receipt.sound_design_id
-    ):
+    if previous_receipt is not None and previous_receipt.sound_design_id == receipt.sound_design_id:
         receipt = previous_receipt
     if previous_receipt is not None and previous_receipt != receipt:
         _archive_receipt(store, previous_receipt)
