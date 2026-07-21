@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from techshort.audio.providers import NarrationSynthesisReceipt
 from techshort.domain.creative import (
     BeatPlan,
     EditorialCritique,
@@ -54,6 +55,7 @@ MODELS = (
     VisualCritique,
     CreativeQualityInput,
     CreativeQualityResult,
+    NarrationSynthesisReceipt,
     AssetManifest,
     ReviewLog,
     RenderManifest,

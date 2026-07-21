@@ -1,0 +1,171 @@
+{
+  "additionalProperties": false,
+  "description": "Strict provenance record for one registered synthetic narration.",
+  "properties": {
+    "audio_asset_id": {
+      "title": "Audio Asset Id",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "license_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "License Name"
+    },
+    "output_duration_seconds": {
+      "exclusiveMinimum": 0,
+      "title": "Output Duration Seconds",
+      "type": "number"
+    },
+    "output_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Output Hash",
+      "type": "string"
+    },
+    "output_path": {
+      "title": "Output Path",
+      "type": "string"
+    },
+    "provider": {
+      "const": "windows-sapi",
+      "title": "Provider",
+      "type": "string"
+    },
+    "rate": {
+      "maximum": 10,
+      "minimum": -10,
+      "title": "Rate",
+      "type": "integer"
+    },
+    "required_attribution": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Required Attribution"
+    },
+    "rights_status": {
+      "enum": [
+        "original",
+        "user-owned",
+        "permissively-licensed",
+        "citation-only",
+        "unknown",
+        "restricted"
+      ],
+      "title": "Rights Status",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "script_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Script Hash",
+      "type": "string"
+    },
+    "script_text_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Script Text Hash",
+      "type": "string"
+    },
+    "script_version_id": {
+      "title": "Script Version Id",
+      "type": "string"
+    },
+    "segment_approval_hashes": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Segment Approval Hashes",
+      "type": "object"
+    },
+    "segment_pause_milliseconds": {
+      "const": 140,
+      "default": 140,
+      "title": "Segment Pause Milliseconds",
+      "type": "integer"
+    },
+    "synthesis_id": {
+      "pattern": "^synthesis-[0-9a-f]{16}$",
+      "title": "Synthesis Id",
+      "type": "string"
+    },
+    "transcript_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Transcript Hash",
+      "type": "string"
+    },
+    "voice_age": {
+      "maxLength": 40,
+      "minLength": 1,
+      "title": "Voice Age",
+      "type": "string"
+    },
+    "voice_culture": {
+      "maxLength": 40,
+      "minLength": 2,
+      "title": "Voice Culture",
+      "type": "string"
+    },
+    "voice_gender": {
+      "maxLength": 40,
+      "minLength": 1,
+      "title": "Voice Gender",
+      "type": "string"
+    },
+    "voice_name": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Voice Name",
+      "type": "string"
+    },
+    "volume": {
+      "maximum": 100,
+      "minimum": 1,
+      "title": "Volume",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "synthesis_id",
+    "provider",
+    "voice_name",
+    "voice_culture",
+    "voice_gender",
+    "voice_age",
+    "rate",
+    "volume",
+    "script_version_id",
+    "script_hash",
+    "script_text_hash",
+    "segment_approval_hashes",
+    "audio_asset_id",
+    "output_path",
+    "output_hash",
+    "output_duration_seconds",
+    "transcript_hash",
+    "rights_status"
+  ],
+  "title": "NarrationSynthesisReceipt",
+  "type": "object"
+}

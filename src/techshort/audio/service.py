@@ -117,6 +117,7 @@ def import_audio(
     license_name: str | None = None,
     source_url: str | None = None,
     required_attribution: str | None = None,
+    origin: str = "local audio import",
 ) -> Path:
     if not source.is_file() or source.suffix.lower() not in ALLOWED_AUDIO:
         raise ValueError("audio must be a regular FFmpeg-compatible audio file")
@@ -127,6 +128,8 @@ def import_audio(
             "audio rights status must be original, user-owned, permissively-licensed, "
             "citation-only, unknown, or restricted"
         )
+    if not origin.strip() or "\x00" in origin or len(origin) > 300:
+        raise ValueError("audio origin must be concise inert text")
     _probe_audio_duration(source, require_tool=True)
     digest = sha256_file(source)
     filename = sanitize_filename(source.name)
@@ -172,7 +175,7 @@ def import_audio(
         asset_type="narration",
         local_path=destination.relative_to(store.root).as_posix(),
         sha256=digest,
-        origin="local audio import",
+        origin=origin,
         creator=creator or "not recorded",
         source_url=source_url,
         license=licenses[rights_status],
@@ -214,6 +217,10 @@ def import_audio(
     if audio_changed:
         project.active_versions.pop("narration_transcript", None)
         project.dependency_hashes.pop("narration_transcript", None)
+        # Synthesis receipts are bound to exact audio bytes. Any import first
+        # deactivates the old receipt; a provider may then register a new one.
+        project.active_versions.pop("narration_synthesis", None)
+        project.dependency_hashes.pop("narration_synthesis", None)
     store.save_project(project)
     if not unchanged:
         store.invalidate_from("rights", f"narration asset {asset_id} imported or changed")
