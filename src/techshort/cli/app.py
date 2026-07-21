@@ -35,12 +35,16 @@ from techshort.domain.models import (
     SafeZoneInsets,
     ScriptManifest,
 )
-from techshort.domain.storage import ProjectStore, load_model
+from techshort.domain.storage import ProjectStore, atomic_write_model, load_model
 from techshort.experiments import (
     ExperimentStore,
+    MetricName,
+    OrganicPlatform,
     analyze_experiment,
+    apply_approved_cover_recommendation,
     approve_experiment,
     approve_recommendation,
+    create_cover_experiment,
     experiment_status,
     import_manual_observations,
     list_experiment_ids,
@@ -243,6 +247,18 @@ def doctor(
     codex = CodexCliProvider()
     browser_ready, browser_message = remotion_browser_readiness()
     codex_ready, codex_message = codex.readiness()
+    local_voice_provider = WindowsSapiNarrationProvider()
+    try:
+        local_voices = local_voice_provider.list_voices()
+    except LocalNarrationUnavailable as exc:
+        local_speech_ready = False
+        local_speech_message = str(exc)
+    else:
+        local_speech_ready = bool(local_voices)
+        local_speech_message = (
+            f"{len(local_voices)} enabled Windows System.Speech voice(s): "
+            + ", ".join(voice.name for voice in local_voices)
+        )
     configured_whisper = os.getenv("TECHSHORT_WHISPER_CLI")
     whisper = (
         shutil.which(configured_whisper)
@@ -306,6 +322,11 @@ def doctor(
             "required": False,
             "ok": transcription_ready,
             "value": transcription_message,
+        },
+        "local_speech": {
+            "required": False,
+            "ok": local_speech_ready,
+            "value": local_speech_message,
         },
     }
     overall = all(row["ok"] for row in details.values() if row["required"])
@@ -877,6 +898,46 @@ def experiment_list(
         fail(str(exc))
 
 
+@experiment_app.command("create-cover")
+def experiment_create_cover(
+    slug: str,
+    name: Annotated[str, typer.Option(help="Stable local experiment name.")],
+    hypothesis: Annotated[str, typer.Option(help="Specific expected organic outcome.")],
+    platform: Annotated[str, typer.Option(help="tiktok or instagram-reels")] = "tiktok",
+    candidate_ids: Annotated[
+        list[str] | None,
+        typer.Option("--candidate", help="Reviewed cover candidate; repeat for a subset."),
+    ] = None,
+    primary_metric: Annotated[str, typer.Option(help="Allowlisted aggregate metric.")] = (
+        "completion-rate"
+    ),
+    minimum_views: Annotated[int, typer.Option(min=100, max=10_000_000)] = 500,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Render a controlled cover experiment from one current approved export."""
+
+    try:
+        manifest = create_cover_experiment(
+            store(slug),
+            name=name,
+            hypothesis=hypothesis,
+            platform=OrganicPlatform(_publication_platform(platform)),
+            candidate_ids=candidate_ids,
+            primary_metric=MetricName(primary_metric),
+            minimum_views_per_variant=minimum_views,
+        )
+        if json_output:
+            typer.echo(manifest.model_dump_json(indent=2))
+        else:
+            console.print(
+                f"Created controlled cover experiment {manifest.experiment_id} with "
+                f"{len(manifest.variants)} immutable variant(s)."
+            )
+            console.print("Review every rendered cover, then run `experiment approve`.")
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        fail(str(exc))
+
+
 @experiment_app.command("approve")
 def experiment_approve(
     slug: str,
@@ -895,6 +956,39 @@ def experiment_approve(
                 f"Approved experiment {manifest.experiment_id} and "
                 f"{len(manifest.variants)} immutable variants as {reviewer}"
             )
+    except (OSError, ValueError) as exc:
+        fail(str(exc))
+
+
+@experiment_app.command("apply-recommendation")
+def experiment_apply_recommendation(
+    slug: str,
+    experiment_id: str,
+    recommendation_id: str,
+    reviewer: Annotated[str, typer.Option()] = "local-reviewer",
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Apply one approved cover result and invalidate downstream review gates."""
+
+    try:
+        receipt = apply_approved_cover_recommendation(
+            _experiment_store(slug, experiment_id),
+            recommendation_id,
+            reviewer,
+        )
+        if json_output:
+            typer.echo(receipt.model_dump_json(indent=2))
+        else:
+            if receipt.changed_production_default:
+                console.print(
+                    f"Applied {receipt.applied_candidate_id}; storyboard, rights, and final "
+                    "approvals are now stale and must be reviewed again."
+                )
+            else:
+                console.print(
+                    f"Kept current cover {receipt.applied_candidate_id}; no project gate changed."
+                )
+            console.print(f"Append-only application receipt: {receipt.application_id}")
     except (OSError, ValueError) as exc:
         fail(str(exc))
 
@@ -1036,6 +1130,86 @@ def publication_diagnostics(
             console.print(diagnostic.reason)
             for step in diagnostic.next_steps:
                 console.print(f"- {step}")
+    except (OSError, ValueError) as exc:
+        fail(str(exc))
+
+
+@publication_app.command("prepare-request")
+def publication_prepare_request(
+    slug: str,
+    experiment_id: str,
+    variant_id: str,
+    post_copy: Annotated[str, typer.Option(help="Reviewed post copy without hashtags.")],
+    alt_text: Annotated[str, typer.Option(help="Accessible description for the post.")],
+    title: Annotated[str | None, typer.Option()] = None,
+    hashtags: Annotated[
+        list[str] | None,
+        typer.Option("--hashtag", help="Hashtag without #; repeat up to eight times."),
+    ] = None,
+    evidence_url: Annotated[str | None, typer.Option()] = None,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Create a strict package request from one approved immutable variant."""
+
+    try:
+        target = store(slug)
+        experiment = _experiment_store(slug, experiment_id).manifest()
+        if experiment.review_status is not ReviewStatus.APPROVED:
+            raise ValueError("publication request requires an approved experiment")
+        variant = next(
+            (item for item in experiment.variants if item.variant_id == variant_id), None
+        )
+        if variant is None or variant.review_status is not ReviewStatus.APPROVED:
+            raise ValueError("publication request requires an approved experiment variant")
+        if variant.cover_path is None or variant.cover_hash is None:
+            raise ValueError("publication request requires a reviewed cover artifact")
+        media = target.path(variant.media_path)
+        cover = target.path(variant.cover_path)
+        srt = target.path(f"export/{slug}.srt")
+        vtt = target.path(f"export/{slug}.vtt")
+        if not media.is_file() or sha256_file(media) != variant.media_hash:
+            raise ValueError("publication variant media is missing or stale")
+        if not cover.is_file() or sha256_file(cover) != variant.cover_hash:
+            raise ValueError("publication variant cover is missing or stale")
+        if not srt.is_file() or not vtt.is_file():
+            raise ValueError("publication request requires current exported SRT and VTT captions")
+        request = OrganicPackageRequest(
+            experiment_id=experiment.experiment_id,
+            variant_id=variant.variant_id,
+            platform=_publication_platform(experiment.platform.value),
+            final_mp4=variant.media_path,
+            expected_media_hash=variant.media_hash,
+            cover_png=variant.cover_path,
+            expected_cover_hash=variant.cover_hash,
+            captions_srt=srt.relative_to(target.root).as_posix(),
+            captions_vtt=vtt.relative_to(target.root).as_posix(),
+            title=title or target.project().title,
+            post_copy=post_copy,
+            alt_text=alt_text,
+            hashtags=hashtags or [],
+            evidence_url=evidence_url,
+        )
+        request_path = target.path(
+            f"experiments/{experiment_id}/publication-requests/"
+            f"{variant_id}-{experiment.platform.value}.json"
+        )
+        if request_path.is_file():
+            existing = load_model(request_path, OrganicPackageRequest)
+            if existing != request:
+                raise FileExistsError(
+                    "publication request already exists with different reviewed copy"
+                )
+        else:
+            atomic_write_model(request_path, request)
+        payload = {
+            "request_path": request_path.relative_to(target.root).as_posix(),
+            "request": request.model_dump(mode="json"),
+        }
+        if json_output:
+            typer.echo(json.dumps(payload, indent=2))
+        else:
+            console.print(f"Prepared strict local publication request: {request_path}")
+            console.print("No upload occurred; build and inspect a pending package next.")
     except (OSError, ValueError) as exc:
         fail(str(exc))
 

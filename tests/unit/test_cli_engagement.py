@@ -16,6 +16,7 @@ from techshort.experiments import (
     ExperimentVariable,
     OrganicPlatform,
     VariantRole,
+    approve_experiment,
     build_variant,
     initialize_experiment,
 )
@@ -105,18 +106,106 @@ def test_engagement_commands_are_discoverable() -> None:
     experiment = runner.invoke(app, ["experiment", "--help"])
     assert experiment.exit_code == 0
     for command in (
+        "create-cover",
         "approve",
         "status",
         "import-observations",
         "analyze",
         "approve-recommendation",
+        "apply-recommendation",
     ):
         assert command in experiment.stdout
 
     publication = runner.invoke(app, ["publication", "--help"])
     assert publication.exit_code == 0
-    for command in ("diagnostics", "package", "consent-package"):
+    for command in ("diagnostics", "prepare-request", "package", "consent-package"):
         assert command in publication.stdout
+
+
+def test_cover_creation_and_application_commands_delegate_reviewed_workflow(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    root = tmp_path / "projects"
+    monkeypatch.setenv("TECHSHORT_PROJECTS_ROOT", str(root))
+    ProjectStore(root, "cover-cli").initialize("Cover CLI")
+    observed: dict[str, object] = {}
+
+    class FakeManifest:
+        experiment_id = "exp-1111111111111111"
+        variants = [object(), object(), object()]
+
+        def model_dump_json(self, *, indent: int) -> str:
+            return json.dumps({"experiment_id": self.experiment_id}, indent=indent)
+
+    class FakeReceipt:
+        application_id = "application-1111111111111111"
+        applied_candidate_id = "cover-comparison"
+        changed_production_default = True
+
+        def model_dump_json(self, *, indent: int) -> str:
+            return json.dumps({"application_id": self.application_id}, indent=indent)
+
+    def fake_create(project: ProjectStore, **options: object) -> FakeManifest:
+        observed["create_slug"] = project.slug
+        observed["create_options"] = options
+        return FakeManifest()
+
+    def fake_apply(
+        experiment_store: ExperimentStore, recommendation_id: str, reviewer: str
+    ) -> FakeReceipt:
+        observed["apply"] = (
+            experiment_store.experiment_id,
+            recommendation_id,
+            reviewer,
+        )
+        return FakeReceipt()
+
+    monkeypatch.setattr("techshort.cli.app.create_cover_experiment", fake_create)
+    monkeypatch.setattr("techshort.cli.app.apply_approved_cover_recommendation", fake_apply)
+    created = runner.invoke(
+        app,
+        [
+            "experiment",
+            "create-cover",
+            "cover-cli",
+            "--name",
+            "Reviewed covers",
+            "--hypothesis",
+            "A mechanism cover will improve completion rate.",
+            "--platform",
+            "instagram-reels",
+            "--candidate",
+            "cover-scanline",
+            "--candidate",
+            "cover-comparison",
+            "--json",
+        ],
+    )
+    assert created.exit_code == 0, created.stdout
+    create_options = observed["create_options"]
+    assert isinstance(create_options, dict)
+    assert create_options["platform"] is OrganicPlatform.INSTAGRAM_REELS
+    assert create_options["candidate_ids"] == ["cover-scanline", "cover-comparison"]
+
+    applied = runner.invoke(
+        app,
+        [
+            "experiment",
+            "apply-recommendation",
+            "cover-cli",
+            "exp-1111111111111111",
+            "rec-2222222222222222",
+            "--reviewer",
+            "human-reviewer",
+            "--json",
+        ],
+    )
+    assert applied.exit_code == 0, applied.stdout
+    assert observed["apply"] == (
+        "exp-1111111111111111",
+        "rec-2222222222222222",
+        "human-reviewer",
+    )
 
 
 def test_audio_voice_discovery_and_synthesis_are_machine_readable(
@@ -308,6 +397,87 @@ def test_publication_diagnostics_never_claim_automated_upload() -> None:
         assert not payload["automated_publication_supported"]
         assert not payload["credentials_read"]
         assert not payload["credentials_stored"]
+
+
+def test_prepare_request_derives_locked_paths_from_approved_variant(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    root = tmp_path / "projects"
+    monkeypatch.setenv("TECHSHORT_PROJECTS_ROOT", str(root))
+    project = ProjectStore(root, "request-cli")
+    project.initialize("Request CLI")
+    media = project.path("export/request-cli.mp4")
+    media.write_bytes(b"reviewed-video")
+    covers = []
+    for name in ("control", "treatment"):
+        path = project.path(f"experiments/cover-{name}.png")
+        path.write_bytes(b"\x89PNG\r\n\x1a\n" + name.encode("ascii"))
+        covers.append(path)
+    project.path("export/request-cli.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:01,000\nReviewed.\n", encoding="utf-8"
+    )
+    project.path("export/request-cli.vtt").write_text(
+        "WEBVTT\n\n00:00.000 --> 00:01.000\nReviewed.\n", encoding="utf-8"
+    )
+    locks = {
+        "locked_factual_hash": "1" * 64,
+        "evidence_hash": "2" * 64,
+        "claims_hash": "3" * 64,
+        "limitation_hash": "4" * 64,
+        "rights_hash": "5" * 64,
+    }
+    variants = [
+        build_variant(
+            label=f"{role.value.title()} cover",
+            role=role,
+            variable=ExperimentVariable.COVER,
+            variable_value=f"cover-{role.value}",
+            media_path="export/request-cli.mp4",
+            media_hash=sha256_file(media),
+            cover_path=path.relative_to(project.root).as_posix(),
+            cover_hash=sha256_file(path),
+            **locks,
+        )
+        for role, path in zip((VariantRole.CONTROL, VariantRole.TREATMENT), covers, strict=True)
+    ]
+    manifest = initialize_experiment(
+        project,
+        name="Publication request covers",
+        hypothesis="The treatment cover will improve completion rate.",
+        platform=OrganicPlatform.TIKTOK,
+        variable=ExperimentVariable.COVER,
+        variants=variants,
+    )
+    manifest = approve_experiment(ExperimentStore(project, manifest.experiment_id), "reviewer")
+    variant = manifest.variants[0]
+
+    result = runner.invoke(
+        app,
+        [
+            "publication",
+            "prepare-request",
+            "request-cli",
+            manifest.experiment_id,
+            variant.variant_id,
+            "--post-copy",
+            "One frame can contain many capture times, with an important limitation.",
+            "--alt-text",
+            "A vertical diagram shows image rows captured at successive times.",
+            "--hashtag",
+            "CameraTech",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    request = payload["request"]
+    assert request["final_mp4"] == variant.media_path
+    assert request["cover_png"] == variant.cover_path
+    assert request["expected_media_hash"] == variant.media_hash
+    assert request["expected_cover_hash"] == variant.cover_hash
+    assert request["hashtags"] == ["CameraTech"]
+    assert project.path(payload["request_path"]).is_file()
 
 
 def test_publication_commands_build_only_local_immutable_packages(
