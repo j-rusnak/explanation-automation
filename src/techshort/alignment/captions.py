@@ -9,6 +9,9 @@ from pathlib import Path
 
 from techshort.domain.models import ScriptManifest
 
+from .comparison import normalized_words
+from .timing import NarrationTimingManifest, SegmentTiming, WordTiming, validate_timing_projection
+
 
 @dataclass(frozen=True)
 class CaptionCue:
@@ -187,20 +190,99 @@ def _cue_durations(chunks: list[str], segment_duration: float) -> list[float]:
     return [minimum * infeasible_scale for minimum in readable_minimums]
 
 
+def _timed_segment_cues(
+    *,
+    index: int,
+    text: str,
+    segment_timing: SegmentTiming,
+    words: list[WordTiming],
+) -> list[CaptionCue]:
+    """Build approved-text cues from canonical word starts when possible."""
+
+    segment_duration = segment_timing.end_seconds - segment_timing.start_seconds
+    chunks = _caption_chunks(text, segment_duration)
+    chunk_words = [normalized_words(chunk) for chunk in chunks]
+    if tuple(word for chunk in chunk_words for word in chunk) == tuple(
+        word.canonical for word in words
+    ):
+        result: list[CaptionCue] = []
+        word_cursor = 0
+        for chunk_index, (chunk, normalized_chunk) in enumerate(
+            zip(chunks, chunk_words, strict=True)
+        ):
+            chunk_start = words[word_cursor].start_seconds
+            word_cursor += len(normalized_chunk)
+            chunk_end = (
+                segment_timing.end_seconds
+                if chunk_index == len(chunks) - 1
+                else words[word_cursor].start_seconds
+            )
+            result.append(CaptionCue(index + chunk_index, chunk_start, chunk_end, chunk))
+        return result
+
+    # A very long unbroken identifier can be split inside a token to satisfy the
+    # content bound. In that rare case, retain the approved chunks and allocate
+    # them proportionally inside the exact timed segment interval.
+    durations = _cue_durations(chunks, segment_duration)
+    result = []
+    current = segment_timing.start_seconds
+    for chunk_index, (chunk, duration) in enumerate(zip(chunks, durations, strict=True)):
+        chunk_end = (
+            segment_timing.end_seconds
+            if chunk_index == len(chunks) - 1
+            else current + duration
+        )
+        result.append(CaptionCue(index + chunk_index, current, chunk_end, chunk))
+        current = chunk_end
+    return result
+
+
 def cues_from_script(
-    script: ScriptManifest, *, target_duration: float | None = None
+    script: ScriptManifest,
+    *,
+    target_duration: float | None = None,
+    timing: NarrationTimingManifest | None = None,
 ) -> list[CaptionCue]:
     """Create deterministic cue-level captions from approved script timing.
 
-    When reliable narration duration is available, ``target_duration`` scales the
-    fallback segment timing proportionally.  The same cues are used for SRT, VTT,
-    and the renderer payload so burned captions cannot drift from sidecars.
+    When a verified timing manifest is supplied, cue text still comes only from
+    the approved script while cue boundaries follow its canonical word timings.
+    Without one, ``target_duration`` preserves the legacy proportional timing.
+    The same cues are used for SRT, VTT, and the renderer payload so burned
+    captions cannot drift from sidecars.
     """
+    if timing is not None:
+        validate_timing_projection(timing, script)
+        if (
+            target_duration is not None
+            and abs(target_duration - timing.audio_duration_seconds) > 0.05
+        ):
+            raise ValueError("target caption duration differs from narration timing audio")
+        words_by_segment: dict[str, list[WordTiming]] = {
+            segment.segment_id: [] for segment in timing.segments
+        }
+        for word in timing.words:
+            words_by_segment[word.segment_id].append(word)
+        cues: list[CaptionCue] = []
+        next_index = 1
+        for script_segment, segment_timing in zip(
+            script.segments, timing.segments, strict=True
+        ):
+            segment_cues = _timed_segment_cues(
+                index=next_index,
+                text=script_segment.text,
+                segment_timing=segment_timing,
+                words=words_by_segment[script_segment.segment_id],
+            )
+            cues.extend(segment_cues)
+            next_index += len(segment_cues)
+        return cues
+
     script_duration = sum(segment.approximate_duration for segment in script.segments)
     if target_duration is not None and target_duration <= 0:
         raise ValueError("target caption duration must be positive")
     timing_scale = target_duration / script_duration if target_duration is not None else 1.0
-    cues: list[CaptionCue] = []
+    fallback_cues: list[CaptionCue] = []
     current = 0.0
     elapsed_script_duration = 0.0
     index = 1
@@ -214,14 +296,16 @@ def cues_from_script(
         segment_end = elapsed_script_duration * timing_scale
         for chunk_index, (chunk, duration) in enumerate(zip(chunks, durations, strict=True)):
             cue_end = segment_end if chunk_index == len(chunks) - 1 else current + duration
-            cues.append(CaptionCue(index=index, start=current, end=cue_end, text=chunk))
+            fallback_cues.append(
+                CaptionCue(index=index, start=current, end=cue_end, text=chunk)
+            )
             current = cue_end
             index += 1
-    if cues and target_duration is not None:
+    if fallback_cues and target_duration is not None:
         # Remove accumulated floating-point error while preserving monotonic cues.
-        last = cues[-1]
-        cues[-1] = CaptionCue(last.index, last.start, target_duration, last.text)
-    return cues
+        last = fallback_cues[-1]
+        fallback_cues[-1] = CaptionCue(last.index, last.start, target_duration, last.text)
+    return fallback_cues
 
 
 def _time(value: float, vtt: bool = False) -> str:

@@ -13,6 +13,26 @@ from techshort.alignment.comparison import (
     compare_narration,
     normalized_words,
 )
+from techshort.alignment.service import (
+    active_narration_timing,
+    build_narration_timing_manifest,
+    register_narration_timing,
+    verify_narration_timing,
+)
+from techshort.alignment.timing import (
+    EngineWordObservation,
+    NarrationTimingManifest,
+    SegmentTiming,
+    TimingAlignmentStats,
+    TimingProjection,
+    WordTiming,
+    align_engine_observations,
+    canonical_script_text,
+    canonical_script_words,
+    derive_narration_timing_id,
+    proportional_timing_projection,
+    validate_timing_projection,
+)
 
 __all__ = [
     "cues_from_script",
@@ -26,4 +46,20 @@ __all__ = [
     "normalized_words",
     "PASS_WORD_ERROR_RATE",
     "FAIL_WORD_ERROR_RATE",
+    "EngineWordObservation",
+    "WordTiming",
+    "SegmentTiming",
+    "TimingAlignmentStats",
+    "NarrationTimingManifest",
+    "TimingProjection",
+    "canonical_script_text",
+    "canonical_script_words",
+    "align_engine_observations",
+    "proportional_timing_projection",
+    "derive_narration_timing_id",
+    "validate_timing_projection",
+    "build_narration_timing_manifest",
+    "register_narration_timing",
+    "active_narration_timing",
+    "verify_narration_timing",
 ]
