@@ -11,6 +11,7 @@
 - Cover selection is part of storyboard review. A current cover, contact sheet, and representative still for every scene are required for final media QA.
 - Narration is required by default. Silent output is valid only through the explicit `silent-reviewed` mode and final human review.
 - Engagement must remain honest and evidence-linked: no bait, false urgency, deceptive withholding, unsupported certainty, or strobing. Retention heuristics never weaken provenance, limitation, rights, accessibility, or approval gates.
+- New projects use the `kinetic-pop` hybrid visual system. Keep its recurring hero, tactile evidence, and motion deterministic and semantic; preserve the legacy themes unless a migration is explicit.
 - Generated scripts require a current typed retention plan and critique. Attention gaps are at most five seconds, declared events are inert allowlisted data, and renderer event timing is narration-scaled and deterministic.
 - Local synthetic narration consumes only the current approved script. Voice-output rights default to `unknown` and must never be relaxed without reviewing the installed voice terms.
 - Organic publication is manual package preparation only. Never add account credentials, browser automation, automatic upload/posting, or claims that a package was published.

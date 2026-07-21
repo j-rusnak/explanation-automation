@@ -68,7 +68,15 @@ model files must not be committed or placed in project exports.
 
 Open `http://localhost:8501`. The reviewer has ten restart-safe steps for project, sources, claims/evidence, angles/script, storyboard/assets, narration/captions, preview, QA, export, and organic experiments. It displays source/generated content as escaped inert text; repository Streamlit configuration disables telemetry.
 
-The reviewer now exposes three deterministic art directions (`blueprint`, `signal-lab`, and `technical-editorial`), three evidence-linked cover candidates, narrative, retention, and visual critiques, the exact attention-event schedule, scene layout/motion controls, local narration and sound controls, hash-tracked representative stills, and the manual organic experiment workflow. Cover choice is part of storyboard approval: changing the theme, pacing, safe zone, scene treatment, or selected cover invalidates downstream review.
+The reviewer now exposes four deterministic art directions. New projects use the recommended
+`kinetic-pop` hybrid: high-contrast editorial typography, a recurring topic-specific hero object,
+and tactile evidence receipts. The quieter `blueprint`, `signal-lab`, and
+`technical-editorial` themes remain available for existing projects. The reviewer also exposes
+three evidence-linked cover candidates, narrative, retention, and visual critiques, the exact
+attention-event schedule, scene layout/motion controls, local narration and sound controls,
+hash-tracked representative stills, and the manual organic experiment workflow. Cover choice is
+part of storyboard approval: changing the theme, pacing, safe zone, scene treatment, or selected
+cover invalidates downstream review.
 
 ## Complete sample workflow
 

@@ -26,10 +26,15 @@ The renderer accepts fifteen allowlisted primitives: `KineticText`, `SourceRecei
 contract; project data cannot carry executable markup or code. Evidence visuals are checked
 against resolvable `EvidenceSpan` bytes rather than trusted as scene prose.
 
-Three centralized themes, six layout presets, three motion presets, and three pacing profiles
-parameterize those primitives without generating runtime code. Project configuration also carries
-one bounded, resolution-independent safe zone shared by captions, scene content, covers, and
-retention overlays. The selected evidence-linked cover is rendered by its own composition.
+Four centralized themes, six layout presets, three motion presets, and three pacing profiles
+parameterize those primitives without generating runtime code. `kinetic-pop`, the default for new
+projects, combines high-contrast editorial type, semantic chapter colors, a deterministic
+topic-specific hero object, and tactile evidence treatments derived only from validated scene and
+evidence fields. Motion communicates scan timing, comparison, emphasis, or chapter progress; it is
+not random decoration and may not strobe. The three legacy themes preserve their existing visual
+grammar. Project configuration also carries one bounded, resolution-independent safe zone shared
+by captions, scene content, covers, and retention overlays. The selected evidence-linked cover is
+rendered by its own composition.
 Preview video and cover are 360x640 with an `UNREVIEWED` watermark. Each render also produces a
 contact sheet and one hash-tracked still per scene. Final output and cover are 1080x1920 at 30 fps;
 an unwatermarked render remains impossible until every current gate and final-review hash passes.
