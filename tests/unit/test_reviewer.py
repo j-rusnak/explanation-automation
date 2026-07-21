@@ -42,6 +42,25 @@ from techshort.ingestion import ingest_source
 from techshort.publication import GRANT_CONFIRMATION, OrganicPublicationPackage
 from techshort.review import approve_claims, approve_script
 
+FIXTURE_KOKORO_VOICE = NarrationVoice(
+    provider="kokoro-local",
+    name="af_heart",
+    culture="en-US",
+    gender="Female",
+    age="Adult",
+)
+
+
+class _ReadyFixtureKokoroProvider:
+    def __init__(self, *_args: object, **_kwargs: object) -> None:
+        pass
+
+    def readiness(self) -> tuple[bool, str]:
+        return True, "fixture Kokoro cache verified"
+
+    def list_voices(self) -> list[NarrationVoice]:
+        return [FIXTURE_KOKORO_VOICE]
+
 
 @pytest.fixture(autouse=True)
 def _installed_local_voice(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -53,6 +72,10 @@ def _installed_local_voice(monkeypatch: pytest.MonkeyPatch) -> None:
         age="Adult",
     )
     monkeypatch.setattr("techshort.audio.discover_windows_voices", lambda: [voice])
+    monkeypatch.setattr(
+        "techshort.audio.KokoroLocalNarrationProvider",
+        _ReadyFixtureKokoroProvider,
+    )
 
 
 def _reviewable_project(tmp_path: Path) -> Path:
@@ -246,11 +269,14 @@ def test_narration_step_exposes_bounded_local_audio_and_rights_controls(
     app.run()
 
     assert not app.exception
-    assert app.selectbox(key="local-narration-voice").value == "Fixture Local Voice"
-    assert app.slider(key="local-narration-rate").value == 1
-    assert app.slider(key="local-narration-volume").value == 100
+    assert app.selectbox(key="narration-synthesis-provider").value == "Kokoro (recommended)"
+    assert app.selectbox(key="kokoro-narration-voice").value == "af_heart"
+    assert app.slider(key="kokoro-narration-speed").value == 1.1
+    assert app.checkbox(key="kokoro-setup-acknowledgement").disabled
+    assert app.button(key="kokoro-model-setup").disabled
     assert app.selectbox(key="local-narration-rights-status").value == "unknown"
-    assert app.button(key="local-narration-synthesize")
+    assert not app.button(key="kokoro-narration-synthesize").disabled
+    assert any(item.label == "Optional imported narration" for item in app.expander)
     assert app.selectbox(key="sound-design-preset").value == "subtle"
     assert app.button(key="sound-design-generate")
     warnings = " ".join(item.value for item in app.warning)
@@ -279,6 +305,10 @@ def test_narration_step_passes_reviewed_controls_to_local_audio_services(
 
     monkeypatch.setattr("techshort.audio.synthesize_local_narration", fake_synthesis)
     monkeypatch.setattr(
+        "techshort.alignment.register_active_synthesis_timing",
+        lambda store: calls.setdefault("timing_slug", store.slug),
+    )
+    monkeypatch.setattr(
         "techshort.audio.sound_design.generate_sound_design",
         fake_sound_design,
     )
@@ -287,6 +317,8 @@ def test_narration_step_passes_reviewed_controls_to_local_audio_services(
     app.sidebar.radio(key="review-step").set_value("6 Narration and captions")
     app.run()
 
+    app.selectbox(key="narration-synthesis-provider").set_value("Windows System.Speech (fallback)")
+    app.run()
     app.slider(key="local-narration-rate").set_value(4)
     app.slider(key="local-narration-volume").set_value(72)
     app.selectbox(key="local-narration-rights-status").set_value("permissively-licensed")
@@ -305,6 +337,7 @@ def test_narration_step_passes_reviewed_controls_to_local_audio_services(
         "license_name": "Fixture license",
         "required_attribution": "Fixture attribution",
     }
+    assert calls["timing_slug"] == "review-app"
 
     app.selectbox(key="sound-design-preset").set_value("present")
     app.run()
@@ -312,6 +345,83 @@ def test_narration_step_passes_reviewed_controls_to_local_audio_services(
     app.run()
     assert calls["sound_slug"] == "review-app"
     assert calls["sound_preset"] == "present"
+
+
+def test_narration_step_synthesizes_kokoro_and_registers_timing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    projects = _reviewable_project(tmp_path)
+    calls: dict[str, object] = {}
+
+    def fake_synthesis(store: ProjectStore, **options: object) -> object:
+        calls["synthesis_slug"] = store.slug
+        calls["synthesis_options"] = options
+        return object()
+
+    def fake_timing(store: ProjectStore) -> object:
+        calls["timing_slug"] = store.slug
+        return object()
+
+    monkeypatch.setattr("techshort.audio.synthesize_kokoro_narration", fake_synthesis)
+    monkeypatch.setattr(
+        "techshort.alignment.register_active_synthesis_timing",
+        fake_timing,
+    )
+    monkeypatch.setenv("TECHSHORT_PROJECTS_ROOT", str(projects))
+    app = AppTest.from_file("reviewer/streamlit_app.py", default_timeout=30).run()
+    app.sidebar.radio(key="review-step").set_value("6 Narration and captions")
+    app.run()
+
+    app.slider(key="kokoro-narration-speed").set_value(1.25)
+    app.selectbox(key="local-narration-rights-status").set_value("permissively-licensed")
+    app.text_input(key="local-narration-license").set_value("Fixture Kokoro license")
+    app.text_input(key="local-narration-attribution").set_value("Fixture Kokoro attribution")
+    app.run()
+    app.button(key="kokoro-narration-synthesize").click()
+    app.run()
+
+    assert calls["synthesis_slug"] == "review-app"
+    assert calls["synthesis_options"] == {
+        "voice_name": "af_heart",
+        "speed": 1.25,
+        "rights_status": "permissively-licensed",
+        "license_name": "Fixture Kokoro license",
+        "required_attribution": "Fixture Kokoro attribution",
+    }
+    assert calls["timing_slug"] == "review-app"
+
+
+def test_kokoro_setup_requires_explicit_download_acknowledgement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    projects = _reviewable_project(tmp_path)
+    calls: list[str] = []
+
+    class NotReadyFixtureKokoroProvider(_ReadyFixtureKokoroProvider):
+        def readiness(self) -> tuple[bool, str]:
+            return False, "fixture model cache is absent"
+
+    monkeypatch.setattr(
+        "techshort.audio.KokoroLocalNarrationProvider",
+        NotReadyFixtureKokoroProvider,
+    )
+    monkeypatch.setattr(
+        "techshort.audio.setup_kokoro_model",
+        lambda: calls.append("setup"),
+    )
+    monkeypatch.setenv("TECHSHORT_PROJECTS_ROOT", str(projects))
+    app = AppTest.from_file("reviewer/streamlit_app.py", default_timeout=30).run()
+    app.sidebar.radio(key="review-step").set_value("6 Narration and captions")
+    app.run()
+
+    assert app.button(key="kokoro-model-setup").disabled
+    assert app.button(key="kokoro-narration-synthesize").disabled
+    app.checkbox(key="kokoro-setup-acknowledgement").set_value(True)
+    app.run()
+    assert not app.button(key="kokoro-model-setup").disabled
+    app.button(key="kokoro-model-setup").click()
+    app.run()
+    assert calls == ["setup"]
 
 
 def test_organic_experiment_step_builds_pending_and_explicit_consent_packages(

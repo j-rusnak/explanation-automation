@@ -13,8 +13,14 @@ import streamlit as st
 from PIL import Image, ImageDraw, ImageFont
 from pydantic import BaseModel
 
-from techshort.alignment import cues_from_script, write_caption_files
+from techshort.alignment import (
+    active_narration_timing,
+    register_active_synthesis_timing,
+    resolve_caption_timing,
+    write_caption_files,
+)
 from techshort.audio import (
+    KokoroLocalNarrationProvider,
     active_audio,
     active_synthesis_receipt,
     active_transcript,
@@ -23,6 +29,8 @@ from techshort.audio import (
     import_transcript,
     probe_duration,
     set_narration_mode,
+    setup_kokoro_model,
+    synthesize_kokoro_narration,
     synthesize_local_narration,
 )
 from techshort.audio.sound_design import (
@@ -170,6 +178,10 @@ AUDIO_RIGHTS_STATUSES = (
 )
 THEMES = ("blueprint", "signal-lab", "technical-editorial")
 NARRATION_MODES = ("narrated", "silent-reviewed")
+SYNTHESIS_PROVIDERS = (
+    "Kokoro (recommended)",
+    "Windows System.Speech (fallback)",
+)
 LAYOUT_PRESETS = ("hero", "full-diagram", "split", "evidence", "numeric", "limitation")
 MOTION_PRESETS = ("calm", "precise", "energetic")
 
@@ -243,7 +255,7 @@ def _synthesize_review_narration(
 ) -> object:
     if rights_status not in AUDIO_RIGHTS_STATUSES:
         raise ValueError("unsupported narration rights status")
-    return synthesize_local_narration(
+    result = synthesize_local_narration(
         store,
         voice_name=voice_name,
         rate=rate,
@@ -252,6 +264,36 @@ def _synthesize_review_narration(
         license_name=license_name.strip() or None,
         required_attribution=required_attribution.strip() or None,
     )
+    register_active_synthesis_timing(store)
+    return result
+
+
+def _setup_review_kokoro_model(acknowledged: bool) -> object:
+    if not acknowledged:
+        raise ValueError("acknowledge the one-time Kokoro model download before setup")
+    return setup_kokoro_model()
+
+
+def _synthesize_review_kokoro_narration(
+    store: ProjectStore,
+    voice_name: str,
+    speed: float,
+    rights_status: str,
+    license_name: str,
+    required_attribution: str,
+) -> object:
+    if rights_status not in AUDIO_RIGHTS_STATUSES:
+        raise ValueError("unsupported narration rights status")
+    result = synthesize_kokoro_narration(
+        store,
+        voice_name=voice_name,
+        speed=speed,
+        rights_status=rights_status,
+        license_name=license_name.strip() or None,
+        required_attribution=required_attribution.strip() or None,
+    )
+    register_active_synthesis_timing(store)
+    return result
 
 
 def _generate_review_sound_design(store: ProjectStore, preset: str) -> SoundDesignReceipt:
@@ -630,10 +672,15 @@ def _show_creative_findings(store: ProjectStore) -> None:
         )
         narration = active_audio(store)
         narration_duration = probe_duration(narration) if narration is not None else None
+        caption_resolution = resolve_caption_timing(
+            store,
+            script,
+            target_duration=narration_duration,
+        )
         snapshot = creative_input_from_manifests(
             storyboard,
             script,
-            cues_from_script(script, target_duration=narration_duration),
+            list(caption_resolution.cues),
             cover,
             case_id=project.project_id,
             topic_kind="mechanism",
@@ -698,10 +745,14 @@ def _generate_captions(store: ProjectStore) -> tuple[Path, Path]:
     script = load_model(store.path("script/script.json"), ScriptManifest)
     narration = active_audio(store)
     narration_duration = probe_duration(narration) if narration else None
-    cues = cues_from_script(script, target_duration=narration_duration)
+    resolution = resolve_caption_timing(
+        store,
+        script,
+        target_duration=narration_duration,
+    )
     paths = (store.path("captions/captions.srt"), store.path("captions/captions.vtt"))
     old_hashes = {path.name: sha256_file(path) for path in paths if path.is_file()}
-    srt, vtt = write_caption_files(store.path("captions"), cues)
+    srt, vtt = write_caption_files(store.path("captions"), list(resolution.cues))
     new_hashes = {srt.name: sha256_file(srt), vtt.name: sha256_file(vtt)}
     project = store.project()
     project.active_versions["captions"] = stable_hash(new_hashes)
@@ -1627,57 +1678,117 @@ def _show_storyboard_and_assets(store: ProjectStore, reviewer: str) -> None:
 
 
 def _show_local_narration_tools(store: ProjectStore) -> None:
-    st.subheader("Local Windows narration")
+    st.subheader("Local synthetic narration")
     st.caption(
-        "Generate a reviewable narration from the currently approved script using an installed "
-        "Windows System.Speech voice. Text is passed as inert plain text; no cloud service or "
-        "API credential is used."
+        "Generate a reviewable voice track from the approved script without an API key. Kokoro "
+        "is the recommended local neural voice; Windows System.Speech remains available as a "
+        "lightweight fallback. Source and script text remain inert plain text."
     )
-    try:
-        voices = discover_windows_voices()
-    except (OSError, ValueError, RuntimeError) as exc:
-        ready = False
-        readiness_detail = str(exc)
-        voices = []
-    else:
-        ready = bool(voices)
-        readiness_detail = f"{len(voices)} enabled Windows System.Speech voice(s)"
-    if ready and voices:
-        st.success(f"Local speech engine ready: {readiness_detail}")
-    else:
-        st.info(f"Local speech synthesis unavailable: {readiness_detail}")
+    provider_label = st.selectbox(
+        "Synthesis provider",
+        SYNTHESIS_PROVIDERS,
+        key="narration-synthesis-provider",
+        help="Kokoro is higher quality. System.Speech requires no model download.",
+    )
 
-    voice_names = [voice.name for voice in voices]
-    selected_voice = st.selectbox(
-        "Installed Windows voice",
-        voice_names or ["No installed voice available"],
-        key="local-narration-voice",
-        disabled=not voice_names,
-    )
-    if voice_names:
-        voice = next(item for item in voices if item.name == selected_voice)
-        st.caption(f"Installed voice metadata: {voice.culture} · {voice.gender} · {voice.age}.")
-    rate_column, volume_column = st.columns(2)
-    rate = rate_column.slider(
-        "Speech rate",
-        min_value=-10,
-        max_value=10,
-        value=1,
-        step=1,
-        key="local-narration-rate",
-        help="Windows System.Speech rate; techshort rejects values outside -10 through 10.",
-    )
-    volume = volume_column.slider(
-        "Speech volume",
-        min_value=1,
-        max_value=100,
-        value=100,
-        step=1,
-        key="local-narration-volume",
-        help="Synthesis input volume; final narration is normalized locally by FFmpeg.",
-    )
+    if provider_label == SYNTHESIS_PROVIDERS[0]:
+        try:
+            kokoro_provider = KokoroLocalNarrationProvider()
+            ready, readiness_detail = kokoro_provider.readiness()
+            voices = kokoro_provider.list_voices()
+        except (OSError, ValueError, RuntimeError) as exc:
+            ready = False
+            readiness_detail = str(exc)
+            voices = []
+        if ready:
+            st.success(f"Kokoro is ready for offline synthesis: {readiness_detail}")
+        else:
+            st.info(f"Kokoro setup is required: {readiness_detail}")
+        acknowledged = st.checkbox(
+            "I understand setup performs a one-time network download of the pinned Kokoro "
+            "model into techshort's local cache.",
+            key="kokoro-setup-acknowledgement",
+            disabled=ready,
+            help=(
+                "The pinned q8 model runs on CPU after setup. Synthesis itself is offline. "
+                "Review model and voice rights separately before export."
+            ),
+        )
+        _perform(
+            "Set up pinned Kokoro model",
+            "kokoro-model-setup",
+            _setup_review_kokoro_model,
+            acknowledged,
+            disabled=ready or not acknowledged,
+        )
+        voice_names = [voice.name for voice in voices]
+        selected_voice = st.selectbox(
+            "Kokoro voice",
+            voice_names or ["No Kokoro voice metadata available"],
+            key="kokoro-narration-voice",
+            disabled=not voice_names,
+        )
+        if voice_names:
+            voice = next(item for item in voices if item.name == selected_voice)
+            st.caption(
+                f"Voice metadata: {voice.culture} | {voice.gender} | {voice.age}. "
+                "Preview every voice before rights approval."
+            )
+        speed = st.slider(
+            "Narration speed",
+            min_value=0.75,
+            max_value=1.5,
+            value=1.1,
+            step=0.05,
+            key="kokoro-narration-speed",
+            help="Bounded Kokoro speed multiplier. 1.1 is the recommended short-form default.",
+        )
+    else:
+        try:
+            voices = discover_windows_voices()
+        except (OSError, ValueError, RuntimeError) as exc:
+            ready = False
+            readiness_detail = str(exc)
+            voices = []
+        else:
+            ready = bool(voices)
+            readiness_detail = f"{len(voices)} enabled Windows System.Speech voice(s)"
+        if ready and voices:
+            st.success(f"System.Speech is ready: {readiness_detail}")
+        else:
+            st.info(f"System.Speech is unavailable: {readiness_detail}")
+        voice_names = [voice.name for voice in voices]
+        selected_voice = st.selectbox(
+            "Installed Windows voice",
+            voice_names or ["No installed voice available"],
+            key="local-narration-voice",
+            disabled=not voice_names,
+        )
+        if voice_names:
+            voice = next(item for item in voices if item.name == selected_voice)
+            st.caption(f"Installed voice metadata: {voice.culture} | {voice.gender} | {voice.age}.")
+        rate_column, volume_column = st.columns(2)
+        rate = rate_column.slider(
+            "Speech rate",
+            min_value=-10,
+            max_value=10,
+            value=1,
+            step=1,
+            key="local-narration-rate",
+            help="Windows System.Speech rate; values are limited to -10 through 10.",
+        )
+        volume = volume_column.slider(
+            "Speech volume",
+            min_value=1,
+            max_value=100,
+            value=100,
+            step=1,
+            key="local-narration-volume",
+            help="Synthesis input volume; final narration is normalized locally by FFmpeg.",
+        )
+
     rights_status = st.selectbox(
-        "Installed voice rights status",
+        "Synthetic voice rights status",
         AUDIO_RIGHTS_STATUSES,
         index=AUDIO_RIGHTS_STATUSES.index("unknown"),
         key="local-narration-rights-status",
@@ -1692,23 +1803,38 @@ def _show_local_narration_tools(store: ProjectStore) -> None:
         key="local-narration-attribution",
     )
     st.warning(
-        "A voice being installed on this computer does not establish commercial reuse rights. "
-        "Verify the voice's license or permission before changing rights from unknown. Unknown, "
-        "citation-only, and restricted narration cannot pass export rights review."
+        "A model or voice being available on this computer does not establish commercial reuse "
+        "rights for the model, selected voice, or generated output. Verify the applicable license "
+        "or permission before changing rights from unknown. Unknown, citation-only, and restricted "
+        "narration cannot pass export rights review."
     )
-    _perform(
-        "Synthesize local narration",
-        "local-narration-synthesize",
-        _synthesize_review_narration,
-        store,
-        selected_voice,
-        rate,
-        volume,
-        rights_status,
-        license_name,
-        required_attribution,
-        disabled=not (ready and voice_names),
-    )
+    if provider_label == SYNTHESIS_PROVIDERS[0]:
+        _perform(
+            "Synthesize with Kokoro",
+            "kokoro-narration-synthesize",
+            _synthesize_review_kokoro_narration,
+            store,
+            selected_voice,
+            speed,
+            rights_status,
+            license_name,
+            required_attribution,
+            disabled=not (ready and voice_names),
+        )
+    else:
+        _perform(
+            "Synthesize with System.Speech",
+            "local-narration-synthesize",
+            _synthesize_review_narration,
+            store,
+            selected_voice,
+            rate,
+            volume,
+            rights_status,
+            license_name,
+            required_attribution,
+            disabled=not (ready and voice_names),
+        )
 
     try:
         active_synthesis = active_synthesis_receipt(store)
@@ -1717,14 +1843,53 @@ def _show_local_narration_tools(store: ProjectStore) -> None:
     else:
         if active_synthesis is not None:
             receipt, _ = active_synthesis
-            st.success(
-                f"Current local synthesis: {receipt.voice_name} · rate {receipt.rate:+d} · "
-                f"volume {receipt.volume} · {receipt.output_duration_seconds:.2f} s"
-            )
+            if receipt.kokoro is not None:
+                model = receipt.kokoro
+                st.success(
+                    f"Current synthesis: Kokoro local | {receipt.voice_name} | "
+                    f"{receipt.output_duration_seconds:.2f} s"
+                )
+                st.caption(
+                    f"Model: {model.model_id}@{model.revision[:12]} | {model.dtype} | "
+                    f"{model.device} | speed {model.speed:.2f} | runtime {model.runtime_version}"
+                )
+            else:
+                st.success(
+                    f"Current synthesis: Windows System.Speech | {receipt.voice_name} | "
+                    f"rate {receipt.rate:+d} | volume {receipt.volume} | "
+                    f"{receipt.output_duration_seconds:.2f} s"
+                )
             st.caption(
-                f"Rights: {receipt.rights_status} · receipt: {receipt.synthesis_id}. "
+                f"Provider: {receipt.provider} | rights: {receipt.rights_status} | "
+                f"receipt: {receipt.synthesis_id}. "
                 "The receipt is hash-bound to the approved script, audio, and transcript."
             )
+
+    try:
+        active_timing = active_narration_timing(store)
+    except (OSError, ValueError, RuntimeError) as exc:
+        st.error(f"Narration timing is stale or invalid: {exc}")
+    else:
+        if active_timing is not None:
+            timing, _ = active_timing
+            st.success(
+                f"Active timing: {timing.quality} | {timing.alignment.coverage:.0%} matched "
+                f"coverage | source {timing.source}"
+            )
+            st.caption(
+                f"Timing manifest: {timing.timing_id} | "
+                f"{len(timing.words)} approved-script word interval(s)."
+            )
+            if timing.alignment.fallback_reason is not None:
+                st.warning(
+                    f"Timing fallback: {timing.alignment.fallback_reason} "
+                    f"({timing.alignment.proportional_word_count} proportional word interval(s))."
+                )
+            elif timing.alignment.proportional_word_count:
+                st.warning(
+                    f"Timing includes {timing.alignment.proportional_word_count} proportional "
+                    "word interval(s); inspect caption sync in the preview."
+                )
 
 
 def _show_sound_design_tools(store: ProjectStore) -> None:
@@ -1769,6 +1934,112 @@ def _show_sound_design_tools(store: ProjectStore) -> None:
     )
 
 
+def _show_optional_imported_narration(store: ProjectStore, narration: Path | None) -> None:
+    with st.expander("Optional imported narration", expanded=False):
+        st.caption(
+            "Use this path only when you already have a recording. Local Kokoro synthesis above "
+            "is the recommended default and does not require you to record narration manually."
+        )
+        uploaded = st.file_uploader(
+            "Audio file",
+            type=["wav", "mp3", "m4a", "aac", "flac", "ogg", "opus"],
+            key="narration-upload",
+        )
+        rights_status = st.selectbox(
+            "Narration rights assertion",
+            AUDIO_RIGHTS_STATUSES,
+            help="Unknown blocks export. Choose user-owned only if you own this recording.",
+            key="narration-rights-status",
+        )
+        creator = st.text_input(
+            "Narration creator",
+            help="Required with an explicit license; recommended for every recording.",
+            key="narration-creator",
+        )
+        license_name = st.text_input(
+            "Narration license (required for permissively licensed audio)",
+            key="narration-license",
+        )
+        source_url = st.text_input(
+            "Narration source URL (optional)",
+            key="narration-source-url",
+        )
+        required_attribution = st.text_input(
+            "Narration required attribution (optional)",
+            key="narration-attribution",
+        )
+        if uploaded is not None:
+            _perform(
+                "Import narration",
+                "narration-import",
+                _import_uploaded_audio,
+                store,
+                uploaded.name,
+                bytes(uploaded.getbuffer()),
+                rights_status,
+                creator,
+                license_name,
+                source_url,
+                required_attribution,
+            )
+        else:
+            st.button(
+                "Import narration",
+                key="narration-import-disabled",
+                disabled=True,
+                width="stretch",
+            )
+        transcript_upload = st.file_uploader(
+            "Import a UTF-8 narration transcript",
+            type=["txt"],
+            key="narration-transcript-upload",
+            help=(
+                "The transcript is bound to the exact active audio hash and used for QA "
+                "comparison. Local synthesis creates this automatically."
+            ),
+        )
+        if narration is not None and transcript_upload is not None:
+            _perform(
+                "Import transcript",
+                "narration-transcript-import",
+                _import_uploaded_transcript,
+                store,
+                transcript_upload.name,
+                bytes(transcript_upload.getbuffer()),
+            )
+        else:
+            st.button(
+                "Import transcript",
+                key="narration-transcript-import-disabled",
+                disabled=True,
+                width="stretch",
+            )
+
+
+def _show_caption_timing_status(store: ProjectStore, narration: Path | None) -> None:
+    script = _load_if(store, "script/script.json", ScriptManifest)
+    if script is None:
+        st.info("Caption timing becomes available after script generation and approval.")
+        return
+    narration_duration = probe_duration(narration) if narration is not None else None
+    try:
+        resolution = resolve_caption_timing(
+            store,
+            script,
+            target_duration=narration_duration,
+        )
+    except (OSError, ValueError, RuntimeError) as exc:
+        st.error(f"Caption timing is unavailable: {exc}")
+        return
+    if resolution.fallback_reason is not None:
+        st.warning(
+            f"Caption timing source: {resolution.timing_source}. "
+            f"Fallback: {resolution.fallback_reason}."
+        )
+    else:
+        st.success(f"Caption timing source: {resolution.timing_source}.")
+
+
 def _show_narration(store: ProjectStore) -> None:
     project = store.project()
     st.subheader("Narration mode")
@@ -1792,7 +2063,10 @@ def _show_narration(store: ProjectStore) -> None:
             "require review."
         )
     else:
-        st.info("Narrated mode requires imported, rights-cleared narration for final export.")
+        st.info(
+            "Narrated mode requires rights-cleared narration for final export. Generate it "
+            "locally below or import an existing recording."
+        )
     narration = None
     narration_error = None
     try:
@@ -1809,59 +2083,12 @@ def _show_narration(store: ProjectStore) -> None:
         )
         st.audio(str(narration))
     else:
-        st.info("No narration is imported. Deterministic script timing remains available.")
+        st.info(
+            "No narration is active. Generate it locally below or use the optional import path."
+        )
     _show_local_narration_tools(store)
     st.divider()
-    st.subheader("Import user-recorded narration")
-    uploaded = st.file_uploader(
-        "Audio file",
-        type=["wav", "mp3", "m4a", "aac", "flac", "ogg", "opus"],
-        key="narration-upload",
-    )
-    rights_status = st.selectbox(
-        "Narration rights assertion",
-        AUDIO_RIGHTS_STATUSES,
-        help="Unknown blocks export. Choose user-owned only if you own this recording.",
-        key="narration-rights-status",
-    )
-    creator = st.text_input(
-        "Narration creator",
-        help="Required with an explicit license; recommended for every recording.",
-        key="narration-creator",
-    )
-    license_name = st.text_input(
-        "Narration license (required for permissively licensed audio)",
-        key="narration-license",
-    )
-    source_url = st.text_input(
-        "Narration source URL (optional)",
-        key="narration-source-url",
-    )
-    required_attribution = st.text_input(
-        "Narration required attribution (optional)",
-        key="narration-attribution",
-    )
-    if uploaded is not None:
-        _perform(
-            "Import narration",
-            "narration-import",
-            _import_uploaded_audio,
-            store,
-            uploaded.name,
-            bytes(uploaded.getbuffer()),
-            rights_status,
-            creator,
-            license_name,
-            source_url,
-            required_attribution,
-        )
-    else:
-        st.button(
-            "Import narration",
-            key="narration-import-disabled",
-            disabled=True,
-            width="stretch",
-        )
+    _show_optional_imported_narration(store, narration)
     transcript = None
     transcript_error = None
     if narration:
@@ -1875,30 +2102,9 @@ def _show_narration(store: ProjectStore) -> None:
         st.success(f"Hash-bound narration transcript: {transcript[1].name}")
         with st.expander("Review narration transcript"):
             st.text(transcript[0])
-    transcript_upload = st.file_uploader(
-        "Import a UTF-8 narration transcript",
-        type=["txt"],
-        key="narration-transcript-upload",
-        help="The transcript is bound to the exact active audio hash and used for QA comparison.",
-    )
-    if narration is not None and transcript_upload is not None:
-        _perform(
-            "Import transcript",
-            "narration-transcript-import",
-            _import_uploaded_transcript,
-            store,
-            transcript_upload.name,
-            bytes(transcript_upload.getbuffer()),
-        )
-    else:
-        st.button(
-            "Import transcript",
-            key="narration-transcript-import-disabled",
-            disabled=True,
-            width="stretch",
-        )
     _show_sound_design_tools(store)
     _perform("Generate caption sidecars", "captions-generate", _generate_captions, store)
+    _show_caption_timing_status(store, narration)
     for extension in ("srt", "vtt"):
         path = store.path(f"captions/captions.{extension}")
         if path.is_file():
