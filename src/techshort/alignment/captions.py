@@ -228,9 +228,7 @@ def _timed_segment_cues(
     current = segment_timing.start_seconds
     for chunk_index, (chunk, duration) in enumerate(zip(chunks, durations, strict=True)):
         chunk_end = (
-            segment_timing.end_seconds
-            if chunk_index == len(chunks) - 1
-            else current + duration
+            segment_timing.end_seconds if chunk_index == len(chunks) - 1 else current + duration
         )
         result.append(CaptionCue(index + chunk_index, current, chunk_end, chunk))
         current = chunk_end
@@ -265,9 +263,7 @@ def cues_from_script(
             words_by_segment[word.segment_id].append(word)
         cues: list[CaptionCue] = []
         next_index = 1
-        for script_segment, segment_timing in zip(
-            script.segments, timing.segments, strict=True
-        ):
+        for script_segment, segment_timing in zip(script.segments, timing.segments, strict=True):
             segment_cues = _timed_segment_cues(
                 index=next_index,
                 text=script_segment.text,
@@ -296,9 +292,7 @@ def cues_from_script(
         segment_end = elapsed_script_duration * timing_scale
         for chunk_index, (chunk, duration) in enumerate(zip(chunks, durations, strict=True)):
             cue_end = segment_end if chunk_index == len(chunks) - 1 else current + duration
-            fallback_cues.append(
-                CaptionCue(index=index, start=current, end=cue_end, text=chunk)
-            )
+            fallback_cues.append(CaptionCue(index=index, start=current, end=cue_end, text=chunk))
             current = cue_end
             index += 1
     if fallback_cues and target_duration is not None:

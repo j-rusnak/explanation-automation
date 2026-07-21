@@ -284,9 +284,7 @@ def test_sapi_observations_require_current_synthesis_receipt(
     store.save_project(project)
     monkeypatch.setattr("techshort.alignment.service.active_audio", lambda _store: narration)
     monkeypatch.setattr("techshort.alignment.service.probe_duration", lambda _path: 60.0)
-    monkeypatch.setattr(
-        "techshort.alignment.service.active_synthesis_receipt", lambda _store: None
-    )
+    monkeypatch.setattr("techshort.alignment.service.active_synthesis_receipt", lambda _store: None)
     script = ScriptManifest.model_validate_json(
         store.path("script/script.json").read_text(encoding="utf-8")
     )
@@ -362,9 +360,7 @@ def test_active_synthesis_events_become_absolute_word_observations(
                 ],
             )
         )
-    total = sum(segment.duration_seconds for segment in segments) + 0.14 * (
-        len(segments) - 1
-    )
+    total = sum(segment.duration_seconds for segment in segments) + 0.14 * (len(segments) - 1)
     receipt = SimpleNamespace(
         synthesis_id="synthesis-1111111111111111",
         output_duration_seconds=total,
@@ -424,8 +420,7 @@ def test_eventless_synthesis_fallback_honors_exact_segment_pcm_and_pause(
     )
     resolution = resolve_caption_timing(store, script, target_duration=total)
     assert all(
-        caption["timingSource"] == "estimated-script"
-        for caption in resolution.renderer_captions
+        caption["timingSource"] == "estimated-script" for caption in resolution.renderer_captions
     )
 
 
@@ -443,9 +438,7 @@ def test_caption_resolution_emits_renderer_token_and_phrase_metadata(
     store.save_project(project)
     monkeypatch.setattr("techshort.alignment.service.active_audio", lambda _store: narration)
     monkeypatch.setattr("techshort.alignment.service.probe_duration", lambda _path: 60.0)
-    monkeypatch.setattr(
-        "techshort.alignment.service.active_synthesis_receipt", lambda _store: None
-    )
+    monkeypatch.setattr("techshort.alignment.service.active_synthesis_receipt", lambda _store: None)
     observations = [
         EngineWordObservation(
             sequence_index=index,
@@ -470,6 +463,4 @@ def test_caption_resolution_emits_renderer_token_and_phrase_metadata(
     assert " ".join(str(token["text"]) for token in tokens) == first["text"]
     assert first["segmentId"] == script.segments[0].segment_id
     assert first["timingSource"] == "aligned-local"
-    assert [token["group"] for token in tokens] == sorted(
-        token["group"] for token in tokens
-    )
+    assert [token["group"] for token in tokens] == sorted(token["group"] for token in tokens)

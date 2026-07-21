@@ -112,8 +112,7 @@ def test_preview_payload_keeps_full_layout_and_scales_all_timing(tmp_path: Path)
     assert all(cue["segmentId"] for cue in captions)
     assert all(cue["cueId"].startswith("caption-") for cue in captions)
     assert all(
-        " ".join(token["text"] for token in cue["tokens"]) == cue["text"]
-        for cue in captions
+        " ".join(token["text"] for token in cue["tokens"]) == cue["text"] for cue in captions
     )
     retention_plan = load_model(store.path("script/retention-plan.json"), RetentionPlan)
     retention = payload["retention"]

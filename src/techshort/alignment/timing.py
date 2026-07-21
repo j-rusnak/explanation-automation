@@ -76,16 +76,19 @@ def derive_word_id(
     char_start: int,
     char_end: int,
 ) -> str:
-    return "word-" + stable_hash(
-        {
-            "segment_id": segment_id,
-            "segment_word_index": segment_word_index,
-            "display_text": display_text,
-            "canonical": canonical,
-            "char_start": char_start,
-            "char_end": char_end,
-        }
-    )[:16]
+    return (
+        "word-"
+        + stable_hash(
+            {
+                "segment_id": segment_id,
+                "segment_word_index": segment_word_index,
+                "display_text": display_text,
+                "canonical": canonical,
+                "char_start": char_start,
+                "char_end": char_end,
+            }
+        )[:16]
+    )
 
 
 @dataclass(frozen=True)
@@ -354,7 +357,10 @@ class NarrationTimingManifest(BaseModel):
     def valid_segment_approval_hashes(cls, value: dict[str, str]) -> dict[str, str]:
         if not value:
             raise ValueError("timing manifest requires approved script segments")
-        if any(not _IDENTIFIER.fullmatch(key) or not _HASH.fullmatch(digest) for key, digest in value.items()):
+        if any(
+            not _IDENTIFIER.fullmatch(key) or not _HASH.fullmatch(digest)
+            for key, digest in value.items()
+        ):
             raise ValueError("timing manifest contains invalid segment approval hashes")
         return value
 
@@ -378,7 +384,10 @@ class NarrationTimingManifest(BaseModel):
         for left, right in zip(self.words, self.words[1:], strict=False):
             if left.end_seconds > right.start_seconds + _TIMING_TOLERANCE:
                 raise ValueError("timing word intervals must be ordered and nonoverlapping")
-        if any(word.end_seconds > self.audio_duration_seconds + _TIMING_TOLERANCE for word in self.words):
+        if any(
+            word.end_seconds > self.audio_duration_seconds + _TIMING_TOLERANCE
+            for word in self.words
+        ):
             raise ValueError("timing word falls outside the active audio duration")
 
         expected_segment_indexes = list(range(len(self.segments)))
@@ -413,18 +422,11 @@ class NarrationTimingManifest(BaseModel):
             flattened_ids.extend(linked_ids)
         if flattened_ids != [word.word_id for word in self.words]:
             raise ValueError("timing words must be grouped in ordered script segments")
-        for segment_left, segment_right in zip(
-            self.segments, self.segments[1:], strict=False
-        ):
-            if (
-                segment_left.end_seconds
-                > segment_right.start_seconds + _TIMING_TOLERANCE
-            ):
+        for segment_left, segment_right in zip(self.segments, self.segments[1:], strict=False):
+            if segment_left.end_seconds > segment_right.start_seconds + _TIMING_TOLERANCE:
                 raise ValueError("segment timing intervals must be ordered and nonoverlapping")
 
-        proportional_count = sum(
-            word.quality == "proportional-fallback" for word in self.words
-        )
+        proportional_count = sum(word.quality == "proportional-fallback" for word in self.words)
         interpolated_count = sum(word.quality == "interpolated" for word in self.words)
         if proportional_count != self.alignment.proportional_word_count:
             raise ValueError("alignment proportional count does not match timing words")
@@ -502,9 +504,7 @@ def _flatten_observations(
             raise ValueError("engine observation ends outside the active audio duration")
         previous_start = observation.start_seconds
         tokens = _WORD_PATTERN.findall(
-            unicodedata.normalize("NFKC", observation.text)
-            .casefold()
-            .replace("\u2019", "'")
+            unicodedata.normalize("NFKC", observation.text).casefold().replace("\u2019", "'")
         )
         if not tokens:
             continue
@@ -632,9 +632,7 @@ def _proportional_projection(
             source="proportional-fallback",
             quality="proportional-fallback",
             start_origin="proportional",
-            end_origin=(
-                "audio-boundary" if index == len(canonical) - 1 else "proportional"
-            ),
+            end_origin=("audio-boundary" if index == len(canonical) - 1 else "proportional"),
         )
         for index, item in enumerate(canonical)
     )
@@ -770,9 +768,7 @@ def proportional_segment_timing_projection(
                     quality="proportional-fallback",
                     start_origin="proportional",
                     end_origin=(
-                        "segment-boundary"
-                        if word_index == len(linked) - 1
-                        else "proportional"
+                        "segment-boundary" if word_index == len(linked) - 1 else "proportional"
                     ),
                 )
             )
@@ -881,7 +877,10 @@ def align_engine_observations(
         )
 
     baseline = _baseline_boundaries(script, canonical, audio_duration_seconds)
-    anchors = {reference_index: provider[hypothesis_index] for reference_index, hypothesis_index in matches.items()}
+    anchors = {
+        reference_index: provider[hypothesis_index]
+        for reference_index, hypothesis_index in matches.items()
+    }
     boundaries: list[float | None] = [None] * (len(canonical) + 1)
     boundary_origins: list[TimingOrigin | None] = [None] * (len(canonical) + 1)
     for reference_index, token in anchors.items():
@@ -1028,9 +1027,7 @@ def align_engine_observations(
     )
 
 
-def validate_timing_projection(
-    manifest: NarrationTimingManifest, script: ScriptManifest
-) -> None:
+def validate_timing_projection(manifest: NarrationTimingManifest, script: ScriptManifest) -> None:
     """Verify that persisted timings are a complete projection of this script."""
 
     if manifest.script_version_id != script.version_id:
