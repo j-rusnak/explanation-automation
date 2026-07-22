@@ -515,11 +515,14 @@ class TikTokDraftUploadClient:
                 timeout_seconds=UPLOAD_TIMEOUT_SECONDS,
                 max_response_bytes=MAX_UPLOAD_RESPONSE_BYTES,
             )
-        if not 200 <= response.status_code < 300:
+        # This client deliberately sends exactly one chunk. TikTok documents 201 as
+        # the completed-upload response and 206 as a successful *partial* chunk, so
+        # accepting an arbitrary 2xx response could misreport an incomplete upload.
+        if response.status_code != 201:
             raise TikTokApiError(
                 operation="video upload",
                 code=f"upload_http_{response.status_code}",
-                message="upload endpoint returned a non-success response",
+                message="upload endpoint did not confirm a complete single-chunk upload",
                 http_status=response.status_code,
             )
         return TikTokUploadReceipt(
@@ -558,7 +561,7 @@ class TikTokDraftUploadClient:
         public_ids = data.get("publicaly_available_post_id", [])
         if not isinstance(public_ids, list) or len(public_ids) > 100:
             raise TikTokTransportError("status response validation")
-        if any(_valid_remote_identifier(item) is None for item in public_ids):
+        if any(not _valid_remote_post_id(item) for item in public_ids):
             raise TikTokTransportError("status response validation")
         fail_reason_value = data.get("fail_reason")
         fail_reason: str | None = None
@@ -749,10 +752,14 @@ def _required_upload_url(value: object) -> str:
     return value
 
 
-def _valid_remote_identifier(value: object) -> str | None:
-    if not isinstance(value, str) or _PUBLISH_ID.fullmatch(value) is None:
-        return None
-    return value
+def _valid_remote_post_id(value: object) -> bool:
+    """Validate but never persist public post IDs returned by status polling."""
+
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return 0 < value <= 9_223_372_036_854_775_807
+    return isinstance(value, str) and re.fullmatch(r"[1-9][0-9]{0,18}", value) is not None
 
 
 def _json_bytes(payload: Mapping[str, object]) -> bytes:

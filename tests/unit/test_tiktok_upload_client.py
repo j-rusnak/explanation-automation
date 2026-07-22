@@ -355,6 +355,52 @@ def test_redirect_is_a_definite_non_success_and_is_not_followed(tmp_path: Path) 
     assert captured.value.code == "http_302"
 
 
+def test_single_chunk_upload_requires_created_not_partial_content(tmp_path: Path) -> None:
+    video = _mp4(tmp_path / "video.mp4")
+    upload_url = "https://open-upload.tiktokapis.com/video/?upload_token=secret"
+    client = TikTokDraftUploadClient(
+        _credentials(),
+        FakeTransport(
+            [
+                _json_response(
+                    {"publish_id": "v_pub_file~v2.123", "upload_url": upload_url}
+                ),
+                TikTokHttpResponse(status_code=206, body=b""),
+            ]
+        ),
+    )
+    initialization = client.initialize_draft(video)
+
+    with pytest.raises(TikTokApiError) as captured:
+        client.upload_video(initialization, video)
+
+    assert captured.value.http_status == 206
+    assert captured.value.code == "upload_http_206"
+
+
+def test_status_accepts_documented_int64_public_post_ids_without_exposing_them() -> None:
+    client = TikTokDraftUploadClient(
+        _credentials(),
+        FakeTransport(
+            [
+                _json_response(
+                    {
+                        "status": "PUBLISH_COMPLETE",
+                        "uploaded_bytes": 128,
+                        "publicaly_available_post_id": [7_456_123_456_789_123_456],
+                    }
+                )
+            ]
+        ),
+    )
+
+    status = client.fetch_status("v_pub_file~v2.123")
+
+    assert status.publicly_available
+    assert status.publicly_available_post_count == 1
+    assert "7456123456789123456" not in repr(status)
+
+
 def test_video_constraints_are_checked_before_transport(tmp_path: Path) -> None:
     transport = FakeTransport([])
     client = TikTokDraftUploadClient(_credentials(), transport)
