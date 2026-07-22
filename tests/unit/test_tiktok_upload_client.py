@@ -362,9 +362,7 @@ def test_single_chunk_upload_requires_created_not_partial_content(tmp_path: Path
         _credentials(),
         FakeTransport(
             [
-                _json_response(
-                    {"publish_id": "v_pub_file~v2.123", "upload_url": upload_url}
-                ),
+                _json_response({"publish_id": "v_pub_file~v2.123", "upload_url": upload_url}),
                 TikTokHttpResponse(status_code=206, body=b""),
             ]
         ),

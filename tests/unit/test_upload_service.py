@@ -309,10 +309,7 @@ def test_attempt_records_are_atomic_before_network_and_no_secret_is_persisted(
         }
         attempt = load_model(upload / "attempt.json", TikTokDraftUploadAttempt)
         assert not attempt.network_started
-        serialized = "".join(
-            path.read_text(encoding="utf-8")
-            for path in upload.rglob("*.json")
-        )
+        serialized = "".join(path.read_text(encoding="utf-8") for path in upload.rglob("*.json"))
         assert "access-token" not in serialized
         assert "upload_id=test" not in serialized
 
@@ -469,9 +466,7 @@ def test_package_tamper_and_stale_current_rights_block_before_network(
     experiment = ExperimentStore(store, intent.experiment_id).manifest()
     reviewed = store.path(experiment.variants[0].media_path)
     video.write_bytes(reviewed.read_bytes())
-    stale_contract = ExportExperimentContract(
-        **{**contract.__dict__, "rights_hash": "9" * 64}
-    )
+    stale_contract = ExportExperimentContract(**{**contract.__dict__, "rights_hash": "9" * 64})
     monkeypatch.setattr(
         "techshort.publication.upload_service._validated_export_contract",
         lambda _store: stale_contract,

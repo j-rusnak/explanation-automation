@@ -97,9 +97,7 @@ def preflight_tiktok_draft_upload(
         store, package_manifest_path
     )
     _validate_intent_binding(intent, package)
-    credential_state: Literal["pass", "failure"] = (
-        "pass" if credentials_available else "failure"
-    )
+    credential_state: Literal["pass", "failure"] = "pass" if credentials_available else "failure"
     credential_detail = (
         "TikTok credentials were reported available; no token value was read or persisted."
         if credentials_available
@@ -376,9 +374,7 @@ def _verify_package_files(
 ) -> None:
     if package_directory.is_symlink():
         raise ValueError("upload package directory cannot be a symbolic link")
-    expected_names = {item.filename for item in package.files} | {
-        _CANONICAL_PACKAGE_FILENAME
-    }
+    expected_names = {item.filename for item in package.files} | {_CANONICAL_PACKAGE_FILENAME}
     actual_names = {item.name for item in package_directory.iterdir() if item.is_file()}
     if actual_names != expected_names or any(item.is_dir() for item in package_directory.iterdir()):
         raise ValueError("upload package contains missing or unexpected artifacts")
@@ -392,9 +388,7 @@ def _verify_package_files(
         ):
             raise ValueError(f"upload package artifact is stale: {item.filename}")
     metadata = load_model(package_directory / "post-metadata.json", OrganicPostMetadata)
-    manual_consent = load_model(
-        package_directory / "consent-receipt.json", HumanPublicationConsent
-    )
+    manual_consent = load_model(package_directory / "consent-receipt.json", HumanPublicationConsent)
     if (
         metadata.metadata_id != package.metadata_id
         or metadata.metadata_hash != package.metadata_hash

@@ -40,9 +40,7 @@ _OPEN_ID_ENV = "TECHSHORT_TIKTOK_OPEN_ID"
 _HEADER_NAME = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
 _PUBLISH_ID = re.compile(r"^[A-Za-z0-9._~:-]{1,200}$")
 _STATUS = re.compile(r"^[A-Z][A-Z0-9_]{1,63}$")
-_UPLOAD_URL_IN_TEXT = re.compile(
-    r"https://open-upload\.tiktokapis\.com/[^\s\"'<>]+", re.IGNORECASE
-)
+_UPLOAD_URL_IN_TEXT = re.compile(r"https://open-upload\.tiktokapis\.com/[^\s\"'<>]+", re.IGNORECASE)
 
 TikTokPublishState = Literal[
     "PROCESSING_UPLOAD",
@@ -308,9 +306,7 @@ class HttpsTikTokTransport:
             connection.close()
 
     @classmethod
-    def _validate_url(
-        cls, url: str, *, method: Literal["POST", "PUT"]
-    ) -> SplitResult:
+    def _validate_url(cls, url: str, *, method: Literal["POST", "PUT"]) -> SplitResult:
         if not isinstance(url, str) or not url or len(url) > 4096:
             raise TikTokConfigurationError("TikTok HTTPS URL is invalid")
         if any(character in url for character in ("\r", "\n", "\x00")):
@@ -340,9 +336,7 @@ class HttpsTikTokTransport:
         return parsed
 
     @staticmethod
-    def _validate_headers(
-        headers: Mapping[str, str], *, body_length: int
-    ) -> dict[str, str]:
+    def _validate_headers(headers: Mapping[str, str], *, body_length: int) -> dict[str, str]:
         validated: dict[str, str] = {}
         lowered: set[str] = set()
         for name, value in headers.items():
@@ -488,9 +482,7 @@ class TikTokDraftUploadClient:
     ) -> TikTokUploadReceipt:
         path, video_size = _validate_video(video_path)
         if video_size != initialization.video_size:
-            raise TikTokConfigurationError(
-                "video size changed after TikTok draft initialization"
-            )
+            raise TikTokConfigurationError("video size changed after TikTok draft initialization")
         _required_publish_id(initialization.publish_id, operation="video upload")
         if initialization.upload_host != UPLOAD_HOST:
             raise TikTokConfigurationError("TikTok upload initialization host is invalid")
@@ -699,7 +691,9 @@ def _is_bounded_identifier(value: object, *, maximum: int) -> bool:
         isinstance(value, str)
         and 0 < len(value) <= maximum
         and value == value.strip()
-        and all(ord(character) >= 0x20 and character not in {"\r", "\n", "\x00"} for character in value)
+        and all(
+            ord(character) >= 0x20 and character not in {"\r", "\n", "\x00"} for character in value
+        )
     )
 
 
