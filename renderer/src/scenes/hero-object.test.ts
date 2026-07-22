@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  readoutDirectionLabel,
   rollingShutterProofProgress,
   rollingShutterRowOffset,
+  sensorRowReadoutStrength,
 } from "./hero-object";
 
 describe("rolling-shutter hero geometry", () => {
@@ -20,5 +22,19 @@ describe("rolling-shutter hero geometry", () => {
     const upper = rollingShutterRowOffset(0.25, 0.8, 1, 600);
     const lower = rollingShutterRowOffset(0.9, 0.8, 1, 600);
     expect(lower).toBeGreaterThan(upper);
+  });
+
+  it("ties row completion to the declared readout direction", () => {
+    expect(sensorRowReadoutStrength(0.1, 0.2, "top-to-bottom")).toBe(1);
+    expect(sensorRowReadoutStrength(0.9, 0.2, "top-to-bottom")).toBe(0);
+    expect(sensorRowReadoutStrength(0.9, 0.2, "bottom-to-top")).toBe(1);
+    expect(sensorRowReadoutStrength(0.1, 0.2, "bottom-to-top")).toBe(0);
+    expect(sensorRowReadoutStrength(0.5, 0.4, "left-to-right")).toBe(0.4);
+  });
+
+  it("uses concise deterministic direction labels", () => {
+    expect(readoutDirectionLabel("top-to-bottom")).toBe("TOP → BOTTOM");
+    expect(readoutDirectionLabel("bottom-to-top")).toBe("BOTTOM → TOP");
+    expect(readoutDirectionLabel("left-to-right")).toBe("LEFT → RIGHT");
   });
 });

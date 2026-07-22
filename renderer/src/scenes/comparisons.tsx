@@ -1,6 +1,7 @@
 import React from "react";
 import { useCurrentFrame, useVideoConfig } from "remotion";
 import { RollingShutterHero } from "./hero-object";
+import { KineticTag } from "./modern-graphics";
 import {
   Frame,
   Panel,
@@ -15,6 +16,10 @@ export const comparisonSideIsDistorted = (
   distorted: boolean | null | undefined,
   index: number,
 ): boolean => distorted ?? index === 1;
+
+export const comparisonCaptureMode = (
+  distorted: boolean,
+): "rolling" | "shared" => (distorted ? "rolling" : "shared");
 
 export const Comparison: React.FC<PrimitiveProps> = ({ scene, themeName }) => {
   const frame = useCurrentFrame();
@@ -39,12 +44,29 @@ export const Comparison: React.FC<PrimitiveProps> = ({ scene, themeName }) => {
         <SceneHeadline scene={scene} tokens={tokens} eyebrow="Side by side" />
         <div
           style={{
+            position: "relative",
             display: "grid",
             gridTemplateColumns: "1fr 1fr",
-            gap: 20,
+            gap: 0,
             height: 650,
+            borderTop: `3px solid ${tokens.panelBorder}`,
+            borderBottom: `3px solid ${tokens.panelBorder}`,
+            background: `linear-gradient(90deg, ${tokens.background}99 0 50%, ${tokens.panel}bb 50% 100%)`,
+            boxShadow: "0 26px 70px #0005",
           }}
         >
+          <div
+            aria-hidden="true"
+            style={{
+              position: "absolute",
+              top: 28,
+              bottom: 28,
+              left: "50%",
+              width: 3,
+              background: `linear-gradient(${tokens.accent}, ${tokens.warning})`,
+              opacity: 0.76,
+            }}
+          />
           {[left, right].map((side, index) => {
             const distorted = comparisonSideIsDistorted(
               "distorted" in side ? side.distorted : undefined,
@@ -60,19 +82,15 @@ export const Comparison: React.FC<PrimitiveProps> = ({ scene, themeName }) => {
                   alignItems: "center",
                   justifyContent: "space-between",
                   overflow: "hidden",
+                  padding: "24px 20px 20px",
                 }}
               >
-                <div
-                  style={{
-                    alignSelf: "stretch",
-                    color: distorted ? tokens.danger : tokens.accent,
-                    fontSize: 28,
-                    fontWeight: 900,
-                    textAlign: "center",
-                  }}
+                <KineticTag
+                  tokens={tokens}
+                  color={distorted ? tokens.danger : tokens.accent}
                 >
                   {side.label}
-                </div>
+                </KineticTag>
                 <RollingShutterHero
                   tokens={tokens}
                   idPrefix={`${scene.scene_id}-comparison-${index}`}
@@ -80,16 +98,26 @@ export const Comparison: React.FC<PrimitiveProps> = ({ scene, themeName }) => {
                   scanProgress={progress}
                   distortion={distorted ? 0.78 : 0}
                   showReference={distorted}
-                  width={435}
-                  height={440}
+                  captureMode={comparisonCaptureMode(distorted)}
+                  width={420}
+                  height={425}
                 />
-                <div style={{ textAlign: "center", minHeight: 86 }}>
-                  <strong style={{ fontSize: 31 }}>{side.value}</strong>
+                <div
+                  style={{
+                    textAlign: "center",
+                    minHeight: 86,
+                    maxWidth: 410,
+                  }}
+                >
+                  <strong style={{ fontSize: 34, lineHeight: 1.05 }}>
+                    {side.value}
+                  </strong>
                   {"detail" in side && side.detail ? (
                     <div
                       style={{
                         marginTop: 7,
-                        fontSize: 21,
+                        fontSize: 25,
+                        lineHeight: 1.12,
                         color: tokens.muted,
                       }}
                     >
@@ -164,7 +192,10 @@ export const LimitationCard: React.FC<PrimitiveProps> = ({
   scene,
   themeName,
 }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
   const tokens = sceneTheme(scene, themeName);
+  const reveal = progressFor(scene, frame, fps);
   const visual = scene.visual;
   const limitation =
     "kind" in visual && visual.kind === "limitation"
@@ -184,49 +215,56 @@ export const LimitationCard: React.FC<PrimitiveProps> = ({
             minHeight: 690,
             position: "relative",
             overflow: "hidden",
-            borderRadius: tokens.radius,
-            border: `6px solid ${tokens.danger}`,
-            background: `linear-gradient(145deg, ${tokens.panelBorder} 0%, ${tokens.panelBorder} 48%, ${tokens.panel} 48%, ${tokens.panel} 100%)`,
-            padding: "49px 47px",
-            boxShadow: `18px 18px 0 ${tokens.danger}`,
+            borderRadius: Math.max(12, tokens.radius - 4),
+            border: `3px solid ${tokens.panelBorder}`,
+            background: `linear-gradient(135deg, ${tokens.panel} 0%, ${tokens.panel} 62%, ${tokens.panelBorder}aa 100%)`,
+            padding: "52px 54px",
+            boxShadow: "0 28px 75px #0006",
           }}
         >
           <div
+            aria-hidden="true"
             style={{
               position: "absolute",
               top: 0,
               left: 0,
-              right: 0,
-              height: 21,
-              background: `repeating-linear-gradient(135deg, ${tokens.warning} 0 22px, ${tokens.background} 22px 44px)`,
+              bottom: 0,
+              width: 13,
+              background: tokens.danger,
+              transform: `scaleY(${reveal})`,
+              transformOrigin: "top",
             }}
           />
           <div
+            aria-hidden="true"
             style={{
-              display: "inline-block",
-              padding: "10px 16px",
-              background: tokens.warning,
-              color: tokens.background,
-              fontSize: 24,
-              fontWeight: 900,
-              letterSpacing: 3,
-              transform: "rotate(-2deg)",
+              position: "absolute",
+              width: 360,
+              height: 360,
+              right: -145,
+              top: -155,
+              borderRadius: "50%",
+              border: `64px solid ${tokens.danger}`,
+              opacity: 0.13,
             }}
-          >
-            SCOPE RESET
-          </div>
-          <div style={{ margin: "28px 0 30px" }}>
+          />
+          <KineticTag tokens={tokens} color={tokens.danger}>
+            IMPORTANT LIMITATION
+          </KineticTag>
+          <div style={{ margin: "30px 0 30px" }}>
             <SceneHeadline scene={scene} tokens={tokens} />
           </div>
           {limitation ? (
             <p
               style={{
                 maxWidth: 830,
-                fontSize: 43,
+                fontSize: 48,
                 lineHeight: 1.22,
                 color: tokens.text,
                 margin: 0,
                 fontWeight: 800,
+                opacity: 0.35 + reveal * 0.65,
+                transform: `translateY(${(1 - reveal) * 18}px)`,
               }}
             >
               {limitation}
@@ -236,11 +274,10 @@ export const LimitationCard: React.FC<PrimitiveProps> = ({
             <div
               style={{
                 marginTop: 34,
-                padding: "15px 19px",
-                borderLeft: `8px solid ${tokens.danger}`,
-                background: `${tokens.background}bb`,
-                color: tokens.warning,
-                fontSize: 25,
+                padding: "19px 0 0",
+                borderTop: `3px solid ${tokens.danger}`,
+                color: tokens.muted,
+                fontSize: 29,
                 fontWeight: 800,
               }}
             >
@@ -311,6 +348,88 @@ export const BeforeAfterOverlay: React.FC<PrimitiveProps> = ({
       : null;
   if (!visual) return null;
   const divider = 15 + visual.divider * 70 * progress;
+  if (themeName === "kinetic-pop") {
+    return (
+      <Frame scene={scene} tokens={tokens}>
+        <SceneHeadline
+          scene={scene}
+          tokens={tokens}
+          eyebrow="Reveal the difference"
+        />
+        <div
+          style={{
+            position: "relative",
+            height: 650,
+            overflow: "hidden",
+            borderTop: `3px solid ${tokens.panelBorder}`,
+            borderBottom: `3px solid ${tokens.panelBorder}`,
+            background: tokens.background,
+            boxShadow: "0 26px 70px #0005",
+          }}
+        >
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: `linear-gradient(135deg, ${tokens.panel}, ${tokens.background})`,
+            }}
+          >
+            <Shape
+              feature={visual.feature}
+              distorted
+              tokens={tokens}
+              progress={1}
+            />
+            <div style={{ position: "absolute", top: 28, right: 28 }}>
+              <KineticTag tokens={tokens} color={tokens.warning}>
+                {visual.after_label}
+              </KineticTag>
+            </div>
+          </div>
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              width: `${divider}%`,
+              overflow: "hidden",
+              background: `linear-gradient(135deg, ${tokens.background}, ${tokens.panelBorder}66)`,
+            }}
+          >
+            <div
+              style={{
+                width: 950,
+                height: "100%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Shape feature={visual.feature} tokens={tokens} />
+            </div>
+            <div style={{ position: "absolute", top: 28, left: 28 }}>
+              <KineticTag tokens={tokens} color={tokens.accent}>
+                {visual.before_label}
+              </KineticTag>
+            </div>
+          </div>
+          <div
+            style={{
+              position: "absolute",
+              left: `${divider}%`,
+              top: 0,
+              bottom: 0,
+              width: 8,
+              background: tokens.text,
+              boxShadow: `0 0 24px ${tokens.warning}`,
+            }}
+          />
+        </div>
+      </Frame>
+    );
+  }
   return (
     <Frame scene={scene} tokens={tokens}>
       <SceneHeadline

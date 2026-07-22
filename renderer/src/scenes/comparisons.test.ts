@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { comparisonSideIsDistorted } from "./comparisons";
+import {
+  comparisonCaptureMode,
+  comparisonSideIsDistorted,
+} from "./comparisons";
 
 describe("comparison side appearance", () => {
   it("honors explicit visual semantics on either side", () => {
@@ -10,5 +13,10 @@ describe("comparison side appearance", () => {
   it("keeps the legacy left-reference/right-distorted default", () => {
     expect(comparisonSideIsDistorted(undefined, 0)).toBe(false);
     expect(comparisonSideIsDistorted(null, 1)).toBe(true);
+  });
+
+  it("maps explicit distortion to an explanatory capture mode", () => {
+    expect(comparisonCaptureMode(true)).toBe("rolling");
+    expect(comparisonCaptureMode(false)).toBe("shared");
   });
 });

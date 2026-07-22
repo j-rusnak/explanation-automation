@@ -4,6 +4,7 @@ import { sceneProgressFor } from "../pacing/rhythm";
 import type { SceneData } from "../schemas/project";
 import type { ThemeTokens } from "../themes/tokens";
 import { RollingShutterHero } from "./hero-object";
+import { KineticTag, ProgressRail, SequenceRail } from "./modern-graphics";
 import {
   Frame,
   Panel,
@@ -78,7 +79,7 @@ const GraphView: React.FC<{
               x2={`${target.x * 84 + 8}%`}
               y2={`${target.y * 80 + 10}%`}
               pathLength={1}
-              stroke={tokens.warning}
+              stroke={bare ? tokens.accent : tokens.warning}
               strokeWidth={7}
               strokeLinecap="round"
               strokeDasharray={1}
@@ -100,21 +101,34 @@ const GraphView: React.FC<{
               position: "absolute",
               left: `${node.x * 84 + 8}%`,
               top: `${node.y * 80 + 10}%`,
-              transform: `translate(-50%,-50%) scale(${0.8 + 0.2 * (sequential ? nodeProgress : progress)})`,
+              transform: bare
+                ? "translate(-50%,-50%)"
+                : `translate(-50%,-50%) scale(${0.8 + 0.2 * (sequential ? nodeProgress : progress)})`,
               opacity: sequential ? 0.25 + nodeProgress * 0.75 : 1,
-              padding: "22px 29px",
-              minWidth: 135,
+              padding: bare ? "18px 23px 15px" : "22px 29px",
+              minWidth: bare ? 175 : 135,
               textAlign: "center",
-              borderRadius: Math.max(12, tokens.radius - 6),
-              border: `3px solid ${active ? tokens.accent : tokens.panelBorder}`,
-              fontSize: 28,
-              fontWeight: 700,
-              background: active ? tokens.accent : tokens.background,
-              color: active
-                ? tokens.background
-                : node.state === "muted"
-                  ? tokens.muted
-                  : tokens.text,
+              borderRadius: bare ? 10 : Math.max(12, tokens.radius - 6),
+              border: bare
+                ? "none"
+                : `3px solid ${active ? tokens.accent : tokens.panelBorder}`,
+              borderBottom: bare
+                ? `7px solid ${active ? tokens.warning : tokens.accent}`
+                : undefined,
+              fontSize: bare ? 30 : 28,
+              fontWeight: bare ? 850 : 700,
+              background: bare
+                ? `${active ? tokens.panelBorder : tokens.background}e8`
+                : active
+                  ? tokens.accent
+                  : tokens.background,
+              boxShadow: bare ? "0 18px 42px #0006" : undefined,
+              color:
+                active && !bare
+                  ? tokens.background
+                  : node.state === "muted"
+                    ? tokens.muted
+                    : tokens.text,
             }}
           >
             {node.label}
@@ -162,47 +176,28 @@ const KineticMechanismHero: React.FC<{
         scanProgress={progress}
         distortion={0.68}
         showReference
-        width={660}
-        height={535}
+        readoutLabel="ASSEMBLY TIMELINE"
+        width={690}
+        height={545}
       />
       <div
         style={{
           position: "absolute",
           left: 0,
           right: 0,
-          bottom: 0,
-          display: "flex",
-          justifyContent: "center",
-          gap: 13,
-          flexWrap: "wrap",
+          bottom: -4,
+          padding: "0 34px",
         }}
       >
-        {graph.nodes.map((node, index) => {
-          const reveal = Math.max(
-            0,
-            Math.min(1, progress * graph.nodes.length - index + 0.45),
-          );
-          const active =
-            node.state === "active" || graph.activeStep === node.id;
-          return (
-            <div
-              key={node.id}
-              style={{
-                padding: "12px 17px",
-                borderRadius: 999,
-                border: `3px solid ${active ? tokens.warning : tokens.accent}`,
-                background: active ? tokens.warning : `${tokens.background}ee`,
-                color: active ? tokens.background : tokens.text,
-                fontSize: 21,
-                fontWeight: 800,
-                opacity: 0.28 + reveal * 0.72,
-                transform: `translateY(${(1 - reveal) * 16}px)`,
-              }}
-            >
-              {node.label}
-            </div>
-          );
-        })}
+        <SequenceRail
+          items={graph.nodes.map((node) => ({
+            id: node.id,
+            label: node.label,
+            active: node.state === "active" || graph.activeStep === node.id,
+          }))}
+          progress={progress}
+          tokens={tokens}
+        />
       </div>
     </div>
   );
@@ -274,20 +269,24 @@ export const ParameterSimulation: React.FC<PrimitiveProps> = ({
           style={{
             height: 650,
             display: "grid",
-            gridTemplateColumns: "0.62fr 1.38fr",
+            gridTemplateColumns: "0.7fr 1.3fr",
             alignItems: "center",
-            gap: 20,
+            gap: 26,
           }}
         >
           <div>
             {typed ? (
               <>
+                <KineticTag tokens={tokens} color={tokens.warning}>
+                  READOUT WINDOW
+                </KineticTag>
                 <div
                   style={{
                     display: "flex",
                     alignItems: "baseline",
                     gap: 11,
                     color: tokens.warning,
+                    marginTop: 22,
                   }}
                 >
                   <span style={{ fontSize: 88, fontWeight: 900 }}>
@@ -306,6 +305,14 @@ export const ParameterSimulation: React.FC<PrimitiveProps> = ({
                 >
                   {typed.parameter_label}
                 </div>
+                <div style={{ marginTop: 30 }}>
+                  <ProgressRail
+                    progress={normalized}
+                    startLabel={`${typed.minimum} ${typed.unit}`}
+                    endLabel={`${typed.maximum} ${typed.unit}`}
+                    tokens={tokens}
+                  />
+                </div>
               </>
             ) : null}
             <div
@@ -316,7 +323,7 @@ export const ParameterSimulation: React.FC<PrimitiveProps> = ({
                 fontWeight: 800,
               }}
             >
-              {labels[0]} → {labels[1]}
+              {labels[0]} / {labels[1]}
             </div>
           </div>
           <RollingShutterHero
@@ -326,8 +333,9 @@ export const ParameterSimulation: React.FC<PrimitiveProps> = ({
             scanProgress={progress}
             distortion={normalized * 0.82}
             showReference
-            width={595}
-            height={535}
+            readoutLabel="ROW TIMING"
+            width={610}
+            height={525}
           />
         </div>
       </Frame>
@@ -431,41 +439,6 @@ export const RasterScan: React.FC<PrimitiveProps> = ({ scene, themeName }) => {
             width={745}
             height={610}
           />
-          <div
-            style={{
-              position: "absolute",
-              left: 92,
-              top: 42,
-              padding: "12px 17px",
-              borderRadius: 999,
-              background: tokens.accent,
-              color: tokens.background,
-              fontSize: 23,
-              fontWeight: 900,
-            }}
-          >
-            {visual.before_label}
-          </div>
-          <div
-            style={{
-              position: "absolute",
-              right: 92,
-              bottom: 44,
-              maxWidth: 230,
-              textAlign: "right",
-              color: tokens.warning,
-              fontSize: 25,
-              fontWeight: 900,
-              padding: "10px 13px",
-              borderRadius: 12,
-              background: `${tokens.background}e8`,
-            }}
-          >
-            {visual.after_label}
-            <div style={{ color: tokens.muted, fontSize: 20, marginTop: 7 }}>
-              {visual.scan_label}
-            </div>
-          </div>
         </div>
       </Frame>
     );
@@ -696,39 +669,10 @@ export const GridWarp: React.FC<PrimitiveProps> = ({ scene, themeName }) => {
             distortion={visual.skew}
             curvature={visual.curvature}
             showReference
+            readoutLabel="ASSEMBLED ROWS"
             width={720}
             height={590}
           />
-          <div
-            style={{
-              position: "absolute",
-              left: 88,
-              top: 52,
-              color: tokens.accent,
-              fontSize: 24,
-              fontWeight: 900,
-              padding: "9px 12px",
-              borderRadius: 12,
-              background: `${tokens.background}e8`,
-            }}
-          >
-            {visual.before_label}
-          </div>
-          <div
-            style={{
-              position: "absolute",
-              right: 88,
-              bottom: 50,
-              color: tokens.warning,
-              fontSize: 26,
-              fontWeight: 900,
-              padding: "9px 12px",
-              borderRadius: 12,
-              background: `${tokens.background}e8`,
-            }}
-          >
-            {visual.after_label}
-          </div>
         </div>
       </Frame>
     );
