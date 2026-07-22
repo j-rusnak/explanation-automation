@@ -1,0 +1,122 @@
+{
+  "$defs": {
+    "TikTokUploadPreflightCheck": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "pattern": "^[a-z][a-z0-9-]{0,63}$",
+          "title": "Code",
+          "type": "string"
+        },
+        "detail": {
+          "maxLength": 800,
+          "minLength": 1,
+          "title": "Detail",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "pass",
+            "warning",
+            "failure"
+          ],
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "state",
+        "detail"
+      ],
+      "title": "TikTokUploadPreflightCheck",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Credential-safe local checks completed before an attempt is persisted.",
+  "properties": {
+    "checked_at": {
+      "format": "date-time",
+      "title": "Checked At",
+      "type": "string"
+    },
+    "checks": {
+      "items": {
+        "$ref": "#/$defs/TikTokUploadPreflightCheck"
+      },
+      "maxItems": 16,
+      "minItems": 1,
+      "title": "Checks",
+      "type": "array"
+    },
+    "credentials_available": {
+      "title": "Credentials Available",
+      "type": "boolean"
+    },
+    "intent_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Intent Hash",
+      "type": "string"
+    },
+    "intent_id": {
+      "pattern": "^tiktok-upload-intent-[0-9a-f]{16}$",
+      "title": "Intent Id",
+      "type": "string"
+    },
+    "network_attempted": {
+      "const": false,
+      "default": false,
+      "title": "Network Attempted",
+      "type": "boolean"
+    },
+    "preflight_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Preflight Hash",
+      "type": "string"
+    },
+    "preflight_id": {
+      "pattern": "^tiktok-upload-preflight-[0-9a-f]{16}$",
+      "title": "Preflight Id",
+      "type": "string"
+    },
+    "provider": {
+      "const": "tiktok-content-posting-api",
+      "default": "tiktok-content-posting-api",
+      "title": "Provider",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "state": {
+      "enum": [
+        "ready",
+        "blocked"
+      ],
+      "title": "State",
+      "type": "string"
+    }
+  },
+  "required": [
+    "preflight_id",
+    "preflight_hash",
+    "intent_id",
+    "intent_hash",
+    "state",
+    "credentials_available",
+    "checks",
+    "checked_at"
+  ],
+  "title": "TikTokDraftUploadPreflight",
+  "type": "object"
+}

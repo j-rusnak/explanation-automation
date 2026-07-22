@@ -1,0 +1,2850 @@
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import tempfile
+import textwrap
+from collections.abc import Callable
+from pathlib import Path
+from typing import Literal, TypeVar, cast
+
+import streamlit as st
+from PIL import Image, ImageDraw, ImageFont
+from pydantic import BaseModel
+
+from techshort.alignment import (
+    active_narration_timing,
+    register_active_synthesis_timing,
+    resolve_caption_timing,
+    write_caption_files,
+)
+from techshort.audio import (
+    KokoroLocalNarrationProvider,
+    active_audio,
+    active_synthesis_receipt,
+    active_transcript,
+    discover_windows_voices,
+    import_audio,
+    import_transcript,
+    probe_duration,
+    set_narration_mode,
+    setup_kokoro_model,
+    synthesize_kokoro_narration,
+    synthesize_local_narration,
+)
+from techshort.audio.sound_design import (
+    SoundDesignReceipt,
+    active_sound_design,
+    generate_sound_design,
+)
+from techshort.configuration import PACING_PROFILES, set_pacing_profile
+from techshort.domain.creative import (
+    EditorialCritique,
+    RetentionCritique,
+    RetentionPlan,
+    VisualCritique,
+)
+from techshort.domain.hashing import sha256_file, stable_hash
+from techshort.domain.models import (
+    AngleSelection,
+    AnglesManifest,
+    AssetManifest,
+    ClaimCritiqueReport,
+    ClaimsManifest,
+    CoverCandidate,
+    CoverManifest,
+    CoverSelection,
+    EvidenceManifest,
+    QAReport,
+    RenderManifest,
+    ReviewLog,
+    ReviewStatus,
+    ScriptManifest,
+    SourceIndex,
+    StoryboardManifest,
+)
+from techshort.domain.storage import (
+    ProjectStore,
+    atomic_write_model,
+    load_model,
+    sanitize_filename,
+    within,
+)
+from techshort.experiments import (
+    ExperimentManifest,
+    ExperimentStore,
+    ExperimentVariable,
+    MetricName,
+    RecommendationAction,
+    RecommendationApplicationLog,
+    analyze_experiment,
+    apply_approved_cover_recommendation,
+    approve_experiment,
+    approve_recommendation,
+    build_metrics_template,
+    create_cover_experiment,
+    experiment_status,
+    import_manual_observations,
+    list_experiment_ids,
+)
+from techshort.experiments import (
+    OrganicPlatform as ExperimentPlatform,
+)
+from techshort.export import export_project, generate_evidence_page
+from techshort.generation import select_angle
+from techshort.generation.design import (
+    generate_fixture_covers,
+    select_cover,
+    selected_cover_payload,
+)
+from techshort.generation.editorial import (
+    build_rolling_shutter_beat_plan,
+    build_rolling_shutter_brief,
+    build_rolling_shutter_storyboard_guidance,
+    critique_editorial,
+    critique_visual,
+)
+from techshort.publication import (
+    GRANT_CONFIRMATION,
+    OrganicPackageBuildResult,
+    OrganicPackageRequest,
+    OrganicPublicationPackage,
+    build_organic_publication_package,
+    organic_package_input_hash,
+    record_publication_consent,
+)
+from techshort.qa import run_qa
+from techshort.qa.creative import (
+    CreativeCoverInput,
+    creative_input_from_manifests,
+    evaluate_creative_quality,
+)
+from techshort.rendering import render_video
+from techshort.review import (
+    approve_asset,
+    approve_claim,
+    approve_claims,
+    approve_final,
+    approve_rights,
+    approve_scene,
+    approve_script,
+    approve_script_segment,
+    approve_storyboard,
+    edit_asset,
+    edit_claim,
+    edit_scene,
+    edit_script_segment,
+    final_review_hash,
+    has_current_approval,
+    note_asset,
+    note_claim,
+    note_scene,
+    note_script_segment,
+    reject_asset,
+    reject_claim,
+    reject_scene,
+    reject_script_segment,
+)
+
+T = TypeVar("T", bound=BaseModel)
+STEPS = (
+    "1 Project",
+    "2 Sources",
+    "3 Claims and evidence",
+    "4 Script",
+    "5 Storyboard and assets",
+    "6 Narration and captions",
+    "7 Preview",
+    "8 QA",
+    "9 Export",
+    "10 Organic experiments",
+)
+RIGHTS_STATUSES = (
+    "original",
+    "user-owned",
+    "permissively-licensed",
+    "citation-only",
+    "unknown",
+    "restricted",
+)
+AUDIO_RIGHTS_STATUSES = (
+    "unknown",
+    "user-owned",
+    "original",
+    "permissively-licensed",
+    "citation-only",
+    "restricted",
+)
+THEMES = ("kinetic-pop", "blueprint", "signal-lab", "technical-editorial")
+NARRATION_MODES = ("narrated", "silent-reviewed")
+SYNTHESIS_PROVIDERS = (
+    "Kokoro (recommended)",
+    "Windows System.Speech (fallback)",
+)
+LAYOUT_PRESETS = ("hero", "full-diagram", "split", "evidence", "numeric", "limitation")
+MOTION_PRESETS = ("calm", "precise", "energetic")
+
+ArtTheme = Literal[
+    "midnight",
+    "kinetic-pop",
+    "blueprint",
+    "signal-lab",
+    "technical-editorial",
+]
+NarrationMode = Literal["narrated", "silent-reviewed"]
+SoundDesignPreset = Literal["subtle", "present"]
+
+st.set_page_config(page_title="techshort reviewer", page_icon="TS", layout="wide")
+st.title("techshort reviewer")
+st.caption(
+    "Local, evidence-linked review. Source and generated content is shown as inert text and "
+    "is never executed."
+)
+
+
+def _load_if(store: ProjectStore, relative: str, model_type: type[T]) -> T | None:
+    path = store.path(relative)
+    return load_model(path, model_type) if path.is_file() else None
+
+
+def _perform(
+    label: str,
+    key: str,
+    callback: Callable[..., object],
+    *args: object,
+    disabled: bool = False,
+) -> None:
+    if not st.button(label, key=key, disabled=disabled, width="stretch"):
+        return
+    try:
+        with st.spinner(f"{label}…"):
+            callback(*args)
+    except (
+        OSError,
+        ValueError,
+        RuntimeError,
+        subprocess.SubprocessError,
+        json.JSONDecodeError,
+    ) as exc:
+        st.error(f"{label} failed: {exc}")
+        return
+    st.success(f"Saved: {label}")
+    st.rerun()
+
+
+def _set_project_theme(store: ProjectStore, theme: str) -> None:
+    if theme not in THEMES:
+        raise ValueError(f"unsupported art direction: {theme}")
+    project = store.project()
+    if project.theme == theme:
+        return
+    project = store.invalidate_from("storyboard", f"art direction changed to {theme}")
+    project.theme = cast(ArtTheme, theme)
+    store.save_project(project)
+
+
+def _set_narration_mode(store: ProjectStore, mode: str) -> None:
+    if mode not in NARRATION_MODES:
+        raise ValueError(f"unsupported narration mode: {mode}")
+    set_narration_mode(store, cast(NarrationMode, mode))
+
+
+def _synthesize_review_narration(
+    store: ProjectStore,
+    voice_name: str,
+    rate: int,
+    volume: int,
+    rights_status: str,
+    license_name: str,
+    required_attribution: str,
+) -> object:
+    if rights_status not in AUDIO_RIGHTS_STATUSES:
+        raise ValueError("unsupported narration rights status")
+    result = synthesize_local_narration(
+        store,
+        voice_name=voice_name,
+        rate=rate,
+        volume=volume,
+        rights_status=rights_status,
+        license_name=license_name.strip() or None,
+        required_attribution=required_attribution.strip() or None,
+    )
+    register_active_synthesis_timing(store)
+    return result
+
+
+def _setup_review_kokoro_model(acknowledged: bool) -> object:
+    if not acknowledged:
+        raise ValueError("acknowledge the one-time Kokoro model download before setup")
+    return setup_kokoro_model()
+
+
+def _synthesize_review_kokoro_narration(
+    store: ProjectStore,
+    voice_name: str,
+    speed: float,
+    rights_status: str,
+    license_name: str,
+    required_attribution: str,
+) -> object:
+    if rights_status not in AUDIO_RIGHTS_STATUSES:
+        raise ValueError("unsupported narration rights status")
+    result = synthesize_kokoro_narration(
+        store,
+        voice_name=voice_name,
+        speed=speed,
+        rights_status=rights_status,
+        license_name=license_name.strip() or None,
+        required_attribution=required_attribution.strip() or None,
+    )
+    register_active_synthesis_timing(store)
+    return result
+
+
+def _generate_review_sound_design(store: ProjectStore, preset: str) -> SoundDesignReceipt:
+    if preset not in {"subtle", "present"}:
+        raise ValueError("unsupported sound-design preset")
+    return generate_sound_design(store, cast(SoundDesignPreset, preset))
+
+
+def _cover_preview(candidate: CoverCandidate) -> Image.Image:
+    """Create a safe, deterministic reviewer still from validated cover data."""
+
+    palettes = {
+        "kinetic-pop": {
+            "background": "#0B0D17",
+            "surface": "#171A2E",
+            "text": "#FFF8E7",
+            "muted": "#D4CEE3",
+            "accent": "#24E5FF",
+            "signal": "#FFD84A",
+            "impact": "#FF4F6D",
+            "secondary": "#7657FF",
+        },
+        "blueprint": {
+            "background": "#071726",
+            "surface": "#0F3046",
+            "text": "#F3FAFF",
+            "muted": "#A7C2D4",
+            "accent": "#27D3E2",
+            "signal": "#FFCA58",
+        },
+        "signal-lab": {
+            "background": "#061916",
+            "surface": "#10352D",
+            "text": "#F0FFF9",
+            "muted": "#A9D4C5",
+            "accent": "#37E6A0",
+            "signal": "#FFCF5B",
+        },
+        "technical-editorial": {
+            "background": "#F2EBDD",
+            "surface": "#FFF9EF",
+            "text": "#18242B",
+            "muted": "#5E6C70",
+            "accent": "#D74E32",
+            "signal": "#187A8C",
+        },
+    }
+    colors = palettes[candidate.palette]
+    image = Image.new("RGB", (360, 640), colors["background"])
+    draw = ImageDraw.Draw(image)
+    small = ImageFont.load_default(size=14)
+    body = ImageFont.load_default(size=18)
+    headline = ImageFont.load_default(size=31)
+
+    draw.rounded_rectangle((22, 24, 338, 356), radius=22, fill=colors["surface"])
+    draw.text((30, 38), candidate.palette.upper(), fill=colors["accent"], font=small)
+    hero = candidate.hero
+    if hero.kind == "scanline":
+        if hero.subject == "grid":
+            for index in range(7):
+                x = 45 + index * 17
+                draw.line((x, 112, x, 278), fill=colors["accent"], width=2)
+                draw.line(
+                    (194 + index * 17, 112, 194 + index * 17 + 46, 278),
+                    fill=colors.get("impact", colors["signal"]),
+                    width=2,
+                )
+            for index in range(10):
+                y = 112 + index * 18
+                shift = int(hero.distortion * (index / 9) * 46)
+                draw.line((45, y, 147, y), fill=colors["accent"], width=2)
+                draw.line(
+                    (194 + shift, y, 296 + shift, y),
+                    fill=(
+                        colors["signal"]
+                        if index % 3 == 0
+                        else colors.get("secondary", colors["accent"])
+                    ),
+                    width=3,
+                )
+            draw.text((42, 306), "MOVING GRID", fill=colors["muted"], font=small)
+            draw.text((196, 306), "SCANNED FRAME", fill=colors["muted"], font=small)
+        else:
+            draw.line((102, 96, 102, 310), fill=colors["muted"], width=5)
+            for index in range(15):
+                y = 94 + index * 14
+                progress = index / 14
+                shift = int(hero.distortion * progress * progress * 74)
+                draw.line(
+                    (218 + shift, y, 278 + shift, y),
+                    fill=colors["signal"] if index % 3 == 0 else colors["accent"],
+                    width=7,
+                )
+            draw.line((46, 204, 160, 204), fill=colors["accent"], width=8)
+            draw.text((40, 322), "STRAIGHT", fill=colors["muted"], font=small)
+            draw.text((215, 322), "ROW SAMPLES", fill=colors["muted"], font=small)
+    elif hero.kind == "comparison":
+        draw.rounded_rectangle((42, 90, 172, 308), radius=14, outline=colors["muted"], width=2)
+        draw.rounded_rectangle((188, 90, 318, 308), radius=14, outline=colors["accent"], width=3)
+        draw.line((76, 120, 136, 278), fill=colors["text"], width=9)
+        draw.line((205, 120, 292, 278), fill=colors["signal"], width=9)
+        draw.text((54, 320), hero.before_label.upper(), fill=colors["muted"], font=small)
+        draw.text((202, 320), hero.after_label.upper(), fill=colors["accent"], font=small)
+    else:
+        positions = {
+            node.id: (int(40 + node.x * 280), int(78 + node.y * 226)) for node in hero.nodes
+        }
+        for edge in hero.edges:
+            draw.line(
+                (*positions[edge.source], *positions[edge.target]), fill=colors["muted"], width=3
+            )
+        for node in hero.nodes:
+            x, y = positions[node.id]
+            fill = colors["signal"] if node.state == "active" else colors["accent"]
+            draw.ellipse((x - 22, y - 22, x + 22, y + 22), fill=fill)
+            label = "\n".join(textwrap.wrap(node.label, width=12))
+            draw.multiline_text(
+                (x - 35, y + 28), label, fill=colors["text"], font=small, align="center"
+            )
+
+    y = 386
+    for line in textwrap.wrap(candidate.headline, width=20):
+        draw.text((28, y), line, fill=colors["text"], font=headline)
+        y += 38
+    if candidate.subheadline:
+        y += 8
+        for line in textwrap.wrap(candidate.subheadline, width=34)[:3]:
+            draw.text((30, y), line, fill=colors["muted"], font=body)
+            y += 24
+    draw.text((30, 606), candidate.layout.upper(), fill=colors["accent"], font=small)
+    return image
+
+
+def _editorial_reviews(
+    store: ProjectStore,
+) -> tuple[EditorialCritique, VisualCritique] | None:
+    claims = _load_if(store, "claims/claims.json", ClaimsManifest)
+    angles = _load_if(store, "script/angles.json", AnglesManifest)
+    selection = _load_if(store, "script/angle-selection.json", AngleSelection)
+    script = _load_if(store, "script/script.json", ScriptManifest)
+    if claims is None or angles is None or selection is None or script is None:
+        return None
+    brief = build_rolling_shutter_brief(claims, angles, selection)
+    plan = build_rolling_shutter_beat_plan(brief)
+    guidance = build_rolling_shutter_storyboard_guidance(brief, plan, script)
+    return critique_editorial(brief, plan, script), critique_visual(brief, plan, guidance, script)
+
+
+def _show_editorial_findings(store: ProjectStore, kind: Literal["editorial", "visual"]) -> None:
+    try:
+        reviews = _editorial_reviews(store)
+    except (OSError, ValueError) as exc:
+        st.warning(f"{kind.title()} critique unavailable: {exc}")
+        return
+    if reviews is None:
+        st.info(f"{kind.title()} critique becomes available after angle and script generation.")
+        return
+    critique = reviews[0] if kind == "editorial" else reviews[1]
+    st.subheader(f"{kind.title()} critique")
+    st.caption("Deterministic production feedback; findings are advisory and never approval.")
+    if not critique.findings:
+        st.success(f"No {kind} critique findings for the current inputs.")
+        return
+    for finding in critique.findings:
+        object_id = getattr(finding, "segment_id", None) or getattr(finding, "scene_key", None)
+        message = f"{finding.category}: {finding.message}"
+        if object_id:
+            message += f" ({object_id})"
+        if finding.severity == "error":
+            st.error(message)
+        else:
+            st.warning(message)
+
+
+def _show_cover_candidates(store: ProjectStore) -> None:
+    st.subheader("Cover directions")
+    st.caption(
+        "Three evidence-linked directions are generated from the selected angle. The stills "
+        "below are deterministic reviewer schematics; Remotion produces the export cover."
+    )
+    _perform(
+        "Generate three cover directions",
+        "covers-generate",
+        generate_fixture_covers,
+        store,
+    )
+    covers = _load_if(store, "storyboard/covers.json", CoverManifest)
+    if covers is None:
+        st.info("Generate a storyboard and choose an angle before creating cover directions.")
+        return
+    selected_id: str | None = None
+    try:
+        selected_id = cast(str, selected_cover_payload(store)["selected_candidate_id"])
+    except (OSError, ValueError, KeyError):
+        st.warning("Choose one current cover direction before storyboard approval.")
+    columns = st.columns(3)
+    for column, candidate in zip(columns, covers.candidates, strict=True):
+        with column, st.container(border=True):
+            st.image(
+                _cover_preview(candidate),
+                caption=candidate.accessibility_description,
+                width="stretch",
+            )
+            st.markdown(f"#### {candidate.headline}")
+            if candidate.subheadline:
+                st.write(candidate.subheadline)
+            st.caption(f"{candidate.layout} · {candidate.palette} · hero: {candidate.hero.kind}")
+            st.caption(
+                f"{len(candidate.claim_ids)} claim link(s) · "
+                f"{len(candidate.evidence_ids)} evidence link(s)"
+            )
+            if selected_id == candidate.candidate_id:
+                st.success("Selected cover direction")
+            _perform(
+                "Select this cover",
+                f"cover-select-{candidate.candidate_id}",
+                select_cover,
+                store,
+                candidate.candidate_id,
+                disabled=selected_id == candidate.candidate_id,
+            )
+    st.warning(
+        "Selecting or regenerating a cover invalidates storyboard and final review so the new "
+        "visual direction is explicitly re-approved."
+    )
+
+
+def _retention_review_state(
+    store: ProjectStore,
+    script: ScriptManifest,
+) -> tuple[
+    RetentionPlan | None,
+    RetentionCritique | None,
+    bool,
+    bool,
+    str | None,
+]:
+    project = store.project()
+    try:
+        plan = _load_if(store, "script/retention-plan.json", RetentionPlan)
+        critique = _load_if(store, "script/retention-critique.json", RetentionCritique)
+    except (OSError, ValueError) as exc:
+        return None, None, False, False, f"Saved retention artifacts are invalid: {exc}"
+    plan_is_current = bool(
+        plan is not None
+        and project.active_versions.get("retention_plan") == plan.version_id
+        and plan.script_version_id == script.version_id
+    )
+    critique_is_current = bool(
+        plan is not None
+        and critique is not None
+        and plan_is_current
+        and project.active_versions.get("retention_critique") == critique.critique_id
+        and critique.retention_plan_version_id == plan.version_id
+        and critique.script_version_id == script.version_id
+    )
+    return plan, critique, plan_is_current, critique_is_current, None
+
+
+def _show_retention_review(
+    plan: RetentionPlan | None,
+    critique: RetentionCritique | None,
+    *,
+    plan_is_current: bool,
+    critique_is_current: bool,
+    timing_scale: float,
+) -> None:
+    st.subheader("Retention plan")
+    if plan is None:
+        st.info(
+            "No persisted retention plan is available. Timing feedback will use deterministic "
+            "script, scene, and caption estimates."
+        )
+        return
+    if not plan_is_current:
+        st.warning(
+            "This retention plan is stale or does not bind the current script. Timing feedback "
+            "will use scene-derived values until it is regenerated."
+        )
+    first_event = plan.attention_events[0]
+    midpoint_rehooks = [
+        event
+        for event in plan.attention_events
+        if event.event_kind == "re-hook"
+        and plan.cadence.total_duration_seconds * 0.35
+        <= event.scheduled_at_seconds
+        <= plan.cadence.total_duration_seconds * 0.65
+    ]
+    cold, first, gap, rehook = st.columns(4)
+    cold.metric(
+        "Cold open",
+        f"{plan.cold_open.duration_seconds * timing_scale:g} s",
+        "target <= 5 s",
+    )
+    first.metric(
+        "First visual beat",
+        f"{first_event.scheduled_at_seconds * timing_scale:g} s",
+        "target <= 2 s",
+    )
+    gap.metric("Allowed gap", f"{plan.cadence.max_attention_gap_seconds:g} s")
+    rehook.metric("Midpoint re-hooks", len(midpoint_rehooks))
+    effective_duration = plan.cadence.total_duration_seconds * timing_scale
+    words_per_minute = (
+        critique.spoken_word_count / effective_duration * 60
+        if critique is not None and effective_duration > 0
+        else None
+    )
+    st.metric(
+        "Narration pace",
+        f"{words_per_minute:.0f} WPM" if words_per_minute is not None else "Not available",
+        f"{effective_duration:g} s rendered runtime",
+    )
+    st.write(f"Opening: {plan.cold_open.text}")
+    st.write(f"Promised payoff: {plan.cold_open.promised_payoff}")
+    st.caption(
+        "The opening states the mechanism or result up front. Curiosity may organize the "
+        "explanation, but cannot hide essential context or ask for engagement."
+    )
+    if abs(timing_scale - 1) > 0.001:
+        st.caption(
+            f"Displayed event times are scaled by {timing_scale:.3f} to match imported "
+            "narration and rendered scene timing."
+        )
+    with st.expander("Retention event schedule"):
+        st.dataframe(
+            [
+                {
+                    "render time (s)": round(event.scheduled_at_seconds * timing_scale, 3),
+                    "canonical time (s)": event.scheduled_at_seconds,
+                    "kind": event.event_kind,
+                    "device": event.device,
+                    "purpose": event.purpose,
+                    "beat": event.beat_id,
+                }
+                for event in plan.attention_events
+            ],
+            hide_index=True,
+            width="stretch",
+        )
+        st.markdown("#### Curiosity threads and explicit payoffs")
+        st.dataframe(
+            [
+                {
+                    "question": thread.question,
+                    "payoff": thread.payoff,
+                    "payoff beat": thread.payoff_beat_id,
+                }
+                for thread in plan.curiosity_threads
+            ],
+            hide_index=True,
+            width="stretch",
+        )
+    if critique is None:
+        st.warning("The deterministic retention critique is missing; regenerate the script.")
+        return
+    if not critique_is_current:
+        st.warning("The saved retention critique is stale and must be regenerated.")
+    elif critique.blocking:
+        st.error("The current retention critique blocks script approval.")
+    else:
+        st.success("The current retention critique has no blocking findings.")
+    st.caption(
+        f"Deterministic retention critique: {critique.spoken_word_count} spoken words. "
+        "It supports review but never replaces evidence or human approval."
+    )
+    if not critique.findings:
+        st.success("No retention critique findings for the current plan and script.")
+        return
+    for finding in critique.findings:
+        object_id = finding.event_id or finding.segment_id or finding.beat_id
+        message = f"{finding.category}: {finding.message}"
+        if object_id:
+            message += f" ({object_id})"
+        if finding.severity == "error":
+            st.error(message)
+        else:
+            st.warning(message)
+
+
+def _show_creative_findings(store: ProjectStore) -> None:
+    project = store.project()
+    storyboard = _load_if(store, "storyboard/storyboard.json", StoryboardManifest)
+    script = _load_if(store, "script/script.json", ScriptManifest)
+    covers = _load_if(store, "storyboard/covers.json", CoverManifest)
+    selection = _load_if(store, "storyboard/cover-selection.json", CoverSelection)
+    if storyboard is None or script is None or covers is None or selection is None:
+        st.info("Creative QA becomes available after script, storyboard, and cover selection.")
+        return
+    (
+        retention_plan,
+        retention_critique,
+        plan_is_current,
+        critique_is_current,
+        retention_load_warning,
+    ) = _retention_review_state(store, script)
+    try:
+        selected_cover_payload(store)
+        candidate = next(
+            item
+            for item in covers.candidates
+            if item.candidate_id == selection.selected_candidate_id
+        )
+        cover = CreativeCoverInput(
+            cover_id=candidate.candidate_id,
+            headline=candidate.headline,
+            focal_visual=candidate.hero.kind,
+            layout=candidate.layout,
+            subtitle=candidate.subheadline,
+            citation="Evidence-linked source receipt",
+            factual=True,
+        )
+        narration = active_audio(store)
+        narration_duration = probe_duration(narration) if narration is not None else None
+        caption_resolution = resolve_caption_timing(
+            store,
+            script,
+            target_duration=narration_duration,
+        )
+        snapshot = creative_input_from_manifests(
+            storyboard,
+            script,
+            list(caption_resolution.cues),
+            cover,
+            case_id=project.project_id,
+            topic_kind="mechanism",
+            pacing=project.pacing,
+            retention_plan=retention_plan if plan_is_current else None,
+        )
+        result = evaluate_creative_quality(snapshot)
+    except (OSError, StopIteration, ValueError) as exc:
+        st.warning(f"Creative QA unavailable: {exc}")
+        return
+    st.subheader("Creative quality review")
+    if retention_load_warning:
+        st.warning(retention_load_warning)
+    _show_retention_review(
+        retention_plan,
+        retention_critique,
+        plan_is_current=plan_is_current,
+        critique_is_current=critique_is_current,
+        timing_scale=(snapshot.retention.timing_scale if snapshot.retention is not None else 1.0),
+    )
+    st.metric("Creative QA score", f"{result.score}/100", result.status.upper())
+    st.caption(
+        f"Advisory score for the {project.pacing} pacing profile. It cannot override evidence, "
+        "rights, accessibility, or human approval gates."
+    )
+    show_passes = st.checkbox(
+        "Show passing creative checks",
+        value=False,
+        key="creative-show-passes",
+        help="Keep this off to focus on concrete remediation before preview approval.",
+    )
+    attention = [check for check in result.checks if check.status != "pass"]
+    retention_attention = [
+        check
+        for check in attention
+        if check.category in {"engagement", "captions", "accessibility", "motion"}
+    ]
+    if retention_attention:
+        st.warning(f"{len(retention_attention)} retention or accessibility finding(s) need review.")
+    else:
+        st.success("Retention, caption, motion-intensity, and hook proxies are within budget.")
+    for check in result.checks:
+        if check.status == "pass" and not show_passes:
+            continue
+        message = f"{check.category} · {check.message}"
+        if check.remediation:
+            message += f" Next: {check.remediation}"
+        if check.details:
+            measurements = ", ".join(
+                f"{key.replace('_', ' ')}: {value}" for key, value in check.details.items()
+            )
+            message += f" Measurements: {measurements}."
+        if check.status == "failure":
+            st.error(message)
+        elif check.status == "warning":
+            st.warning(message)
+        else:
+            st.success(message)
+
+
+def _generate_captions(store: ProjectStore) -> tuple[Path, Path]:
+    script = load_model(store.path("script/script.json"), ScriptManifest)
+    narration = active_audio(store)
+    narration_duration = probe_duration(narration) if narration else None
+    resolution = resolve_caption_timing(
+        store,
+        script,
+        target_duration=narration_duration,
+    )
+    paths = (store.path("captions/captions.srt"), store.path("captions/captions.vtt"))
+    old_hashes = {path.name: sha256_file(path) for path in paths if path.is_file()}
+    srt, vtt = write_caption_files(store.path("captions"), list(resolution.cues))
+    new_hashes = {srt.name: sha256_file(srt), vtt.name: sha256_file(vtt)}
+    project = store.project()
+    project.active_versions["captions"] = stable_hash(new_hashes)
+    store.save_project(project)
+    if old_hashes != new_hashes:
+        store.invalidate_from("final", "captions regenerated")
+    return srt, vtt
+
+
+def _import_uploaded_audio(
+    store: ProjectStore,
+    uploaded_name: str,
+    uploaded_bytes: bytes,
+    rights_status: str,
+    creator: str,
+    license_name: str,
+    source_url: str,
+    required_attribution: str,
+) -> Path:
+    if len(uploaded_bytes) > 200 * 1024 * 1024:
+        raise ValueError("audio exceeds the 200 MiB limit")
+    filename = sanitize_filename(uploaded_name)
+    with tempfile.TemporaryDirectory(prefix="techshort-audio-") as temporary:
+        staged = Path(temporary) / filename
+        staged.write_bytes(uploaded_bytes)
+        return import_audio(
+            store,
+            staged,
+            rights_status,
+            creator=creator or None,
+            license_name=license_name or None,
+            source_url=source_url or None,
+            required_attribution=required_attribution or None,
+        )
+
+
+def _import_uploaded_transcript(
+    store: ProjectStore, uploaded_name: str, uploaded_bytes: bytes
+) -> Path:
+    if len(uploaded_bytes) > 128 * 1024:
+        raise ValueError("narration transcript exceeds the 128 KiB safety limit")
+    filename = sanitize_filename(uploaded_name)
+    with tempfile.TemporaryDirectory(prefix="techshort-transcript-") as temporary:
+        staged = Path(temporary) / filename
+        staged.write_bytes(uploaded_bytes)
+        return import_transcript(store, staged)
+
+
+def _create_cover_experiment(
+    store: ProjectStore,
+    name: str,
+    hypothesis: str,
+    platform: str,
+    candidate_ids: list[str],
+    primary_metric: str,
+    minimum_views: int,
+) -> ExperimentManifest:
+    if platform not in {"tiktok", "instagram-reels"}:
+        raise ValueError("organic platform must be TikTok or Instagram Reels")
+    if primary_metric not in {"completion-rate", "skip-rate"}:
+        raise ValueError("cover experiment metric must be completion-rate or skip-rate")
+    return create_cover_experiment(
+        store,
+        name=name.strip(),
+        hypothesis=hypothesis.strip(),
+        platform=ExperimentPlatform(platform),
+        candidate_ids=candidate_ids,
+        primary_metric=MetricName(primary_metric),
+        minimum_views_per_variant=minimum_views,
+    )
+
+
+def _prepare_experiment_publication_request(
+    store: ProjectStore,
+    experiment_id: str,
+    variant_id: str,
+    title: str,
+    post_copy: str,
+    alt_text: str,
+    hashtags_text: str,
+    evidence_url: str,
+) -> Path:
+    experiment = ExperimentStore(store, experiment_id).manifest()
+    if experiment.review_status is not ReviewStatus.APPROVED:
+        raise ValueError("publication request requires an approved experiment")
+    variant = next((item for item in experiment.variants if item.variant_id == variant_id), None)
+    if variant is None or variant.review_status is not ReviewStatus.APPROVED:
+        raise ValueError("publication request requires an approved experiment variant")
+    if variant.cover_path is None or variant.cover_hash is None:
+        raise ValueError("publication request requires a reviewed cover artifact")
+    media = store.path(variant.media_path)
+    cover = store.path(variant.cover_path)
+    captions_srt = store.path(f"export/{store.slug}.srt")
+    captions_vtt = store.path(f"export/{store.slug}.vtt")
+    if not media.is_file() or sha256_file(media) != variant.media_hash:
+        raise ValueError("publication variant media is missing or stale")
+    if not cover.is_file() or sha256_file(cover) != variant.cover_hash:
+        raise ValueError("publication variant cover is missing or stale")
+    if not captions_srt.is_file() or not captions_vtt.is_file():
+        raise ValueError("publication request requires exported SRT and VTT captions")
+    hashtags = [
+        token.removeprefix("#")
+        for token in hashtags_text.replace(",", " ").split()
+        if token.strip()
+    ]
+    request = OrganicPackageRequest(
+        experiment_id=experiment.experiment_id,
+        variant_id=variant.variant_id,
+        platform=experiment.platform.value,
+        final_mp4=variant.media_path,
+        expected_media_hash=variant.media_hash,
+        cover_png=variant.cover_path,
+        expected_cover_hash=variant.cover_hash,
+        captions_srt=captions_srt.relative_to(store.root).as_posix(),
+        captions_vtt=captions_vtt.relative_to(store.root).as_posix(),
+        title=title,
+        post_copy=post_copy,
+        alt_text=alt_text,
+        hashtags=hashtags,
+        evidence_url=evidence_url.strip() or None,
+    )
+    request_directory = store.path(f"experiments/{experiment_id}/publication-requests/{variant_id}")
+    if request_directory.is_symlink():
+        raise ValueError("publication request directory cannot be a symbolic link")
+    request_directory.mkdir(parents=True, exist_ok=True)
+    destination = request_directory / f"request-{stable_hash(request)[:16]}.json"
+    if destination.is_symlink():
+        raise ValueError("publication request cannot be a symbolic link")
+    if destination.is_file():
+        if load_model(destination, OrganicPackageRequest) != request:
+            raise ValueError("publication request path contains conflicting content")
+    else:
+        atomic_write_model(destination, request)
+    return destination
+
+
+def _build_pending_publication_package(
+    store: ProjectStore, request_path: Path
+) -> OrganicPackageBuildResult:
+    if request_path.is_symlink():
+        raise ValueError("publication request cannot be a symbolic link")
+    request = load_model(within(store.root, request_path), OrganicPackageRequest)
+    return build_organic_publication_package(store, request)
+
+
+def _grant_publication_package(
+    store: ProjectStore,
+    request_path: Path,
+    package_manifest_path: Path,
+    reviewer: str,
+    confirmation: str,
+) -> OrganicPackageBuildResult:
+    if confirmation != GRANT_CONFIRMATION:
+        raise ValueError("manual publication requires the exact authorization phrase")
+    if request_path.is_symlink() or package_manifest_path.is_symlink():
+        raise ValueError("publication consent inputs cannot be symbolic links")
+    request = load_model(within(store.root, request_path), OrganicPackageRequest)
+    package = load_model(within(store.root, package_manifest_path), OrganicPublicationPackage)
+    consent = record_publication_consent(
+        package,
+        state="granted",
+        reviewer_identifier=reviewer,
+        confirmation=confirmation,
+    )
+    return build_organic_publication_package(store, request, consent=consent)
+
+
+def _import_uploaded_observations(
+    store: ProjectStore,
+    experiment_id: str,
+    uploaded_name: str,
+    uploaded_bytes: bytes,
+) -> list[object]:
+    if len(uploaded_bytes) > 256 * 1024:
+        raise ValueError("aggregate observation import exceeds the 256 KiB limit")
+    filename = sanitize_filename(uploaded_name)
+    suffix = Path(filename).suffix.casefold()
+    if suffix not in {".json", ".csv"}:
+        raise ValueError("aggregate observations must use JSON or CSV")
+    with tempfile.TemporaryDirectory(prefix="techshort-observations-") as temporary:
+        staged = Path(temporary) / filename
+        staged.write_bytes(uploaded_bytes)
+        return list(
+            import_manual_observations(
+                ExperimentStore(store, experiment_id),
+                staged,
+            )
+        )
+
+
+def _edit_scene_from_json(
+    store: ProjectStore,
+    scene_id: str,
+    on_screen_text: str,
+    accessibility_description: str,
+    evidence_label: str,
+    citation_label: str,
+    layout: str,
+    motion: str,
+    visual_json: str,
+    reviewer: str,
+) -> object:
+    visual = json.loads(visual_json)
+    if not isinstance(visual, dict):
+        raise ValueError("visual specification must be a JSON object")
+    return edit_scene(
+        store,
+        scene_id,
+        {
+            "on_screen_text": on_screen_text,
+            "accessibility_description": accessibility_description,
+            "evidence_label": evidence_label.strip() or None,
+            "citation_label": citation_label.strip() or None,
+            "layout": layout,
+            "motion": motion,
+            "visual": visual,
+        },
+        reviewer,
+    )
+
+
+def _edit_asset_metadata(
+    store: ProjectStore,
+    asset_id: str,
+    origin: str,
+    creator: str,
+    source_url: str,
+    license_name: str,
+    attribution: str,
+    rights_status: str,
+    embedding_allowed: bool,
+    reviewer: str,
+) -> object:
+    return edit_asset(
+        store,
+        asset_id,
+        {
+            "origin": origin,
+            "creator": creator,
+            "source_url": source_url.strip() or None,
+            "license": license_name,
+            "required_attribution": attribution.strip() or None,
+            "rights_status": rights_status,
+            "embedding_allowed": embedding_allowed,
+        },
+        reviewer,
+    )
+
+
+def _run_preview_qa(store: ProjectStore) -> QAReport:
+    preview = store.path("renders/previews/preview.mp4")
+    if not preview.is_file():
+        raise ValueError("render a preview before running QA")
+    return run_qa(store, preview)
+
+
+def _render_final(store: ProjectStore) -> Path:
+    project = store.project()
+    if project.approvals.final != ReviewStatus.APPROVED:
+        raise ValueError("approve the current preview before rendering the final")
+    if not has_current_approval(store, "final", project.project_id):
+        raise ValueError("final approval is missing or stale")
+    if project.dependency_hashes.get("final_approval") != final_review_hash(store):
+        raise ValueError("final approval no longer matches the reviewed preview")
+    final = render_video(store, preview=False)
+    report = run_qa(store, final, destination="renders/final/qa-report.json")
+    if not report.passed:
+        raise ValueError("final QA failed: " + "; ".join(report.export_blockers))
+    return final
+
+
+def _export_blockers(store: ProjectStore) -> list[str]:
+    project = store.project()
+    blockers = [
+        f"{gate} gate is {getattr(project.approvals, gate)}"
+        for gate in ("claims", "script", "storyboard", "rights", "final")
+        if getattr(project.approvals, gate) != ReviewStatus.APPROVED
+    ]
+    blockers.extend(f"stale artifact: {item}" for item in project.stale_artifacts)
+    qa = _load_if(store, "renders/previews/qa-report.json", QAReport)
+    if qa is None:
+        blockers.append("preview QA report is missing")
+    elif not qa.passed:
+        blockers.extend(f"preview QA: {item}" for item in qa.export_blockers)
+    if project.approvals.final == ReviewStatus.APPROVED:
+        try:
+            if not has_current_approval(store, "final", project.project_id):
+                blockers.append("final approval is stale")
+            elif project.dependency_hashes.get("final_approval") != final_review_hash(store):
+                blockers.append("final approval no longer matches the preview")
+        except (OSError, ValueError):
+            blockers.append("final approval cannot be revalidated")
+    if not store.path("renders/final/final.mp4").is_file():
+        blockers.append("final render is missing")
+    return list(dict.fromkeys(blockers))
+
+
+def _show_project(store: ProjectStore) -> None:
+    project = store.project()
+    st.subheader(project.title)
+    left, middle, right = st.columns(3)
+    left.metric("Target", f"{project.width}×{project.height}")
+    middle.metric("Frame rate", f"{project.fps} fps")
+    right.metric("Target duration", f"{project.target_duration_seconds:g} s")
+    st.write(
+        {
+            "status": project.status,
+            "content risk": project.content_risk,
+            "active source": project.active_source_id or "none",
+            "theme": project.theme,
+            "pacing": project.pacing,
+            "narration mode": project.narration_mode,
+        }
+    )
+    st.subheader("Art direction and delivery")
+    st.caption(
+        "Art direction controls the renderer's color, typography, and graphic language. "
+        "Changing it invalidates storyboard approval because reviewers must see the result."
+    )
+    current_theme = project.theme if project.theme in THEMES else "blueprint"
+    theme = st.selectbox(
+        "Art direction",
+        THEMES,
+        index=THEMES.index(current_theme),
+        key="project-theme",
+        help=(
+            "Kinetic Pop is the recommended high-energy, evidence-first treatment. Blueprint "
+            "emphasizes diagrams, Signal Lab emphasizes active measurements, and Technical "
+            "Editorial uses a warmer publication-like treatment. Midnight remains a legacy "
+            "compatibility theme."
+        ),
+    )
+    _perform(
+        "Apply art direction",
+        "project-theme-apply",
+        _set_project_theme,
+        store,
+        theme,
+        disabled=theme == project.theme,
+    )
+    pacing = st.selectbox(
+        "Pacing profile",
+        PACING_PROFILES,
+        index=PACING_PROFILES.index(project.pacing),
+        key="project-pacing",
+        help=(
+            "Measured prioritizes longer inspection time, Brisk is the balanced default, and "
+            "High-retention tightens visual beat spacing. Every profile must remain calm enough "
+            "to read and must not introduce flashing or engagement bait."
+        ),
+    )
+    _perform(
+        "Apply pacing profile",
+        "project-pacing-apply",
+        set_pacing_profile,
+        store,
+        pacing,
+        disabled=pacing == project.pacing,
+    )
+    narration_mode = st.selectbox(
+        "Narration mode",
+        NARRATION_MODES,
+        index=NARRATION_MODES.index(project.narration_mode),
+        key="project-narration-mode",
+        help=(
+            "Narrated requires reviewed imported audio. Silent-reviewed is an explicit human "
+            "choice for caption-led output, not an automatic fallback for missing audio."
+        ),
+    )
+    _perform(
+        "Apply narration mode",
+        "project-narration-mode-apply",
+        _set_narration_mode,
+        store,
+        narration_mode,
+        disabled=narration_mode == project.narration_mode,
+    )
+    if project.narration_mode == "silent-reviewed":
+        st.warning("This project is explicitly configured for a human-reviewed silent export.")
+    else:
+        st.info("This project requires reviewed narration before final export.")
+    st.subheader("Human approval gates")
+    st.dataframe(
+        [
+            {"gate": gate, "status": str(getattr(project.approvals, gate))}
+            for gate in ("claims", "script", "storyboard", "rights", "final")
+        ],
+        hide_index=True,
+        use_container_width=True,
+    )
+    if project.stale_artifacts:
+        st.warning(
+            "Upstream edits invalidated: " + ", ".join(project.stale_artifacts) + ". "
+            "Regenerate or re-review these stages in order."
+        )
+    else:
+        st.success("No artifacts are marked stale.")
+
+
+def _show_sources(store: ProjectStore) -> None:
+    sources = _load_if(store, "sources/source-index.json", SourceIndex)
+    if sources is None:
+        st.info("No source is ingested. Run `techshort ingest <project> <source>`.")
+        return
+    active = sources.active_source_id or store.project().active_source_id
+    for source in sources.sources:
+        with st.container(border=True):
+            st.subheader(source.title)
+            st.caption("Active source" if source.source_id == active else "Stored source")
+            st.write(
+                {
+                    "source ID": source.source_id,
+                    "filename": source.original_filename,
+                    "type": source.source_type,
+                    "SHA-256": source.content_hash,
+                    "locations": source.page_or_section_count,
+                    "rights": source.rights_status,
+                    "OCR required": source.ocr_required,
+                    "appears incomplete": source.appears_incomplete,
+                }
+            )
+            for warning in source.extraction_warnings:
+                st.warning(warning)
+
+
+def _show_claims(store: ProjectStore, reviewer: str) -> None:
+    claims = _load_if(store, "claims/claims.json", ClaimsManifest)
+    evidence = _load_if(store, "evidence/evidence.json", EvidenceManifest)
+    if claims is None or evidence is None:
+        st.info("Generate claims after ingesting a source.")
+        return
+    critique = _load_if(store, "claims/critique.json", ClaimCritiqueReport)
+    if critique is None:
+        st.warning("The independent claim critique report is missing; regenerate claims.")
+    else:
+        with st.container(border=True):
+            st.subheader("Independent critique")
+            st.caption(
+                f"{critique.provider} pass · {len(critique.issues)} candidate issue(s) · "
+                "critique is not approval"
+            )
+            st.write(critique.summary)
+            for issue in critique.issues:
+                message = (
+                    f"{issue.severity.upper()} · {issue.category} · {issue.claim_id}: "
+                    f"{issue.message}"
+                )
+                if issue.severity == "warning":
+                    st.warning(message)
+                else:
+                    st.error(message)
+    evidence_map = {item.evidence_id: item for item in evidence.evidence}
+    for claim in claims.claims:
+        with st.container(border=True):
+            claim_col, evidence_col = st.columns((1, 1))
+            with claim_col:
+                st.subheader(claim.claim_id)
+                relationship_message = (
+                    f"{claim.relationship.upper()} · {claim.evidence_label.upper()} · "
+                    f"review: {claim.review_status} · confidence: {claim.confidence:.2f}"
+                )
+                if claim.relationship == "direct":
+                    st.success(relationship_message)
+                elif claim.relationship == "inferred":
+                    st.warning(relationship_message)
+                else:
+                    st.info(relationship_message)
+                edited = st.text_area(
+                    "Claim text",
+                    claim.text,
+                    key=f"claim-text-{claim.claim_id}",
+                )
+                if claim.scope:
+                    st.caption(f"Scope: {claim.scope}")
+                if claim.reasoning:
+                    st.caption(f"Reasoning: {claim.reasoning}")
+                if claim.limitation:
+                    st.caption(f"Limitation: {claim.limitation}")
+                note = st.text_input("Review note", key=f"claim-note-{claim.claim_id}")
+                first, second = st.columns(2)
+                with first:
+                    _perform(
+                        "Approve claim",
+                        f"claim-approve-{claim.claim_id}",
+                        approve_claim,
+                        store,
+                        claim.claim_id,
+                        reviewer,
+                    )
+                    _perform(
+                        "Save claim edit",
+                        f"claim-edit-{claim.claim_id}",
+                        edit_claim,
+                        store,
+                        claim.claim_id,
+                        edited,
+                        reviewer,
+                    )
+                with second:
+                    _perform(
+                        "Reject claim",
+                        f"claim-reject-{claim.claim_id}",
+                        reject_claim,
+                        store,
+                        claim.claim_id,
+                        reviewer,
+                        note or "Rejected in local reviewer",
+                    )
+                    _perform(
+                        "Add claim note",
+                        f"claim-add-note-{claim.claim_id}",
+                        note_claim,
+                        store,
+                        claim.claim_id,
+                        note,
+                        reviewer,
+                    )
+            with evidence_col:
+                st.markdown("#### Exact evidence")
+                for evidence_id in claim.evidence_span_ids:
+                    span = evidence_map.get(evidence_id)
+                    if span is None:
+                        st.error(f"Missing evidence span: {evidence_id}")
+                        continue
+                    location = (
+                        span.printed_page_label
+                        or (
+                            f"PDF page {span.page_index + 1}"
+                            if span.page_index is not None
+                            else None
+                        )
+                        or span.section_heading
+                        or "source location"
+                    )
+                    st.caption(
+                        f"{span.evidence_id} · {location} · chars {span.char_start}–"
+                        f"{span.char_end} · {span.locator}"
+                    )
+                    st.code(span.excerpt, language=None, wrap_lines=True)
+                    if span.context and span.context != span.excerpt:
+                        with st.expander(f"Limited context for {span.evidence_id}"):
+                            st.text(span.context)
+                    for warning in span.warnings:
+                        st.warning(warning)
+    _perform(
+        "Approve every current claim",
+        "claims-approve-all",
+        approve_claims,
+        store,
+        reviewer,
+    )
+
+
+def _show_script(store: ProjectStore, reviewer: str) -> None:
+    angles = _load_if(store, "script/angles.json", AnglesManifest)
+    selection = _load_if(store, "script/angle-selection.json", AngleSelection)
+    st.subheader("Explainer angle")
+    if angles is None:
+        st.info(
+            "Generate the three candidates with `techshort script angles <project>`, then "
+            "select one before script generation."
+        )
+    else:
+        project = store.project()
+        if project.active_versions.get("angles") != angles.version_id:
+            st.warning("These angle candidates are stale; regenerate them from current claims.")
+        for candidate in angles.candidates:
+            with st.container(border=True):
+                st.markdown(f"#### {candidate.title}")
+                st.caption(candidate.angle)
+                st.write(candidate.rationale)
+                st.caption("Central approved claims: " + ", ".join(candidate.central_claim_ids))
+                is_selected = bool(
+                    selection
+                    and selection.angles_version_id == angles.version_id
+                    and selection.selected_angle == candidate.angle
+                    and project.active_versions.get("angle_selection") == selection.selection_id
+                )
+                if is_selected:
+                    st.success("Selected for the current script")
+                _perform(
+                    "Select this angle",
+                    f"angle-select-{candidate.angle}",
+                    select_angle,
+                    store,
+                    candidate.angle,
+                    disabled=is_selected
+                    or project.active_versions.get("angles") != angles.version_id,
+                )
+
+    script = _load_if(store, "script/script.json", ScriptManifest)
+    if script is None:
+        st.info("Generate a script after approving claims.")
+        return
+    words = sum(len(segment.text.split()) for segment in script.segments)
+    first, second = st.columns(2)
+    first.metric("Spoken words", words)
+    second.metric("Selected angle", script.angle)
+    _show_editorial_findings(store, "editorial")
+    (
+        retention_plan,
+        retention_critique,
+        plan_is_current,
+        critique_is_current,
+        retention_load_warning,
+    ) = _retention_review_state(store, script)
+    if retention_load_warning:
+        st.warning(retention_load_warning)
+    rendered_duration: float = float(
+        sum(segment.approximate_duration for segment in script.segments)
+    )
+    try:
+        narration = active_audio(store)
+        if narration is not None:
+            probed_duration = probe_duration(narration)
+            if probed_duration is not None:
+                rendered_duration = probed_duration
+    except (OSError, ValueError) as exc:
+        st.warning(f"Narration timing is unavailable; showing script timing: {exc}")
+    timing_scale = (
+        rendered_duration / retention_plan.cadence.total_duration_seconds
+        if retention_plan is not None and rendered_duration > 0
+        else 1.0
+    )
+    _show_retention_review(
+        retention_plan,
+        retention_critique,
+        plan_is_current=plan_is_current,
+        critique_is_current=critique_is_current,
+        timing_scale=timing_scale,
+    )
+    for segment in script.segments:
+        with st.container(border=True):
+            st.subheader(segment.segment_id)
+            st.caption(
+                f"{segment.segment_type.upper()} · {segment.approximate_duration:g} s · "
+                f"review: {segment.review_status}"
+            )
+            edited = st.text_area(
+                "Narration clause",
+                segment.text,
+                key=f"segment-text-{segment.segment_id}",
+            )
+            st.caption("Approved claim links: " + (", ".join(segment.claim_ids) or "none"))
+            if segment.pronunciation_notes:
+                st.caption(f"Pronunciation: {segment.pronunciation_notes}")
+            note = st.text_input("Review note", key=f"segment-note-{segment.segment_id}")
+            first, second, third, fourth = st.columns(4)
+            with first:
+                _perform(
+                    "Approve",
+                    f"segment-approve-{segment.segment_id}",
+                    approve_script_segment,
+                    store,
+                    segment.segment_id,
+                    reviewer,
+                )
+            with second:
+                _perform(
+                    "Save edit",
+                    f"segment-edit-{segment.segment_id}",
+                    edit_script_segment,
+                    store,
+                    segment.segment_id,
+                    edited,
+                    reviewer,
+                )
+            with third:
+                _perform(
+                    "Reject",
+                    f"segment-reject-{segment.segment_id}",
+                    reject_script_segment,
+                    store,
+                    segment.segment_id,
+                    reviewer,
+                    note or "Rejected in local reviewer",
+                )
+            with fourth:
+                _perform(
+                    "Add note",
+                    f"segment-add-note-{segment.segment_id}",
+                    note_script_segment,
+                    store,
+                    segment.segment_id,
+                    note,
+                    reviewer,
+                )
+    _perform("Approve complete script", "script-approve-all", approve_script, store, reviewer)
+
+
+def _show_storyboard_and_assets(store: ProjectStore, reviewer: str) -> None:
+    storyboard = _load_if(store, "storyboard/storyboard.json", StoryboardManifest)
+    assets = _load_if(store, "assets/asset-manifest.json", AssetManifest)
+    preview_manifest = _load_if(
+        store,
+        "renders/previews/render-manifest.json",
+        RenderManifest,
+    )
+    st.subheader("Storyboard scenes")
+    if storyboard is None:
+        st.info("Generate a storyboard after approving the script.")
+    else:
+        _show_cover_candidates(store)
+        _show_editorial_findings(store, "visual")
+        st.subheader("Scene review")
+        for scene in storyboard.scenes:
+            with st.container(border=True):
+                st.subheader(f"{scene.order + 1}. {scene.primitive}")
+                still = store.path(f"renders/previews/scene-still-{scene.scene_id}.png")
+                still_relative = still.relative_to(store.root).as_posix()
+                still_is_current = (
+                    preview_manifest is not None
+                    and preview_manifest.storyboard_hash == stable_hash(storyboard)
+                    and still.is_file()
+                    and preview_manifest.output_hashes.get(still_relative) == sha256_file(still)
+                )
+                if still_is_current:
+                    st.image(
+                        still,
+                        caption=f"Representative frame from {scene.scene_id}",
+                        width=270,
+                    )
+                else:
+                    st.caption(
+                        "Render a current preview to inspect this scene's representative still."
+                    )
+                st.caption(
+                    f"{scene.scene_id} · starts {scene.start_time:g} s · {scene.duration:g} s · "
+                    f"{scene.transition} · {scene.layout} layout · {scene.motion} motion · "
+                    f"review: {scene.review_status}"
+                )
+                on_screen = st.text_area(
+                    "On-screen text",
+                    scene.on_screen_text,
+                    key=f"scene-text-{scene.scene_id}",
+                )
+                accessibility = st.text_area(
+                    "Accessibility description",
+                    scene.accessibility_description,
+                    key=f"scene-accessibility-{scene.scene_id}",
+                )
+                evidence_label = st.text_input(
+                    "Evidence label",
+                    scene.evidence_label or "",
+                    key=f"scene-evidence-label-{scene.scene_id}",
+                )
+                citation_label = st.text_input(
+                    "Human-readable citation label",
+                    scene.citation_label or "",
+                    key=f"scene-citation-label-{scene.scene_id}",
+                    help="Use a short source or evidence description; keep internal IDs hidden.",
+                )
+                layout_col, motion_col = st.columns(2)
+                layout = layout_col.selectbox(
+                    "Layout preset",
+                    LAYOUT_PRESETS,
+                    index=LAYOUT_PRESETS.index(scene.layout),
+                    key=f"scene-layout-{scene.scene_id}",
+                )
+                motion = motion_col.selectbox(
+                    "Motion treatment",
+                    MOTION_PRESETS,
+                    index=MOTION_PRESETS.index(scene.motion),
+                    key=f"scene-motion-{scene.scene_id}",
+                )
+                visual_json = st.text_area(
+                    "Structured visual specification (validated JSON; never executed)",
+                    json.dumps(scene.visual.model_dump(mode="json"), indent=2),
+                    height=240,
+                    key=f"scene-visual-{scene.scene_id}",
+                )
+                st.caption(
+                    "Script segments: "
+                    + ", ".join(scene.script_segment_ids)
+                    + " · Claims: "
+                    + (", ".join(scene.claim_ids) or "none")
+                )
+                note = st.text_input("Review note", key=f"scene-note-{scene.scene_id}")
+                first, second, third, fourth = st.columns(4)
+                with first:
+                    _perform(
+                        "Approve",
+                        f"scene-approve-{scene.scene_id}",
+                        approve_scene,
+                        store,
+                        scene.scene_id,
+                        reviewer,
+                    )
+                with second:
+                    _perform(
+                        "Save edit",
+                        f"scene-edit-{scene.scene_id}",
+                        _edit_scene_from_json,
+                        store,
+                        scene.scene_id,
+                        on_screen,
+                        accessibility,
+                        evidence_label,
+                        citation_label,
+                        layout,
+                        motion,
+                        visual_json,
+                        reviewer,
+                    )
+                with third:
+                    _perform(
+                        "Reject",
+                        f"scene-reject-{scene.scene_id}",
+                        reject_scene,
+                        store,
+                        scene.scene_id,
+                        reviewer,
+                        note or "Rejected in local reviewer",
+                    )
+                with fourth:
+                    _perform(
+                        "Add note",
+                        f"scene-add-note-{scene.scene_id}",
+                        note_scene,
+                        store,
+                        scene.scene_id,
+                        note,
+                        reviewer,
+                    )
+        _perform(
+            "Approve complete storyboard",
+            "storyboard-approve-all",
+            approve_storyboard,
+            store,
+            reviewer,
+        )
+
+    st.subheader("Embedded asset rights")
+    st.caption(
+        "Unknown, restricted, and citation-only assets cannot be embedded. Verify every field "
+        "before approving."
+    )
+    if assets is None or not assets.assets:
+        st.warning(
+            "No assets are registered; generate a storyboard to register bundled font rights."
+        )
+        return
+    for asset in assets.assets:
+        with st.container(border=True):
+            st.subheader(asset.asset_id)
+            st.caption(
+                f"{asset.asset_type} · review: {asset.review_status} · SHA-256 {asset.sha256}"
+            )
+            origin = st.text_input("Origin", asset.origin, key=f"asset-origin-{asset.asset_id}")
+            creator = st.text_input("Creator", asset.creator, key=f"asset-creator-{asset.asset_id}")
+            source_url = st.text_input(
+                "Source URL (optional)",
+                asset.source_url or "",
+                key=f"asset-url-{asset.asset_id}",
+            )
+            license_name = st.text_input(
+                "License", asset.license, key=f"asset-license-{asset.asset_id}"
+            )
+            attribution = st.text_input(
+                "Required attribution (optional)",
+                asset.required_attribution or "",
+                key=f"asset-attribution-{asset.asset_id}",
+            )
+            rights_status = st.selectbox(
+                "Rights status",
+                RIGHTS_STATUSES,
+                index=RIGHTS_STATUSES.index(asset.rights_status),
+                key=f"asset-rights-status-{asset.asset_id}",
+            )
+            embedding_allowed = st.checkbox(
+                "Embedding is allowed",
+                value=asset.embedding_allowed,
+                key=f"asset-embedding-{asset.asset_id}",
+            )
+            st.caption(f"Project-local path: {asset.local_path}")
+            note = st.text_input("Review note", key=f"asset-note-{asset.asset_id}")
+            first, second, third, fourth = st.columns(4)
+            with first:
+                _perform(
+                    "Approve",
+                    f"asset-approve-{asset.asset_id}",
+                    approve_asset,
+                    store,
+                    asset.asset_id,
+                    reviewer,
+                )
+            with second:
+                _perform(
+                    "Save edit",
+                    f"asset-edit-{asset.asset_id}",
+                    _edit_asset_metadata,
+                    store,
+                    asset.asset_id,
+                    origin,
+                    creator,
+                    source_url,
+                    license_name,
+                    attribution,
+                    rights_status,
+                    embedding_allowed,
+                    reviewer,
+                )
+            with third:
+                _perform(
+                    "Reject",
+                    f"asset-reject-{asset.asset_id}",
+                    reject_asset,
+                    store,
+                    asset.asset_id,
+                    reviewer,
+                    note or "Rejected in local reviewer",
+                )
+            with fourth:
+                _perform(
+                    "Add note",
+                    f"asset-add-note-{asset.asset_id}",
+                    note_asset,
+                    store,
+                    asset.asset_id,
+                    note,
+                    reviewer,
+                )
+    _perform("Approve all asset rights", "rights-approve-all", approve_rights, store, reviewer)
+
+
+def _show_local_narration_tools(store: ProjectStore) -> None:
+    st.subheader("Local synthetic narration")
+    st.caption(
+        "Generate a reviewable voice track from the approved script without an API key. Kokoro "
+        "is the recommended local neural voice; Windows System.Speech remains available as a "
+        "lightweight fallback. Source and script text remain inert plain text."
+    )
+    provider_label = st.selectbox(
+        "Synthesis provider",
+        SYNTHESIS_PROVIDERS,
+        key="narration-synthesis-provider",
+        help="Kokoro is higher quality. System.Speech requires no model download.",
+    )
+
+    if provider_label == SYNTHESIS_PROVIDERS[0]:
+        try:
+            kokoro_provider = KokoroLocalNarrationProvider()
+            ready, readiness_detail = kokoro_provider.readiness()
+            voices = kokoro_provider.list_voices()
+        except (OSError, ValueError, RuntimeError) as exc:
+            ready = False
+            readiness_detail = str(exc)
+            voices = []
+        if ready:
+            st.success(f"Kokoro is ready for offline synthesis: {readiness_detail}")
+        else:
+            st.info(f"Kokoro setup is required: {readiness_detail}")
+        acknowledged = st.checkbox(
+            "I understand setup performs a one-time network download of the pinned Kokoro "
+            "model into techshort's local cache.",
+            key="kokoro-setup-acknowledgement",
+            disabled=ready,
+            help=(
+                "The pinned q8 model runs on CPU after setup. Synthesis itself is offline. "
+                "Review model and voice rights separately before export."
+            ),
+        )
+        _perform(
+            "Set up pinned Kokoro model",
+            "kokoro-model-setup",
+            _setup_review_kokoro_model,
+            acknowledged,
+            disabled=ready or not acknowledged,
+        )
+        voice_names = [voice.name for voice in voices]
+        selected_voice = st.selectbox(
+            "Kokoro voice",
+            voice_names or ["No Kokoro voice metadata available"],
+            key="kokoro-narration-voice",
+            disabled=not voice_names,
+        )
+        if voice_names:
+            voice = next(item for item in voices if item.name == selected_voice)
+            st.caption(
+                f"Voice metadata: {voice.culture} | {voice.gender} | {voice.age}. "
+                "Preview every voice before rights approval."
+            )
+        speed = st.slider(
+            "Narration speed",
+            min_value=0.75,
+            max_value=1.5,
+            value=1.1,
+            step=0.05,
+            key="kokoro-narration-speed",
+            help="Bounded Kokoro speed multiplier. 1.1 is the recommended short-form default.",
+        )
+    else:
+        try:
+            voices = discover_windows_voices()
+        except (OSError, ValueError, RuntimeError) as exc:
+            ready = False
+            readiness_detail = str(exc)
+            voices = []
+        else:
+            ready = bool(voices)
+            readiness_detail = f"{len(voices)} enabled Windows System.Speech voice(s)"
+        if ready and voices:
+            st.success(f"System.Speech is ready: {readiness_detail}")
+        else:
+            st.info(f"System.Speech is unavailable: {readiness_detail}")
+        voice_names = [voice.name for voice in voices]
+        selected_voice = st.selectbox(
+            "Installed Windows voice",
+            voice_names or ["No installed voice available"],
+            key="local-narration-voice",
+            disabled=not voice_names,
+        )
+        if voice_names:
+            voice = next(item for item in voices if item.name == selected_voice)
+            st.caption(f"Installed voice metadata: {voice.culture} | {voice.gender} | {voice.age}.")
+        rate_column, volume_column = st.columns(2)
+        rate = rate_column.slider(
+            "Speech rate",
+            min_value=-10,
+            max_value=10,
+            value=1,
+            step=1,
+            key="local-narration-rate",
+            help="Windows System.Speech rate; values are limited to -10 through 10.",
+        )
+        volume = volume_column.slider(
+            "Speech volume",
+            min_value=1,
+            max_value=100,
+            value=100,
+            step=1,
+            key="local-narration-volume",
+            help="Synthesis input volume; final narration is normalized locally by FFmpeg.",
+        )
+
+    rights_status = st.selectbox(
+        "Synthetic voice rights status",
+        AUDIO_RIGHTS_STATUSES,
+        index=AUDIO_RIGHTS_STATUSES.index("unknown"),
+        key="local-narration-rights-status",
+        help="Unknown is the safe default and blocks final export until reviewed.",
+    )
+    license_name = st.text_input(
+        "Voice license or permission record (optional)",
+        key="local-narration-license",
+    )
+    required_attribution = st.text_input(
+        "Voice attribution required by that license (optional)",
+        key="local-narration-attribution",
+    )
+    st.warning(
+        "A model or voice being available on this computer does not establish commercial reuse "
+        "rights for the model, selected voice, or generated output. Verify the applicable license "
+        "or permission before changing rights from unknown. Unknown, citation-only, and restricted "
+        "narration cannot pass export rights review."
+    )
+    if provider_label == SYNTHESIS_PROVIDERS[0]:
+        _perform(
+            "Synthesize with Kokoro",
+            "kokoro-narration-synthesize",
+            _synthesize_review_kokoro_narration,
+            store,
+            selected_voice,
+            speed,
+            rights_status,
+            license_name,
+            required_attribution,
+            disabled=not (ready and voice_names),
+        )
+    else:
+        _perform(
+            "Synthesize with System.Speech",
+            "local-narration-synthesize",
+            _synthesize_review_narration,
+            store,
+            selected_voice,
+            rate,
+            volume,
+            rights_status,
+            license_name,
+            required_attribution,
+            disabled=not (ready and voice_names),
+        )
+
+    try:
+        active_synthesis = active_synthesis_receipt(store)
+    except (OSError, ValueError, RuntimeError) as exc:
+        st.error(f"Local narration receipt is stale or invalid: {exc}")
+    else:
+        if active_synthesis is not None:
+            receipt, _ = active_synthesis
+            if receipt.kokoro is not None:
+                model = receipt.kokoro
+                st.success(
+                    f"Current synthesis: Kokoro local | {receipt.voice_name} | "
+                    f"{receipt.output_duration_seconds:.2f} s"
+                )
+                st.caption(
+                    f"Model: {model.model_id}@{model.revision[:12]} | {model.dtype} | "
+                    f"{model.device} | speed {model.speed:.2f} | runtime {model.runtime_version}"
+                )
+            else:
+                st.success(
+                    f"Current synthesis: Windows System.Speech | {receipt.voice_name} | "
+                    f"rate {receipt.rate:+d} | volume {receipt.volume} | "
+                    f"{receipt.output_duration_seconds:.2f} s"
+                )
+            st.caption(
+                f"Provider: {receipt.provider} | rights: {receipt.rights_status} | "
+                f"receipt: {receipt.synthesis_id}. "
+                "The receipt is hash-bound to the approved script, audio, and transcript."
+            )
+
+    try:
+        active_timing = active_narration_timing(store)
+    except (OSError, ValueError, RuntimeError) as exc:
+        st.error(f"Narration timing is stale or invalid: {exc}")
+    else:
+        if active_timing is not None:
+            timing, _ = active_timing
+            st.success(
+                f"Active timing: {timing.quality} | {timing.alignment.coverage:.0%} matched "
+                f"coverage | source {timing.source}"
+            )
+            st.caption(
+                f"Timing manifest: {timing.timing_id} | "
+                f"{len(timing.words)} approved-script word interval(s)."
+            )
+            if timing.alignment.fallback_reason is not None:
+                st.warning(
+                    f"Timing fallback: {timing.alignment.fallback_reason} "
+                    f"({timing.alignment.proportional_word_count} proportional word interval(s))."
+                )
+            elif timing.alignment.proportional_word_count:
+                st.warning(
+                    f"Timing includes {timing.alignment.proportional_word_count} proportional "
+                    "word interval(s); inspect caption sync in the preview."
+                )
+
+
+def _show_sound_design_tools(store: ProjectStore) -> None:
+    st.subheader("Procedural sound-design accents")
+    st.caption(
+        "Generate a deterministic, local WAV from the approved retention plan's allowlisted "
+        "cues. The track remains separate from narration and is reviewed as an embedded asset."
+    )
+    preset = st.selectbox(
+        "Sound-design preset",
+        ("subtle", "present"),
+        key="sound-design-preset",
+        help="Subtle peaks at 7.5%; present peaks at 12%. Both stay below the 15% hard bound.",
+    )
+    _perform(
+        "Generate sound-design accents",
+        "sound-design-generate",
+        _generate_review_sound_design,
+        store,
+        preset,
+    )
+    try:
+        sound_design = active_sound_design(store)
+    except (OSError, ValueError, RuntimeError) as exc:
+        st.error(f"Sound-design track is stale or invalid: {exc}")
+        return
+    if sound_design is None:
+        st.info("No current procedural sound-design track exists.")
+        return
+    receipt = _load_if(store, "audio/sound-design.json", SoundDesignReceipt)
+    if receipt is None:
+        st.error("The active sound-design receipt is missing.")
+        return
+    st.success(
+        f"Active sound design: {receipt.preset} · {len(receipt.events)} cue(s) · "
+        f"{receipt.duration_seconds:.2f} s"
+    )
+    st.audio(str(sound_design))
+    st.warning(
+        "Procedural audio is registered as an original asset, but its asset rights review is "
+        "still required after generation. Audition the mix for distraction and accessibility."
+    )
+
+
+def _show_optional_imported_narration(store: ProjectStore, narration: Path | None) -> None:
+    with st.expander("Optional imported narration", expanded=False):
+        st.caption(
+            "Use this path only when you already have a recording. Local Kokoro synthesis above "
+            "is the recommended default and does not require you to record narration manually."
+        )
+        uploaded = st.file_uploader(
+            "Audio file",
+            type=["wav", "mp3", "m4a", "aac", "flac", "ogg", "opus"],
+            key="narration-upload",
+        )
+        rights_status = st.selectbox(
+            "Narration rights assertion",
+            AUDIO_RIGHTS_STATUSES,
+            help="Unknown blocks export. Choose user-owned only if you own this recording.",
+            key="narration-rights-status",
+        )
+        creator = st.text_input(
+            "Narration creator",
+            help="Required with an explicit license; recommended for every recording.",
+            key="narration-creator",
+        )
+        license_name = st.text_input(
+            "Narration license (required for permissively licensed audio)",
+            key="narration-license",
+        )
+        source_url = st.text_input(
+            "Narration source URL (optional)",
+            key="narration-source-url",
+        )
+        required_attribution = st.text_input(
+            "Narration required attribution (optional)",
+            key="narration-attribution",
+        )
+        if uploaded is not None:
+            _perform(
+                "Import narration",
+                "narration-import",
+                _import_uploaded_audio,
+                store,
+                uploaded.name,
+                bytes(uploaded.getbuffer()),
+                rights_status,
+                creator,
+                license_name,
+                source_url,
+                required_attribution,
+            )
+        else:
+            st.button(
+                "Import narration",
+                key="narration-import-disabled",
+                disabled=True,
+                width="stretch",
+            )
+        transcript_upload = st.file_uploader(
+            "Import a UTF-8 narration transcript",
+            type=["txt"],
+            key="narration-transcript-upload",
+            help=(
+                "The transcript is bound to the exact active audio hash and used for QA "
+                "comparison. Local synthesis creates this automatically."
+            ),
+        )
+        if narration is not None and transcript_upload is not None:
+            _perform(
+                "Import transcript",
+                "narration-transcript-import",
+                _import_uploaded_transcript,
+                store,
+                transcript_upload.name,
+                bytes(transcript_upload.getbuffer()),
+            )
+        else:
+            st.button(
+                "Import transcript",
+                key="narration-transcript-import-disabled",
+                disabled=True,
+                width="stretch",
+            )
+
+
+def _show_caption_timing_status(store: ProjectStore, narration: Path | None) -> None:
+    script = _load_if(store, "script/script.json", ScriptManifest)
+    if script is None:
+        st.info("Caption timing becomes available after script generation and approval.")
+        return
+    narration_duration = probe_duration(narration) if narration is not None else None
+    try:
+        resolution = resolve_caption_timing(
+            store,
+            script,
+            target_duration=narration_duration,
+        )
+    except (OSError, ValueError, RuntimeError) as exc:
+        st.error(f"Caption timing is unavailable: {exc}")
+        return
+    if resolution.fallback_reason is not None:
+        st.warning(
+            f"Caption timing source: {resolution.timing_source}. "
+            f"Fallback: {resolution.fallback_reason}."
+        )
+    else:
+        st.success(f"Caption timing source: {resolution.timing_source}.")
+
+
+def _show_narration(store: ProjectStore) -> None:
+    project = store.project()
+    st.subheader("Narration mode")
+    selected_mode = st.selectbox(
+        "Delivery mode",
+        NARRATION_MODES,
+        index=NARRATION_MODES.index(project.narration_mode),
+        key="narration-step-mode",
+    )
+    _perform(
+        "Apply delivery mode",
+        "narration-step-mode-apply",
+        _set_narration_mode,
+        store,
+        selected_mode,
+        disabled=selected_mode == project.narration_mode,
+    )
+    if project.narration_mode == "silent-reviewed":
+        st.warning(
+            "Silent-reviewed is an explicit approval path. Captions and visual pacing still "
+            "require review."
+        )
+    else:
+        st.info(
+            "Narrated mode requires rights-cleared narration for final export. Generate it "
+            "locally below or import an existing recording."
+        )
+    narration = None
+    narration_error = None
+    try:
+        narration = active_audio(store)
+    except (OSError, ValueError) as exc:
+        narration_error = str(exc)
+    if narration_error:
+        st.error(narration_error)
+    elif narration:
+        duration = probe_duration(narration)
+        st.success(
+            f"Active narration: {narration.name}"
+            + (f" · {duration:.2f} s" if duration is not None else " · duration unavailable")
+        )
+        st.audio(str(narration))
+    else:
+        st.info(
+            "No narration is active. Generate it locally below or use the optional import path."
+        )
+    _show_local_narration_tools(store)
+    st.divider()
+    _show_optional_imported_narration(store, narration)
+    transcript = None
+    transcript_error = None
+    if narration:
+        try:
+            transcript = active_transcript(store)
+        except (OSError, ValueError) as exc:
+            transcript_error = str(exc)
+    if transcript_error:
+        st.error(transcript_error)
+    elif transcript:
+        st.success(f"Hash-bound narration transcript: {transcript[1].name}")
+        with st.expander("Review narration transcript"):
+            st.text(transcript[0])
+    _show_sound_design_tools(store)
+    _perform("Generate caption sidecars", "captions-generate", _generate_captions, store)
+    _show_caption_timing_status(store, narration)
+    for extension in ("srt", "vtt"):
+        path = store.path(f"captions/captions.{extension}")
+        if path.is_file():
+            st.download_button(
+                f"Download {extension.upper()}",
+                path.read_bytes(),
+                file_name=path.name,
+                mime="text/plain",
+                key=f"caption-download-{extension}",
+            )
+        else:
+            st.warning(f"{extension.upper()} captions are missing.")
+    st.caption(
+        "When narration duration is readable, deterministic caption and scene timing scales to "
+        "that duration. A hash-bound transcript enables deterministic narration-to-script QA; "
+        "otherwise final review must compare the recording manually."
+    )
+
+
+def _show_preview(store: ProjectStore) -> None:
+    st.caption("Every preview has a visible UNREVIEWED watermark, even after other gates pass.")
+    _perform("Render review preview", "preview-render", render_video, store, True)
+    preview = store.path("renders/previews/preview.mp4")
+    if preview.is_file():
+        st.video(str(preview))
+        st.caption(
+            f"{preview.relative_to(store.root).as_posix()} · {preview.stat().st_size:,} bytes"
+        )
+    else:
+        st.info("No preview exists yet.")
+    contact_sheet = store.path("renders/previews/contact-sheet.png")
+    if contact_sheet.is_file():
+        st.subheader("Representative frames")
+        st.image(str(contact_sheet), caption="Deterministic six-frame contact sheet")
+
+
+def _show_qa(store: ProjectStore) -> None:
+    _show_creative_findings(store)
+    st.subheader("Technical and export QA")
+    first, second = st.columns(2)
+    with first:
+        _perform("Run preview QA", "qa-run-preview", _run_preview_qa, store)
+    with second:
+        _perform(
+            "Generate cited evidence page",
+            "qa-generate-evidence",
+            generate_evidence_page,
+            store,
+            store.path("renders/previews/evidence.html"),
+        )
+    report = _load_if(store, "renders/previews/qa-report.json", QAReport)
+    if report is None:
+        st.info("Render a preview, then run QA.")
+        return
+    for check in report.checks:
+        message = f"{check.check_id}: {check.message}"
+        if check.status == "pass":
+            st.success(message)
+        elif check.status == "warning":
+            st.warning(message)
+        else:
+            st.error(message)
+    if report.export_blockers:
+        st.error("Export blockers:\n\n- " + "\n- ".join(report.export_blockers))
+    else:
+        st.success("Preview QA has no hard blockers. Watch it before final approval.")
+
+
+def _show_export(store: ProjectStore, reviewer: str) -> None:
+    project = store.project()
+    blockers = _export_blockers(store)
+    pre_final_blockers = [
+        item
+        for item in blockers
+        if not item.startswith("final gate") and item != "final render is missing"
+    ]
+    if blockers:
+        st.error("Export is blocked:\n\n- " + "\n- ".join(blockers))
+    else:
+        st.success("All gates, artifact hashes, media checks, and rights checks are current.")
+    _perform(
+        "Approve reviewed preview for final export",
+        "final-approve",
+        approve_final,
+        store,
+        reviewer,
+        disabled=bool(pre_final_blockers),
+    )
+    project = store.project()
+    final_is_current = False
+    if project.approvals.final == ReviewStatus.APPROVED:
+        try:
+            final_is_current = has_current_approval(store, "final", project.project_id)
+        except (OSError, ValueError):
+            final_is_current = False
+    _perform(
+        "Render and QA unwatermarked final",
+        "final-render",
+        _render_final,
+        store,
+        disabled=not final_is_current,
+    )
+    _perform(
+        "Create portable export",
+        "final-export",
+        export_project,
+        store,
+        disabled=bool(_export_blockers(store)),
+    )
+    final_video = store.path("renders/final/final.mp4")
+    if final_video.is_file():
+        st.subheader("Final render")
+        st.video(str(final_video))
+    exported = store.path("export")
+    files = sorted(path.name for path in exported.iterdir() if path.is_file())
+    if files:
+        st.subheader("Portable export files")
+        st.write(files)
+
+
+def _show_cover_experiment_creation(store: ProjectStore) -> None:
+    with st.expander("Create a controlled cover experiment", expanded=False):
+        st.caption(
+            "Uses one current, approved, unwatermarked export for every variant and changes "
+            "only the reviewed cover. Rendering stays local and creates no platform post."
+        )
+        try:
+            covers = _load_if(store, "storyboard/covers.json", CoverManifest)
+            selection = _load_if(store, "storyboard/cover-selection.json", CoverSelection)
+        except (OSError, ValueError) as exc:
+            st.error(f"Reviewed cover state is invalid: {exc}")
+            return
+        if covers is None or selection is None:
+            st.info("Generate and select reviewed cover directions before creating an experiment.")
+            return
+        candidate_labels = {item.candidate_id: item.headline for item in covers.candidates}
+        candidate_ids = [item.candidate_id for item in covers.candidates]
+        selected_candidates = st.multiselect(
+            "Reviewed cover candidates",
+            candidate_ids,
+            default=candidate_ids,
+            format_func=lambda item: f"{candidate_labels[item]} ({item})",
+            key="experiment-create-candidates",
+            help="The current selected cover must remain included as the control.",
+        )
+        st.caption(f"Current control cover: {selection.selected_candidate_id}")
+        name = st.text_input(
+            "Experiment name",
+            value="Cover engagement test",
+            key="experiment-create-name",
+        )
+        hypothesis = st.text_area(
+            "Specific hypothesis",
+            value=(
+                "A reviewed alternative cover will improve completion rate while the video "
+                "and factual content remain identical."
+            ),
+            key="experiment-create-hypothesis",
+        )
+        platform = st.selectbox(
+            "Organic platform",
+            ("tiktok", "instagram-reels"),
+            key="experiment-create-platform",
+        )
+        metric = st.selectbox(
+            "Primary aggregate metric",
+            ("completion-rate", "skip-rate"),
+            key="experiment-create-metric",
+        )
+        minimum_views = st.number_input(
+            "Minimum views per variant",
+            min_value=100,
+            max_value=10_000_000,
+            value=500,
+            step=100,
+            key="experiment-create-minimum-views",
+        )
+        _perform(
+            "Create cover experiment",
+            "experiment-create",
+            _create_cover_experiment,
+            store,
+            name,
+            hypothesis,
+            platform,
+            selected_candidates,
+            metric,
+            int(minimum_views),
+            disabled=(
+                len(selected_candidates) < 2
+                or selection.selected_candidate_id not in selected_candidates
+            ),
+        )
+
+
+def _show_experiment_variants(
+    store: ProjectStore,
+    manifest: ExperimentManifest,
+    experiment_store: ExperimentStore,
+    reviewer: str,
+) -> None:
+    st.subheader("Immutable variants")
+    st.caption(
+        "Review the rendered cover, role, and full content hashes. Approval binds every variant "
+        "to identical media, facts, evidence, limitation, and rights state."
+    )
+    columns = st.columns(len(manifest.variants))
+    for column, variant in zip(columns, manifest.variants, strict=True):
+        with column, st.container(border=True):
+            st.markdown(f"#### {variant.label}")
+            st.caption(
+                f"{variant.role.value} · {variant.review_status.value} · {variant.variant_id}"
+            )
+            if variant.cover_path is None or variant.cover_hash is None:
+                st.error("Reviewed cover artifact is missing from this variant.")
+            else:
+                cover = store.path(variant.cover_path)
+                if cover.is_file() and sha256_file(cover) == variant.cover_hash:
+                    st.image(str(cover), caption=variant.label, width="stretch")
+                else:
+                    st.error("Cover bytes are missing or stale; approval is blocked.")
+            st.text(f"Cover SHA-256: {variant.cover_hash or 'missing'}")
+            st.text(f"Media SHA-256: {variant.media_hash}")
+            with st.expander("Locked provenance hashes"):
+                st.text(f"Facts: {variant.locked_factual_hash}")
+                st.text(f"Evidence: {variant.evidence_hash}")
+                st.text(f"Claims: {variant.claims_hash}")
+                st.text(f"Limitation: {variant.limitation_hash}")
+                st.text(f"Rights: {variant.rights_hash}")
+    _perform(
+        "Approve experiment and all variants",
+        f"experiment-approve-{manifest.experiment_id}",
+        approve_experiment,
+        experiment_store,
+        reviewer,
+        disabled=manifest.review_status is ReviewStatus.APPROVED,
+    )
+
+
+def _load_variant_publication_packages(
+    store: ProjectStore,
+    manifest: ExperimentManifest,
+    variant_id: str,
+) -> list[tuple[Path, OrganicPublicationPackage]]:
+    root = store.path(
+        f"experiments/{manifest.experiment_id}/publication/{variant_id}/{manifest.platform.value}"
+    )
+    if not root.is_dir():
+        return []
+    packages: list[tuple[Path, OrganicPublicationPackage]] = []
+    for path in sorted(root.glob("organic-package-*/package-manifest.json")):
+        if path.is_symlink() or path.parent.is_symlink():
+            raise ValueError("publication package cannot use symbolic links")
+        packages.append((path, load_model(within(store.root, path), OrganicPublicationPackage)))
+    return packages
+
+
+def _show_experiment_publication(
+    store: ProjectStore,
+    manifest: ExperimentManifest,
+    reviewer: str,
+) -> None:
+    st.subheader("Manual organic packages")
+    st.warning(
+        "techshort only creates local, immutable handoff packages. It does not log into an "
+        "account, upload a file, publish a post, or claim that publication occurred."
+    )
+    variant_ids = [item.variant_id for item in manifest.variants]
+    variant_labels = {item.variant_id: item.label for item in manifest.variants}
+    selected_variant_id = st.selectbox(
+        "Package variant",
+        variant_ids,
+        format_func=lambda item: f"{variant_labels[item]} ({item})",
+        key=f"publication-variant-{manifest.experiment_id}",
+    )
+    title = st.text_input(
+        "Reviewed post title",
+        value=store.project().title,
+        key=f"publication-title-{manifest.experiment_id}",
+    )
+    post_copy = st.text_area(
+        "Reviewed post copy",
+        key=f"publication-copy-{manifest.experiment_id}",
+        help="Do not add factual claims that are absent from the approved explainer.",
+    )
+    alt_text = st.text_area(
+        "Accessible alt text",
+        key=f"publication-alt-{manifest.experiment_id}",
+    )
+    hashtags = st.text_input(
+        "Hashtags (comma or space separated, maximum eight)",
+        key=f"publication-hashtags-{manifest.experiment_id}",
+    )
+    evidence_url = st.text_input(
+        "Public evidence or correction URL (optional)",
+        key=f"publication-evidence-url-{manifest.experiment_id}",
+    )
+    _perform(
+        "Prepare strict publication request",
+        f"publication-request-prepare-{manifest.experiment_id}",
+        _prepare_experiment_publication_request,
+        store,
+        manifest.experiment_id,
+        selected_variant_id,
+        title,
+        post_copy,
+        alt_text,
+        hashtags,
+        evidence_url,
+        disabled=(
+            manifest.review_status is not ReviewStatus.APPROVED
+            or not title.strip()
+            or not post_copy.strip()
+            or not alt_text.strip()
+        ),
+    )
+
+    request_root = store.path(
+        f"experiments/{manifest.experiment_id}/publication-requests/{selected_variant_id}"
+    )
+    request_paths = sorted(request_root.glob("request-*.json")) if request_root.is_dir() else []
+    if not request_paths:
+        st.info("Prepare a reviewed request before building a pending package.")
+        return
+    request_by_relative = {path.relative_to(store.root).as_posix(): path for path in request_paths}
+    selected_request_relative = st.selectbox(
+        "Prepared request",
+        list(request_by_relative),
+        key=f"publication-request-select-{manifest.experiment_id}-{selected_variant_id}",
+    )
+    selected_request_path = request_by_relative[selected_request_relative]
+    try:
+        request = load_model(selected_request_path, OrganicPackageRequest)
+    except (OSError, ValueError) as exc:
+        st.error(f"Prepared publication request is invalid: {exc}")
+        return
+    st.caption(
+        f"Request {selected_request_path.name} · {len(request.hashtags)} hashtag(s) · "
+        f"evidence link {'included' if request.evidence_url else 'not included'}"
+    )
+    _perform(
+        "Build pending immutable package",
+        f"publication-package-build-{manifest.experiment_id}-{selected_variant_id}",
+        _build_pending_publication_package,
+        store,
+        selected_request_path,
+    )
+
+    try:
+        packages = _load_variant_publication_packages(store, manifest, selected_variant_id)
+    except (OSError, ValueError) as exc:
+        st.error(f"Publication package manifest is invalid: {exc}")
+        return
+    if not packages:
+        st.info("No immutable package exists for this variant yet.")
+        return
+    st.dataframe(
+        [
+            {
+                "package": package.package_id,
+                "consent": package.consent.state,
+                "manual upload authorized": package.manual_upload_authorized,
+                "automated upload": package.automated_upload,
+                "claimed posted": package.claimed_posted,
+                "package hash": package.package_hash,
+            }
+            for _, package in packages
+        ],
+        hide_index=True,
+        width="stretch",
+    )
+    try:
+        request_input_hash = organic_package_input_hash(store, request)
+    except (OSError, ValueError) as exc:
+        st.error(f"Prepared publication request is stale: {exc}")
+        return
+    granted = [
+        package
+        for _, package in packages
+        if package.consent.state == "granted" and package.package_input_hash == request_input_hash
+    ]
+    if granted:
+        st.success(
+            f"Exact request already has granted package {granted[-1].package_id}. "
+            "No upload or publication was performed."
+        )
+        return
+    pending = [
+        (path, package)
+        for path, package in packages
+        if package.consent.state == "pending" and package.package_input_hash == request_input_hash
+    ]
+    if not pending:
+        st.info("No pending package matches the selected reviewed request.")
+        return
+    pending_by_id = {package.package_id: (path, package) for path, package in pending}
+    selected_package_id = st.selectbox(
+        "Pending package for consent",
+        list(pending_by_id),
+        key=f"publication-pending-select-{manifest.experiment_id}-{selected_variant_id}",
+    )
+    selected_manifest_path, _ = pending_by_id[selected_package_id]
+    st.caption("Type this exact phrase to authorize manual publication of this package only:")
+    st.code(GRANT_CONFIRMATION, language=None)
+    confirmation = st.text_input(
+        "Exact manual-publication consent phrase",
+        key=f"publication-consent-{manifest.experiment_id}-{selected_variant_id}",
+    )
+    _perform(
+        "Build granted-consent package",
+        f"publication-consent-grant-{manifest.experiment_id}-{selected_variant_id}",
+        _grant_publication_package,
+        store,
+        selected_request_path,
+        selected_manifest_path,
+        reviewer,
+        confirmation,
+        disabled=confirmation != GRANT_CONFIRMATION,
+    )
+    st.caption(
+        "Granting consent authorizes a person to upload only the exact hash-bound package. "
+        "The application still performs no upload or publication."
+    )
+
+
+def _show_experiment_analysis(
+    store: ProjectStore,
+    manifest: ExperimentManifest,
+    experiment_store: ExperimentStore,
+    reviewer: str,
+) -> None:
+    st.subheader("Aggregate observations and analysis")
+    st.caption(
+        "Import cumulative post-level aggregates only. JSON and CSV are limited to 256 KiB and "
+        "100 rows; person-level identifiers or events are rejected."
+    )
+    template_format = st.selectbox(
+        "Blank aggregate template format",
+        ("csv", "json"),
+        key=f"experiment-template-format-{manifest.experiment_id}",
+    )
+    try:
+        template = build_metrics_template(
+            experiment_store, cast(Literal["csv", "json"], template_format)
+        )
+    except (OSError, ValueError) as exc:
+        st.info(f"Blank metrics template is unavailable: {exc}")
+    else:
+        st.download_button(
+            "Download blank aggregate template",
+            data=template.content,
+            file_name=f"{manifest.experiment_id}-aggregate-metrics.{template.format}",
+            mime="application/json" if template.format == "json" else "text/csv",
+            key=f"experiment-template-download-{manifest.experiment_id}",
+            width="stretch",
+        )
+        st.caption(template.guidance)
+    upload = st.file_uploader(
+        "Aggregate observation JSON or CSV",
+        type=["json", "csv"],
+        key=f"experiment-observations-upload-{manifest.experiment_id}",
+    )
+    if upload is None:
+        st.button(
+            "Import aggregate observations",
+            key=f"experiment-observations-import-disabled-{manifest.experiment_id}",
+            disabled=True,
+            width="stretch",
+        )
+    else:
+        _perform(
+            "Import aggregate observations",
+            f"experiment-observations-import-{manifest.experiment_id}",
+            _import_uploaded_observations,
+            store,
+            manifest.experiment_id,
+            upload.name,
+            bytes(upload.getbuffer()),
+        )
+    try:
+        observation_log = experiment_store.observations()
+    except (OSError, ValueError) as exc:
+        st.error(f"Aggregate observation log is invalid: {exc}")
+        return
+    if observation_log.snapshots:
+        st.dataframe(
+            [
+                {
+                    "variant": item.variant_id,
+                    "publication reference": item.publication_reference,
+                    "window end": item.window_ended_at.isoformat(),
+                    "views": item.view_count,
+                    "completed": item.completed_view_count,
+                    "skipped": item.skipped_view_count,
+                    "total watch seconds": item.total_watch_time_seconds,
+                }
+                for item in observation_log.snapshots
+            ],
+            hide_index=True,
+            width="stretch",
+        )
+    else:
+        st.info("No aggregate observations have been imported.")
+    _perform(
+        "Analyze latest aggregate observations",
+        f"experiment-analyze-{manifest.experiment_id}",
+        analyze_experiment,
+        experiment_store,
+        disabled=manifest.review_status is not ReviewStatus.APPROVED,
+    )
+    try:
+        recommendations = experiment_store.recommendations().recommendations
+    except (OSError, ValueError) as exc:
+        st.error(f"Experiment recommendation log is invalid: {exc}")
+        return
+    if not recommendations:
+        st.info("No analysis recommendation exists.")
+        return
+    recommendation = recommendations[-1]
+    st.subheader("Latest recommendation")
+    if recommendation.review_status is ReviewStatus.STALE:
+        st.warning(
+            f"This recommendation is stale: {recommendation.invalidation_reason or 'new data'}"
+        )
+    st.write(recommendation.summary)
+    st.caption(
+        f"{recommendation.action.value} · {recommendation.primary_metric.value} · "
+        f"review: {recommendation.review_status.value} · {recommendation.recommendation_id}"
+    )
+    st.dataframe(
+        [
+            {
+                "treatment": item.treatment_variant_id,
+                "status": item.status.value,
+                "control value": item.control_value,
+                "treatment value": item.treatment_value,
+                "control interval": (
+                    f"{item.control_interval.lower:.4f}–{item.control_interval.upper:.4f}"
+                    if item.control_interval is not None
+                    else "not available"
+                ),
+                "treatment interval": (
+                    f"{item.treatment_interval.lower:.4f}–{item.treatment_interval.upper:.4f}"
+                    if item.treatment_interval is not None
+                    else "not available"
+                ),
+                "control views": item.control_views,
+                "treatment views": item.treatment_views,
+            }
+            for item in recommendation.comparisons
+        ],
+        hide_index=True,
+        width="stretch",
+    )
+    for uncertainty in recommendation.uncertainty:
+        st.warning(f"Analysis uncertainty: {uncertainty}")
+    conclusive = recommendation.action is not RecommendationAction.COLLECT_MORE_DATA
+    _perform(
+        "Approve conclusive recommendation",
+        f"experiment-recommendation-approve-{recommendation.recommendation_id}",
+        approve_recommendation,
+        experiment_store,
+        recommendation.recommendation_id,
+        reviewer,
+        disabled=(not conclusive or recommendation.review_status is not ReviewStatus.PENDING),
+    )
+    st.warning(
+        "Applying an approved cover recommendation may change the selected cover and will "
+        "invalidate storyboard, rights, and final approval. It never changes the evidence or "
+        "publishes to a platform. Review and re-render every invalidated downstream gate."
+    )
+    _perform(
+        "Apply approved cover recommendation",
+        f"experiment-recommendation-apply-{recommendation.recommendation_id}",
+        apply_approved_cover_recommendation,
+        experiment_store,
+        recommendation.recommendation_id,
+        reviewer,
+        disabled=(
+            recommendation.review_status is not ReviewStatus.APPROVED
+            or manifest.variable is not ExperimentVariable.COVER
+        ),
+    )
+    application_path = store.path(f"experiments/{manifest.experiment_id}/applications.json")
+    if application_path.is_file():
+        try:
+            applications = load_model(application_path, RecommendationApplicationLog)
+        except (OSError, ValueError) as exc:
+            st.error(f"Recommendation application log is invalid: {exc}")
+            return
+        if applications.applications:
+            application = applications.applications[-1]
+            st.success(
+                f"Application receipt {application.application_id}: selected "
+                f"{application.applied_candidate_id}."
+            )
+            if application.invalidated_gates:
+                st.warning("Invalidated gates: " + ", ".join(application.invalidated_gates) + ".")
+
+
+def _show_organic_experiments(store: ProjectStore, reviewer: str) -> None:
+    st.caption(
+        "Controlled organic experiments compare reviewed variants using manually imported, "
+        "aggregate platform observations. There is no account connection or automatic posting."
+    )
+    _show_cover_experiment_creation(store)
+    try:
+        experiment_ids = list_experiment_ids(store)
+    except (OSError, ValueError) as exc:
+        st.error(f"Experiment index is unavailable: {exc}")
+        return
+    if not experiment_ids:
+        st.info("No organic experiment exists for this project.")
+        return
+    selected_experiment_id = st.selectbox(
+        "Experiment",
+        experiment_ids,
+        key="organic-experiment-selector",
+    )
+    experiment_store = ExperimentStore(store, selected_experiment_id)
+    try:
+        manifest = experiment_store.manifest()
+        status = experiment_status(experiment_store)
+    except (OSError, ValueError) as exc:
+        st.error(f"Experiment is invalid: {exc}")
+        return
+    st.subheader(manifest.name)
+    st.write(manifest.hypothesis)
+    first, second, third, fourth = st.columns(4)
+    first.metric("Platform", manifest.platform.value)
+    second.metric("Variable", manifest.variable.value)
+    third.metric("Observed", f"{status.observed_variant_count}/{status.variant_count}")
+    fourth.metric("Review", "approved" if status.approved else "pending")
+    if status.blockers:
+        st.warning("Experiment blockers:\n\n- " + "\n- ".join(status.blockers))
+    else:
+        st.success("No current experiment blockers.")
+    _show_experiment_variants(store, manifest, experiment_store, reviewer)
+    _show_experiment_publication(store, manifest, reviewer)
+    _show_experiment_analysis(store, manifest, experiment_store, reviewer)
+
+
+projects_root = Path(os.getenv("TECHSHORT_PROJECTS_ROOT", "projects"))
+slugs = (
+    sorted(path.name for path in projects_root.iterdir() if (path / "project.json").is_file())
+    if projects_root.is_dir()
+    else []
+)
+if not slugs:
+    st.error("No projects found. Run `techshort init <slug>` and ingest a source first.")
+    st.stop()
+
+slug = st.sidebar.selectbox("Project", slugs, key="project-selector")
+reviewer = st.sidebar.text_input(
+    "Reviewer identifier",
+    os.getenv("TECHSHORT_REVIEWER_ID", "local-reviewer"),
+    key="reviewer-identifier",
+)
+step = st.sidebar.radio("Review step", STEPS, key="review-step")
+store = ProjectStore(projects_root, slug)
+
+if not reviewer.strip():
+    st.error("Enter a local reviewer identifier before recording decisions.")
+    st.stop()
+
+if step == "1 Project":
+    _show_project(store)
+elif step == "2 Sources":
+    _show_sources(store)
+elif step == "3 Claims and evidence":
+    _show_claims(store, reviewer)
+elif step == "4 Script":
+    _show_script(store, reviewer)
+elif step == "5 Storyboard and assets":
+    _show_storyboard_and_assets(store, reviewer)
+elif step == "6 Narration and captions":
+    _show_narration(store)
+elif step == "7 Preview":
+    _show_preview(store)
+elif step == "8 QA":
+    _show_qa(store)
+elif step == "9 Export":
+    _show_export(store, reviewer)
+else:
+    _show_organic_experiments(store, reviewer)
+
+with st.sidebar.expander("Append-only review history"):
+    log = _load_if(store, "reviews/review-log.json", ReviewLog)
+    if log is None or not log.reviews:
+        st.caption("No review decisions recorded yet.")
+    else:
+        for decision in reversed(log.reviews[-30:]):
+            suffix = (
+                f" · invalidated: {decision.invalidation_reason}"
+                if decision.invalidated_at is not None
+                else ""
+            )
+            st.text(
+                f"{decision.timestamp.isoformat()} · {decision.decision} · "
+                f"{decision.object_type}/{decision.object_id}{suffix}"
+            )

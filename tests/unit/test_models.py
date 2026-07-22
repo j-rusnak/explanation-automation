@@ -1,0 +1,204 @@
+from __future__ import annotations
+
+import pytest
+from pydantic import ValidationError
+
+from techshort.domain.hashing import stable_hash
+from techshort.domain.models import (
+    AngleCandidate,
+    AngleSelection,
+    AnglesManifest,
+    Asset,
+    ComparisonSide,
+    ProjectManifest,
+    Scene,
+    ScriptManifest,
+    ScriptSegment,
+    VisualSpec,
+    derive_angle_selection_id,
+)
+from techshort.domain.storage import sanitize_filename, validate_slug
+
+
+def test_new_projects_default_to_kinetic_pop_without_breaking_stored_themes() -> None:
+    project = ProjectManifest(project_id="project-new", slug="new", title="New")
+
+    assert project.theme == "kinetic-pop"
+    for theme in ("midnight", "blueprint", "signal-lab", "technical-editorial"):
+        stored = ProjectManifest.model_validate({**project.model_dump(mode="json"), "theme": theme})
+        assert stored.theme == theme
+    with pytest.raises(ValidationError):
+        ProjectManifest.model_validate(
+            {**project.model_dump(mode="json"), "theme": "untrusted-theme"}
+        )
+
+
+def test_schema_rejects_unknown_version_and_fields() -> None:
+    with pytest.raises(ValidationError):
+        ScriptSegment.model_validate(
+            {
+                "schema_version": "2.0.0",
+                "segment_id": "x",
+                "text": "fact",
+                "segment_type": "factual",
+                "claim_ids": ["c"],
+                "approximate_duration": 1,
+            }
+        )
+    with pytest.raises(ValidationError):
+        VisualSpec(title="safe", arbitrary_javascript="alert(1)")  # type: ignore[call-arg]
+
+
+def test_comparison_side_distortion_is_explicit_and_legacy_hash_safe() -> None:
+    legacy = ComparisonSide(label="Before", value="reference")
+    distorted = ComparisonSide(label="Rolling", value="row timing", distorted=True)
+    reference = ComparisonSide(label="Global", value="shared timing", distorted=False)
+
+    assert "distorted" not in legacy.model_dump(mode="json")
+    assert distorted.model_dump(mode="json")["distorted"] is True
+    assert reference.model_dump(mode="json")["distorted"] is False
+    with pytest.raises(ValidationError):
+        ComparisonSide.model_validate(
+            {"label": "Unsafe", "value": "ambiguous", "distorted": "yes"},
+            strict=True,
+        )
+
+
+def test_factual_segment_and_limitation_are_required() -> None:
+    with pytest.raises(ValidationError, match="requires at least one claim"):
+        ScriptSegment(
+            segment_id="s1",
+            text="unsupported",
+            segment_type="factual",
+            approximate_duration=1,
+        )
+    factual = ScriptSegment(
+        segment_id="s1",
+        text="supported",
+        segment_type="factual",
+        claim_ids=["c1"],
+        approximate_duration=1,
+    )
+    with pytest.raises(ValidationError, match="meaningful limitation"):
+        ScriptManifest(
+            version_id="v1",
+            claims_version_id="c1",
+            angles_version_id="angles-1",
+            angle_selection_id="selection-1",
+            angle="everyday-mechanism",
+            segments=[factual],
+        )
+
+
+def test_angles_require_exactly_one_candidate_of_each_kind() -> None:
+    surprising = AngleCandidate(
+        angle="surprising-result",
+        title="Unexpected camera geometry",
+        rationale="Explain a counterintuitive appearance from exact approved claims.",
+        central_claim_ids=["claim-1"],
+    )
+    with pytest.raises(ValidationError, match="each required candidate exactly once"):
+        AnglesManifest(
+            version_id="angles-invalid",
+            claims_version_id="claims-1",
+            candidates=[surprising, surprising, surprising],
+        )
+
+
+def test_angles_reject_duplicate_substance_under_different_labels() -> None:
+    candidates = [
+        AngleCandidate(
+            angle=angle,  # type: ignore[arg-type]
+            title="The same angle",
+            rationale="This duplicated rationale does not create a distinct editorial angle.",
+            central_claim_ids=["claim-1"],
+        )
+        for angle in (
+            "surprising-result",
+            "everyday-mechanism",
+            "engineering-tradeoff",
+        )
+    ]
+    with pytest.raises(ValidationError, match="distinct substantive content"):
+        AnglesManifest(
+            version_id="angles-duplicate",
+            claims_version_id="claims-1",
+            candidates=candidates,
+        )
+
+
+def test_angle_selection_id_is_content_derived() -> None:
+    candidate_hash = "a" * 64
+    expected = derive_angle_selection_id("angles-current", "everyday-mechanism", candidate_hash)
+    selection = AngleSelection(
+        selection_id=expected,
+        angles_version_id="angles-current",
+        selected_angle="everyday-mechanism",
+        selected_candidate_hash=candidate_hash,
+    )
+    assert selection.selection_id == expected
+    with pytest.raises(ValidationError, match="does not match its selected candidate"):
+        AngleSelection(
+            selection_id="selection-forged",
+            angles_version_id="angles-current",
+            selected_angle="everyday-mechanism",
+            selected_candidate_hash=candidate_hash,
+        )
+
+
+@pytest.mark.parametrize("segment_type", ["transition", "cta"])
+def test_nonfactual_label_cannot_bypass_claim_link(segment_type: str) -> None:
+    with pytest.raises(ValidationError, match="requires at least one claim"):
+        ScriptSegment(
+            segment_id="misclassified",
+            text="This factual conclusion has been deliberately misclassified.",
+            segment_type=segment_type,  # type: ignore[arg-type]
+            approximate_duration=1,
+        )
+
+
+def test_stable_hash_and_filename_safety() -> None:
+    assert stable_hash({"b": 2, "a": 1}) == stable_hash({"a": 1, "b": 2})
+    assert sanitize_filename("../hostile name.md") == "hostile-name.md"
+    with pytest.raises(ValueError):
+        validate_slug("../../escape")
+
+
+def test_unknown_rights_can_be_represented_but_not_assumed_safe() -> None:
+    asset = Asset(
+        asset_id="asset-1",
+        asset_type="image",
+        local_path="assets/originals/image.png",
+        sha256="a" * 64,
+        origin="unknown",
+        creator="unknown",
+        license="unknown",
+        rights_status="unknown",
+        embedding_allowed=False,
+    )
+    assert not asset.embedding_allowed
+
+
+def test_scene_numbers_must_be_finite() -> None:
+    with pytest.raises(ValidationError, match="finite number"):
+        VisualSpec(title="safe", series=[1.0, float("nan")])
+
+
+def test_scene_theme_overrides_are_color_token_allowlisted() -> None:
+    base = {
+        "scene_id": "scene-1",
+        "order": 0,
+        "start_time": 0,
+        "duration": 1,
+        "primitive": "KineticText",
+        "script_segment_ids": ["segment-1"],
+        "on_screen_text": "Safe",
+        "visual": {"title": "Safe"},
+        "accessibility_description": "Safe title card",
+        "dependency_hash": "a" * 64,
+    }
+    Scene.model_validate({**base, "theme_overrides": {"accent": "#123ABC"}})
+    with pytest.raises(ValidationError, match="not allowlisted"):
+        Scene.model_validate({**base, "theme_overrides": {"font": "#123ABC"}})
+    with pytest.raises(ValidationError, match="hexadecimal"):
+        Scene.model_validate({**base, "theme_overrides": {"accent": "red"}})

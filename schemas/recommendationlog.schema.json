@@ -1,0 +1,411 @@
+{
+  "$defs": {
+    "ComparisonStatus": {
+      "enum": [
+        "treatment-leading",
+        "control-leading",
+        "inconclusive",
+        "insufficient-sample",
+        "insufficient-data",
+        "noncomparable-window",
+        "aggregate-uncertainty"
+      ],
+      "title": "ComparisonStatus",
+      "type": "string"
+    },
+    "ConfidenceInterval": {
+      "additionalProperties": false,
+      "properties": {
+        "lower": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Lower",
+          "type": "number"
+        },
+        "upper": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Upper",
+          "type": "number"
+        }
+      },
+      "required": [
+        "lower",
+        "upper"
+      ],
+      "title": "ConfidenceInterval",
+      "type": "object"
+    },
+    "ExperimentVariable": {
+      "enum": [
+        "hook",
+        "cover",
+        "pacing",
+        "caption-style",
+        "audio-treatment",
+        "narration-pace"
+      ],
+      "title": "ExperimentVariable",
+      "type": "string"
+    },
+    "MetricName": {
+      "enum": [
+        "views",
+        "average-watch-seconds",
+        "completion-rate",
+        "skip-rate",
+        "like-rate",
+        "comment-rate",
+        "share-rate",
+        "save-rate",
+        "follow-rate"
+      ],
+      "title": "MetricName",
+      "type": "string"
+    },
+    "Recommendation": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/RecommendationAction"
+        },
+        "approval_hash": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approval Hash"
+        },
+        "approved_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approved At"
+        },
+        "comparisons": {
+          "items": {
+            "$ref": "#/$defs/VariantComparison"
+          },
+          "maxItems": 7,
+          "minItems": 1,
+          "title": "Comparisons",
+          "type": "array"
+        },
+        "control_variant_id": {
+          "title": "Control Variant Id",
+          "type": "string"
+        },
+        "experiment_id": {
+          "title": "Experiment Id",
+          "type": "string"
+        },
+        "generated_at": {
+          "format": "date-time",
+          "title": "Generated At",
+          "type": "string"
+        },
+        "invalidated_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Invalidated At"
+        },
+        "invalidation_reason": {
+          "anyOf": [
+            {
+              "maxLength": 300,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Invalidation Reason"
+        },
+        "locked_factual_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Locked Factual Hash",
+          "type": "string"
+        },
+        "primary_metric": {
+          "$ref": "#/$defs/MetricName"
+        },
+        "proposed_value": {
+          "anyOf": [
+            {
+              "maxLength": 100,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Proposed Value"
+        },
+        "proposed_variant_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Proposed Variant Id"
+        },
+        "recommendation_id": {
+          "title": "Recommendation Id",
+          "type": "string"
+        },
+        "review_status": {
+          "$ref": "#/$defs/ReviewStatus",
+          "default": "pending"
+        },
+        "reviewer_identifier": {
+          "anyOf": [
+            {
+              "maxLength": 80,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reviewer Identifier"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "summary": {
+          "maxLength": 500,
+          "minLength": 12,
+          "title": "Summary",
+          "type": "string"
+        },
+        "uncertainty": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 12,
+          "minItems": 1,
+          "title": "Uncertainty",
+          "type": "array"
+        },
+        "variable": {
+          "$ref": "#/$defs/ExperimentVariable"
+        }
+      },
+      "required": [
+        "recommendation_id",
+        "experiment_id",
+        "action",
+        "variable",
+        "control_variant_id",
+        "primary_metric",
+        "comparisons",
+        "locked_factual_hash",
+        "summary",
+        "uncertainty"
+      ],
+      "title": "Recommendation",
+      "type": "object"
+    },
+    "RecommendationAction": {
+      "enum": [
+        "adopt-variant",
+        "keep-control",
+        "collect-more-data"
+      ],
+      "title": "RecommendationAction",
+      "type": "string"
+    },
+    "ReviewStatus": {
+      "enum": [
+        "pending",
+        "approved",
+        "rejected",
+        "stale"
+      ],
+      "title": "ReviewStatus",
+      "type": "string"
+    },
+    "VariantComparison": {
+      "additionalProperties": false,
+      "properties": {
+        "comparison_id": {
+          "title": "Comparison Id",
+          "type": "string"
+        },
+        "confidence_level": {
+          "maximum": 0.99,
+          "minimum": 0.9,
+          "title": "Confidence Level",
+          "type": "number"
+        },
+        "control_interval": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConfidenceInterval"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "control_value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Control Value"
+        },
+        "control_variant_id": {
+          "title": "Control Variant Id",
+          "type": "string"
+        },
+        "control_views": {
+          "minimum": 0,
+          "title": "Control Views",
+          "type": "integer"
+        },
+        "metric": {
+          "$ref": "#/$defs/MetricName"
+        },
+        "observation_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "title": "Observation Ids",
+          "type": "array"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/ComparisonStatus"
+        },
+        "treatment_interval": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConfidenceInterval"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "treatment_value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Treatment Value"
+        },
+        "treatment_variant_id": {
+          "title": "Treatment Variant Id",
+          "type": "string"
+        },
+        "treatment_views": {
+          "minimum": 0,
+          "title": "Treatment Views",
+          "type": "integer"
+        },
+        "uncertainty": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "title": "Uncertainty",
+          "type": "array"
+        }
+      },
+      "required": [
+        "comparison_id",
+        "control_variant_id",
+        "treatment_variant_id",
+        "metric",
+        "status",
+        "confidence_level",
+        "control_views",
+        "treatment_views",
+        "observation_ids",
+        "uncertainty"
+      ],
+      "title": "VariantComparison",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "experiment_id": {
+      "title": "Experiment Id",
+      "type": "string"
+    },
+    "recommendations": {
+      "items": {
+        "$ref": "#/$defs/Recommendation"
+      },
+      "maxItems": 1000,
+      "title": "Recommendations",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "experiment_id"
+  ],
+  "title": "RecommendationLog",
+  "type": "object"
+}

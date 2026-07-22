@@ -1,0 +1,61 @@
+{
+  "schema_version": "1.0.0",
+  "case_id": "golden-timeline",
+  "topic_kind": "timeline",
+  "storyboard_version_id": "storyboard-golden-timeline",
+  "script_version_id": "script-golden-timeline",
+  "pacing": "brisk",
+  "cover": {
+    "cover_id": "cover-golden-timeline", "headline": "A Cache Miss Has Four Distinct Waits",
+    "focal_visual": "four-stage latency timeline", "layout": "timeline-hero",
+    "subtitle": "The slowest stage is visible only in sequence",
+    "citation": "Original cache trace · Request stages", "factual": true
+  },
+  "scenes": [
+    {
+      "scene_id": "s1", "primitive": "Timeline", "layout": "timeline-hero", "duration_seconds": 5,
+      "title": "The request waits in stages", "on_screen_text": "Lookup → Network → Origin → Return", "body": null,
+      "narration": "A cache miss adds lookup, network, origin processing, and return stages.",
+      "factual": true, "citation": "Original cache trace · Request stages", "evidence_label": "MEASURED",
+      "series": [], "labels": [], "x_axis_label": null, "y_axis_label": null, "units": null,
+      "motion_beats": ["lookup-reveal", "network-reveal", "origin-reveal", "return-reveal"],
+      "engagement_role": "cold-open", "motion_intensity": "precise", "flash_events_per_second": 0,
+      "color_encodings": {}, "non_color_cues": []
+    },
+    {
+      "scene_id": "s2", "primitive": "KineticText", "layout": "numeric-hero", "duration_seconds": 4,
+      "title": "Origin work dominates this trace", "on_screen_text": "61 ms at origin", "body": null,
+      "narration": "In this trace, origin processing is the longest measured stage.",
+      "factual": true, "citation": "Original cache trace · Stage durations", "evidence_label": "MEASURED",
+      "series": [], "labels": [], "x_axis_label": null, "y_axis_label": null, "units": null,
+      "motion_beats": ["number-count", "stage-highlight"],
+      "engagement_role": "rehook", "motion_intensity": "precise", "flash_events_per_second": 0,
+      "color_encodings": {}, "non_color_cues": []
+    },
+    {
+      "scene_id": "s3", "primitive": "BeforeAfterOverlay", "layout": "before-after", "duration_seconds": 6,
+      "title": "A hit removes two stages", "on_screen_text": "Origin work disappears", "body": null,
+      "narration": "A cache hit can skip the network trip and origin processing shown here.",
+      "factual": true, "citation": "Original cache trace · Hit comparison", "evidence_label": "MEASURED",
+      "series": [], "labels": [], "x_axis_label": null, "y_axis_label": null, "units": null,
+      "motion_beats": ["miss-path", "hit-overlay", "stages-fade"],
+      "engagement_role": "payoff", "motion_intensity": "precise", "flash_events_per_second": 0,
+      "color_encodings": {}, "non_color_cues": []
+    },
+    {
+      "scene_id": "s4", "primitive": "LimitationCard", "layout": "editorial-card", "duration_seconds": 5,
+      "title": "One trace is not a distribution", "on_screen_text": "Profile repeated requests", "body": null,
+      "narration": "A single request cannot describe normal or worst-case latency by itself.",
+      "factual": true, "citation": "Original cache trace · Scope", "evidence_label": "MEASURED",
+      "series": [], "labels": [], "x_axis_label": null, "y_axis_label": null, "units": null,
+      "motion_beats": ["trace-shrinks", "distribution-in"],
+      "engagement_role": "limitation", "motion_intensity": "calm", "flash_events_per_second": 0,
+      "color_encodings": {}, "non_color_cues": []
+    }
+  ],
+  "captions": [
+    {"cue_id": "c1", "start_seconds": 0, "end_seconds": 3.0, "text": "A miss waits through four distinct stages."},
+    {"cue_id": "c2", "start_seconds": 3.0, "end_seconds": 6.0, "text": "Origin processing dominates this one trace."},
+    {"cue_id": "c3", "start_seconds": 6.0, "end_seconds": 9.2, "text": "A cache hit can remove two of those waits."}
+  ]
+}

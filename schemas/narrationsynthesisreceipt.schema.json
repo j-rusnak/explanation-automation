@@ -1,0 +1,483 @@
+{
+  "$defs": {
+    "KokoroProviderMetadata": {
+      "additionalProperties": false,
+      "description": "Pinned offline neural-provider state bound into a narration receipt.",
+      "properties": {
+        "cache_manifest_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Cache Manifest Hash",
+          "type": "string"
+        },
+        "cache_manifest_path": {
+          "title": "Cache Manifest Path",
+          "type": "string"
+        },
+        "cache_path": {
+          "title": "Cache Path",
+          "type": "string"
+        },
+        "device": {
+          "const": "cpu",
+          "default": "cpu",
+          "title": "Device",
+          "type": "string"
+        },
+        "dtype": {
+          "const": "q8",
+          "default": "q8",
+          "title": "Dtype",
+          "type": "string"
+        },
+        "model_cache_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Model Cache Sha256",
+          "type": "string"
+        },
+        "model_id": {
+          "const": "onnx-community/Kokoro-82M-v1.0-ONNX",
+          "default": "onnx-community/Kokoro-82M-v1.0-ONNX",
+          "title": "Model Id",
+          "type": "string"
+        },
+        "node_helper_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Node Helper Hash",
+          "type": "string"
+        },
+        "offline_mode": {
+          "const": true,
+          "default": true,
+          "title": "Offline Mode",
+          "type": "boolean"
+        },
+        "package_lock_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Package Lock Hash",
+          "type": "string"
+        },
+        "revision": {
+          "const": "1939ad2a8e416c0acfeecc08a694d14ef25f2231",
+          "default": "1939ad2a8e416c0acfeecc08a694d14ef25f2231",
+          "title": "Revision",
+          "type": "string"
+        },
+        "runtime_module_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Runtime Module Hash",
+          "type": "string"
+        },
+        "runtime_version": {
+          "const": "techshort-kokoro-v1",
+          "default": "techshort-kokoro-v1",
+          "title": "Runtime Version",
+          "type": "string"
+        },
+        "speed": {
+          "maximum": 1.5,
+          "minimum": 0.75,
+          "title": "Speed",
+          "type": "number"
+        },
+        "voice_id": {
+          "enum": [
+            "af_heart",
+            "af_bella",
+            "af_nicole",
+            "af_aoede",
+            "af_kore",
+            "af_nova",
+            "af_sarah",
+            "am_fenrir",
+            "am_michael",
+            "am_puck",
+            "bf_emma",
+            "bf_isabella",
+            "bm_fable",
+            "bm_george"
+          ],
+          "title": "Voice Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "voice_id",
+        "speed",
+        "cache_path",
+        "cache_manifest_path",
+        "cache_manifest_hash",
+        "model_cache_sha256",
+        "node_helper_hash",
+        "runtime_module_hash",
+        "package_lock_hash"
+      ],
+      "title": "KokoroProviderMetadata",
+      "type": "object"
+    },
+    "NarrationConcatenationReceipt": {
+      "additionalProperties": false,
+      "description": "Deterministic PCM concatenation parameters for normalized segments.",
+      "properties": {
+        "algorithm": {
+          "const": "pcm-s16le-zero-pause-v1",
+          "default": "pcm-s16le-zero-pause-v1",
+          "title": "Algorithm",
+          "type": "string"
+        },
+        "channels": {
+          "const": 1,
+          "default": 1,
+          "title": "Channels",
+          "type": "integer"
+        },
+        "output_duration_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Output Duration Seconds",
+          "type": "number"
+        },
+        "output_frame_count": {
+          "exclusiveMinimum": 0,
+          "title": "Output Frame Count",
+          "type": "integer"
+        },
+        "pause_frames": {
+          "const": 6720,
+          "default": 6720,
+          "title": "Pause Frames",
+          "type": "integer"
+        },
+        "pause_milliseconds": {
+          "const": 140,
+          "default": 140,
+          "title": "Pause Milliseconds",
+          "type": "integer"
+        },
+        "sample_rate_hz": {
+          "const": 48000,
+          "default": 48000,
+          "title": "Sample Rate Hz",
+          "type": "integer"
+        },
+        "sample_width_bytes": {
+          "const": 2,
+          "default": 2,
+          "title": "Sample Width Bytes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "output_frame_count",
+        "output_duration_seconds"
+      ],
+      "title": "NarrationConcatenationReceipt",
+      "type": "object"
+    },
+    "NarrationEngineEvent": {
+      "additionalProperties": false,
+      "description": "One bounded word-progress event emitted by the local speech engine.",
+      "properties": {
+        "normalized_start_seconds": {
+          "minimum": 0,
+          "title": "Normalized Start Seconds",
+          "type": "number"
+        },
+        "raw_character_count": {
+          "exclusiveMinimum": 0,
+          "title": "Raw Character Count",
+          "type": "integer"
+        },
+        "raw_character_position": {
+          "minimum": 0,
+          "title": "Raw Character Position",
+          "type": "integer"
+        },
+        "spoken_text": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Spoken Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "spoken_text",
+        "normalized_start_seconds",
+        "raw_character_position",
+        "raw_character_count"
+      ],
+      "title": "NarrationEngineEvent",
+      "type": "object"
+    },
+    "NarrationSegmentReceipt": {
+      "additionalProperties": false,
+      "description": "Exact normalized audio and engine provenance for one approved segment.",
+      "properties": {
+        "approval_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Approval Hash",
+          "type": "string"
+        },
+        "duration_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Duration Seconds",
+          "type": "number"
+        },
+        "engine_events": {
+          "items": {
+            "$ref": "#/$defs/NarrationEngineEvent"
+          },
+          "maxItems": 4096,
+          "title": "Engine Events",
+          "type": "array"
+        },
+        "frame_count": {
+          "exclusiveMinimum": 0,
+          "title": "Frame Count",
+          "type": "integer"
+        },
+        "order": {
+          "minimum": 0,
+          "title": "Order",
+          "type": "integer"
+        },
+        "output_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Output Hash",
+          "type": "string"
+        },
+        "output_path": {
+          "title": "Output Path",
+          "type": "string"
+        },
+        "segment_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Segment Id",
+          "type": "string"
+        },
+        "text_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Text Hash",
+          "type": "string"
+        }
+      },
+      "required": [
+        "segment_id",
+        "order",
+        "text_hash",
+        "approval_hash",
+        "output_path",
+        "output_hash",
+        "frame_count",
+        "duration_seconds",
+        "engine_events"
+      ],
+      "title": "NarrationSegmentReceipt",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Strict provenance record for one registered synthetic narration.",
+  "properties": {
+    "audio_asset_id": {
+      "title": "Audio Asset Id",
+      "type": "string"
+    },
+    "concatenation": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/NarrationConcatenationReceipt"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "kokoro": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/KokoroProviderMetadata"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "license_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "License Name"
+    },
+    "output_duration_seconds": {
+      "exclusiveMinimum": 0,
+      "title": "Output Duration Seconds",
+      "type": "number"
+    },
+    "output_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Output Hash",
+      "type": "string"
+    },
+    "output_path": {
+      "title": "Output Path",
+      "type": "string"
+    },
+    "provider": {
+      "enum": [
+        "windows-sapi",
+        "kokoro-local"
+      ],
+      "title": "Provider",
+      "type": "string"
+    },
+    "rate": {
+      "maximum": 10,
+      "minimum": -10,
+      "title": "Rate",
+      "type": "integer"
+    },
+    "required_attribution": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Required Attribution"
+    },
+    "rights_status": {
+      "enum": [
+        "original",
+        "user-owned",
+        "permissively-licensed",
+        "citation-only",
+        "unknown",
+        "restricted"
+      ],
+      "title": "Rights Status",
+      "type": "string"
+    },
+    "schema_version": {
+      "default": "1.0.0",
+      "enum": [
+        "1.0.0",
+        "1.1.0"
+      ],
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "script_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Script Hash",
+      "type": "string"
+    },
+    "script_text_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Script Text Hash",
+      "type": "string"
+    },
+    "script_version_id": {
+      "title": "Script Version Id",
+      "type": "string"
+    },
+    "segment_approval_hashes": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Segment Approval Hashes",
+      "type": "object"
+    },
+    "segment_pause_milliseconds": {
+      "const": 140,
+      "default": 140,
+      "title": "Segment Pause Milliseconds",
+      "type": "integer"
+    },
+    "segments": {
+      "items": {
+        "$ref": "#/$defs/NarrationSegmentReceipt"
+      },
+      "maxItems": 4096,
+      "title": "Segments",
+      "type": "array"
+    },
+    "synthesis_id": {
+      "pattern": "^synthesis-[0-9a-f]{16}$",
+      "title": "Synthesis Id",
+      "type": "string"
+    },
+    "transcript_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Transcript Hash",
+      "type": "string"
+    },
+    "voice_age": {
+      "maxLength": 40,
+      "minLength": 1,
+      "title": "Voice Age",
+      "type": "string"
+    },
+    "voice_culture": {
+      "maxLength": 40,
+      "minLength": 2,
+      "title": "Voice Culture",
+      "type": "string"
+    },
+    "voice_gender": {
+      "maxLength": 40,
+      "minLength": 1,
+      "title": "Voice Gender",
+      "type": "string"
+    },
+    "voice_name": {
+      "maxLength": 200,
+      "minLength": 1,
+      "title": "Voice Name",
+      "type": "string"
+    },
+    "volume": {
+      "maximum": 100,
+      "minimum": 1,
+      "title": "Volume",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "synthesis_id",
+    "provider",
+    "voice_name",
+    "voice_culture",
+    "voice_gender",
+    "voice_age",
+    "rate",
+    "volume",
+    "script_version_id",
+    "script_hash",
+    "script_text_hash",
+    "segment_approval_hashes",
+    "audio_asset_id",
+    "output_path",
+    "output_hash",
+    "output_duration_seconds",
+    "transcript_hash",
+    "rights_status"
+  ],
+  "title": "NarrationSynthesisReceipt",
+  "type": "object"
+}

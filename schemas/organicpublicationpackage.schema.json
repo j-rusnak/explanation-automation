@@ -1,0 +1,318 @@
+{
+  "$defs": {
+    "HumanPublicationConsent": {
+      "additionalProperties": false,
+      "properties": {
+        "confirmation": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confirmation"
+        },
+        "decided_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Decided At"
+        },
+        "experiment_id": {
+          "pattern": "^exp-[0-9a-f]{16}$",
+          "title": "Experiment Id",
+          "type": "string"
+        },
+        "package_input_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Package Input Hash",
+          "type": "string"
+        },
+        "platform": {
+          "enum": [
+            "tiktok",
+            "instagram-reels"
+          ],
+          "title": "Platform",
+          "type": "string"
+        },
+        "receipt_id": {
+          "pattern": "^organic-consent-[0-9a-f]{16}$",
+          "title": "Receipt Id",
+          "type": "string"
+        },
+        "reviewer_identifier": {
+          "anyOf": [
+            {
+              "maxLength": 120,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reviewer Identifier"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "pending",
+            "granted",
+            "declined",
+            "revoked"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "supersedes_receipt_id": {
+          "anyOf": [
+            {
+              "pattern": "^organic-consent-[0-9a-f]{16}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Supersedes Receipt Id"
+        },
+        "variant_id": {
+          "pattern": "^var-[0-9a-f]{16}$",
+          "title": "Variant Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "receipt_id",
+        "experiment_id",
+        "variant_id",
+        "platform",
+        "package_input_hash",
+        "state"
+      ],
+      "title": "HumanPublicationConsent",
+      "type": "object"
+    },
+    "PublicationPackageFile": {
+      "additionalProperties": false,
+      "properties": {
+        "filename": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Filename",
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "video",
+            "cover",
+            "captions-srt",
+            "captions-vtt",
+            "metadata",
+            "checklist",
+            "consent"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size_bytes": {
+          "exclusiveMinimum": 0,
+          "title": "Size Bytes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "role",
+        "filename",
+        "sha256",
+        "size_bytes"
+      ],
+      "title": "PublicationPackageFile",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "automated_upload": {
+      "const": false,
+      "default": false,
+      "title": "Automated Upload",
+      "type": "boolean"
+    },
+    "claimed_posted": {
+      "const": false,
+      "default": false,
+      "title": "Claimed Posted",
+      "type": "boolean"
+    },
+    "claims_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Claims Hash",
+      "type": "string"
+    },
+    "consent": {
+      "$ref": "#/$defs/HumanPublicationConsent"
+    },
+    "evidence_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Evidence Hash",
+      "type": "string"
+    },
+    "experiment_approval_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Experiment Approval Hash",
+      "type": "string"
+    },
+    "experiment_id": {
+      "pattern": "^exp-[0-9a-f]{16}$",
+      "title": "Experiment Id",
+      "type": "string"
+    },
+    "files": {
+      "items": {
+        "$ref": "#/$defs/PublicationPackageFile"
+      },
+      "maxItems": 7,
+      "minItems": 7,
+      "title": "Files",
+      "type": "array"
+    },
+    "limitation_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Limitation Hash",
+      "type": "string"
+    },
+    "locked_factual_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Locked Factual Hash",
+      "type": "string"
+    },
+    "manual_upload_authorized": {
+      "title": "Manual Upload Authorized",
+      "type": "boolean"
+    },
+    "metadata_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Metadata Hash",
+      "type": "string"
+    },
+    "metadata_id": {
+      "pattern": "^organic-metadata-[0-9a-f]{16}$",
+      "title": "Metadata Id",
+      "type": "string"
+    },
+    "package_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Package Hash",
+      "type": "string"
+    },
+    "package_id": {
+      "pattern": "^organic-package-[0-9a-f]{16}$",
+      "title": "Package Id",
+      "type": "string"
+    },
+    "package_input_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Package Input Hash",
+      "type": "string"
+    },
+    "platform": {
+      "enum": [
+        "tiktok",
+        "instagram-reels"
+      ],
+      "title": "Platform",
+      "type": "string"
+    },
+    "provider_name": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "title": "Provider Name",
+      "type": "string"
+    },
+    "rights_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Rights Hash",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "variant_approval_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Variant Approval Hash",
+      "type": "string"
+    },
+    "variant_cover_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Variant Cover Hash",
+      "type": "string"
+    },
+    "variant_id": {
+      "pattern": "^var-[0-9a-f]{16}$",
+      "title": "Variant Id",
+      "type": "string"
+    },
+    "variant_media_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Variant Media Hash",
+      "type": "string"
+    }
+  },
+  "required": [
+    "package_id",
+    "experiment_id",
+    "variant_id",
+    "platform",
+    "provider_name",
+    "package_input_hash",
+    "variant_media_hash",
+    "variant_cover_hash",
+    "experiment_approval_hash",
+    "variant_approval_hash",
+    "locked_factual_hash",
+    "evidence_hash",
+    "claims_hash",
+    "limitation_hash",
+    "rights_hash",
+    "consent",
+    "metadata_id",
+    "metadata_hash",
+    "files",
+    "manual_upload_authorized",
+    "package_hash"
+  ],
+  "title": "OrganicPublicationPackage",
+  "type": "object"
+}

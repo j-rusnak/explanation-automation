@@ -1,0 +1,515 @@
+{
+  "$defs": {
+    "CreativeCaptionInput": {
+      "additionalProperties": false,
+      "properties": {
+        "cue_id": {
+          "title": "Cue Id",
+          "type": "string"
+        },
+        "end_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "End Seconds",
+          "type": "number"
+        },
+        "start_seconds": {
+          "minimum": 0,
+          "title": "Start Seconds",
+          "type": "number"
+        },
+        "text": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cue_id",
+        "start_seconds",
+        "end_seconds",
+        "text"
+      ],
+      "title": "CreativeCaptionInput",
+      "type": "object"
+    },
+    "CreativeCoverInput": {
+      "additionalProperties": false,
+      "properties": {
+        "citation": {
+          "anyOf": [
+            {
+              "maxLength": 300,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Citation"
+        },
+        "cover_id": {
+          "title": "Cover Id",
+          "type": "string"
+        },
+        "factual": {
+          "default": true,
+          "title": "Factual",
+          "type": "boolean"
+        },
+        "focal_visual": {
+          "anyOf": [
+            {
+              "maxLength": 120,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Focal Visual"
+        },
+        "headline": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Headline",
+          "type": "string"
+        },
+        "layout": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Layout",
+          "type": "string"
+        },
+        "subtitle": {
+          "anyOf": [
+            {
+              "maxLength": 300,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Subtitle"
+        }
+      },
+      "required": [
+        "cover_id",
+        "headline",
+        "layout"
+      ],
+      "title": "CreativeCoverInput",
+      "type": "object"
+    },
+    "CreativeRetentionEventInput": {
+      "additionalProperties": false,
+      "properties": {
+        "beat_id": {
+          "title": "Beat Id",
+          "type": "string"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "event_kind": {
+          "enum": [
+            "re-hook",
+            "pattern-interrupt",
+            "evidence-payoff",
+            "limitation-reframe",
+            "final-payoff"
+          ],
+          "title": "Event Kind",
+          "type": "string"
+        },
+        "scheduled_at_seconds": {
+          "maximum": 300,
+          "minimum": 0,
+          "title": "Scheduled At Seconds",
+          "type": "number"
+        }
+      },
+      "required": [
+        "event_id",
+        "beat_id",
+        "scheduled_at_seconds",
+        "event_kind"
+      ],
+      "title": "CreativeRetentionEventInput",
+      "type": "object"
+    },
+    "CreativeRetentionInput": {
+      "additionalProperties": false,
+      "properties": {
+        "cold_open_duration_seconds": {
+          "exclusiveMinimum": 0,
+          "maximum": 30,
+          "title": "Cold Open Duration Seconds",
+          "type": "number"
+        },
+        "cold_open_text": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Cold Open Text",
+          "type": "string"
+        },
+        "deceptive_withholding": {
+          "title": "Deceptive Withholding",
+          "type": "boolean"
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/CreativeRetentionEventInput"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "title": "Events",
+          "type": "array"
+        },
+        "max_attention_gap_seconds": {
+          "exclusiveMinimum": 0,
+          "maximum": 30,
+          "title": "Max Attention Gap Seconds",
+          "type": "number"
+        },
+        "plan_version_id": {
+          "title": "Plan Version Id",
+          "type": "string"
+        },
+        "timing_scale": {
+          "default": 1,
+          "exclusiveMinimum": 0,
+          "maximum": 10,
+          "title": "Timing Scale",
+          "type": "number"
+        },
+        "total_duration_seconds": {
+          "exclusiveMinimum": 0,
+          "maximum": 300,
+          "title": "Total Duration Seconds",
+          "type": "number"
+        },
+        "truth_up_front": {
+          "title": "Truth Up Front",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "plan_version_id",
+        "cold_open_duration_seconds",
+        "cold_open_text",
+        "truth_up_front",
+        "deceptive_withholding",
+        "total_duration_seconds",
+        "max_attention_gap_seconds",
+        "events"
+      ],
+      "title": "CreativeRetentionInput",
+      "type": "object"
+    },
+    "CreativeSceneInput": {
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "anyOf": [
+            {
+              "maxLength": 1800,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Body"
+        },
+        "citation": {
+          "anyOf": [
+            {
+              "maxLength": 400,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Citation"
+        },
+        "color_encodings": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Color Encodings",
+          "type": "object"
+        },
+        "duration_seconds": {
+          "exclusiveMinimum": 0,
+          "maximum": 300,
+          "title": "Duration Seconds",
+          "type": "number"
+        },
+        "engagement_role": {
+          "anyOf": [
+            {
+              "enum": [
+                "cold-open",
+                "setup",
+                "mechanism",
+                "evidence",
+                "rehook",
+                "payoff",
+                "limitation",
+                "resolution"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Engagement Role"
+        },
+        "evidence_label": {
+          "anyOf": [
+            {
+              "maxLength": 80,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Label"
+        },
+        "factual": {
+          "default": true,
+          "title": "Factual",
+          "type": "boolean"
+        },
+        "flash_events_per_second": {
+          "default": 0,
+          "maximum": 30,
+          "minimum": 0,
+          "title": "Flash Events Per Second",
+          "type": "number"
+        },
+        "labels": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 100,
+          "title": "Labels",
+          "type": "array"
+        },
+        "layout": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Layout",
+          "type": "string"
+        },
+        "motion_beats": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Motion Beats",
+          "type": "array"
+        },
+        "motion_intensity": {
+          "default": "precise",
+          "enum": [
+            "calm",
+            "precise",
+            "energetic"
+          ],
+          "title": "Motion Intensity",
+          "type": "string"
+        },
+        "narration": {
+          "default": "",
+          "maxLength": 4000,
+          "title": "Narration",
+          "type": "string"
+        },
+        "non_color_cues": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Non Color Cues",
+          "type": "array"
+        },
+        "on_screen_text": {
+          "default": "",
+          "maxLength": 1200,
+          "title": "On Screen Text",
+          "type": "string"
+        },
+        "primitive": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Primitive",
+          "type": "string"
+        },
+        "scene_id": {
+          "title": "Scene Id",
+          "type": "string"
+        },
+        "series": {
+          "items": {
+            "type": "number"
+          },
+          "maxItems": 100,
+          "title": "Series",
+          "type": "array"
+        },
+        "title": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "units": {
+          "anyOf": [
+            {
+              "maxLength": 60,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Units"
+        },
+        "x_axis_label": {
+          "anyOf": [
+            {
+              "maxLength": 120,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "X Axis Label"
+        },
+        "y_axis_label": {
+          "anyOf": [
+            {
+              "maxLength": 120,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Y Axis Label"
+        }
+      },
+      "required": [
+        "scene_id",
+        "primitive",
+        "layout",
+        "duration_seconds",
+        "title"
+      ],
+      "title": "CreativeSceneInput",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "captions": {
+      "items": {
+        "$ref": "#/$defs/CreativeCaptionInput"
+      },
+      "maxItems": 500,
+      "title": "Captions",
+      "type": "array"
+    },
+    "case_id": {
+      "title": "Case Id",
+      "type": "string"
+    },
+    "cover": {
+      "$ref": "#/$defs/CreativeCoverInput"
+    },
+    "pacing": {
+      "default": "brisk",
+      "enum": [
+        "measured",
+        "brisk",
+        "high-retention"
+      ],
+      "title": "Pacing",
+      "type": "string"
+    },
+    "retention": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CreativeRetentionInput"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "scenes": {
+      "items": {
+        "$ref": "#/$defs/CreativeSceneInput"
+      },
+      "maxItems": 120,
+      "minItems": 1,
+      "title": "Scenes",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "script_version_id": {
+      "title": "Script Version Id",
+      "type": "string"
+    },
+    "storyboard_version_id": {
+      "title": "Storyboard Version Id",
+      "type": "string"
+    },
+    "topic_kind": {
+      "enum": [
+        "mechanism",
+        "chart",
+        "comparison",
+        "timeline",
+        "architecture",
+        "other"
+      ],
+      "title": "Topic Kind",
+      "type": "string"
+    }
+  },
+  "required": [
+    "case_id",
+    "topic_kind",
+    "storyboard_version_id",
+    "script_version_id",
+    "cover",
+    "scenes"
+  ],
+  "title": "CreativeQualityInput",
+  "type": "object"
+}

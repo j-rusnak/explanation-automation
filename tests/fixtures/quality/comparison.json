@@ -1,0 +1,62 @@
+{
+  "schema_version": "1.0.0",
+  "case_id": "golden-comparison",
+  "topic_kind": "comparison",
+  "storyboard_version_id": "storyboard-golden-comparison",
+  "script_version_id": "script-golden-comparison",
+  "pacing": "brisk",
+  "cover": {
+    "cover_id": "cover-golden-comparison", "headline": "Polling and Events Solve Different Problems",
+    "focal_visual": "side-by-side request flow", "layout": "split-hero",
+    "subtitle": "The useful difference is when work happens",
+    "citation": "Original systems note · Delivery models", "factual": true
+  },
+  "scenes": [
+    {
+      "scene_id": "s1", "primitive": "Comparison", "layout": "split-hero", "duration_seconds": 5,
+      "title": "Ask repeatedly or react once", "on_screen_text": "Polling | Events", "body": null,
+      "narration": "Polling asks for changes repeatedly, while events announce a change when it occurs.",
+      "factual": true, "citation": "Original systems note · Delivery models", "evidence_label": "DOCUMENTED",
+      "series": [], "labels": [], "x_axis_label": null, "y_axis_label": null, "units": null,
+      "motion_beats": ["poll-loop", "event-pulse", "contrast-labels"],
+      "engagement_role": "cold-open", "motion_intensity": "precise", "flash_events_per_second": 0,
+      "color_encodings": {"polling": "#0072B2", "events": "#E69F00"},
+      "non_color_cues": ["left-right-position", "direct-labels"]
+    },
+    {
+      "scene_id": "s2", "primitive": "ProcessFlow", "layout": "full-diagram", "duration_seconds": 6,
+      "title": "Polling pays for empty checks", "on_screen_text": "No change still uses a request", "body": null,
+      "narration": "A poll can return no new data even though the request still consumed work.",
+      "factual": true, "citation": "Original systems note · Polling cost", "evidence_label": "DOCUMENTED",
+      "series": [], "labels": [], "x_axis_label": null, "y_axis_label": null, "units": null,
+      "motion_beats": ["request-travels", "empty-response"],
+      "engagement_role": "rehook", "motion_intensity": "precise", "flash_events_per_second": 0,
+      "color_encodings": {}, "non_color_cues": []
+    },
+    {
+      "scene_id": "s3", "primitive": "StateMachine", "layout": "state-focus", "duration_seconds": 6,
+      "title": "Events require delivery handling", "on_screen_text": "Retries and ordering matter", "body": null,
+      "narration": "An event consumer must handle delivery failures, retries, and message ordering.",
+      "factual": true, "citation": "Original systems note · Event handling", "evidence_label": "DOCUMENTED",
+      "series": [], "labels": [], "x_axis_label": null, "y_axis_label": null, "units": null,
+      "motion_beats": ["delivery-attempt", "retry-loop", "ordered-hold"],
+      "engagement_role": "payoff", "motion_intensity": "precise", "flash_events_per_second": 0,
+      "color_encodings": {}, "non_color_cues": []
+    },
+    {
+      "scene_id": "s4", "primitive": "LimitationCard", "layout": "editorial-card", "duration_seconds": 5,
+      "title": "Neither pattern wins everywhere", "on_screen_text": "Choose for the constraints", "body": null,
+      "narration": "The better pattern depends on freshness, scale, and failure requirements.",
+      "factual": true, "citation": "Original systems note · Tradeoff", "evidence_label": "DOCUMENTED",
+      "series": [], "labels": [], "x_axis_label": null, "y_axis_label": null, "units": null,
+      "motion_beats": ["criteria-in", "balance-hold"],
+      "engagement_role": "limitation", "motion_intensity": "calm", "flash_events_per_second": 0,
+      "color_encodings": {}, "non_color_cues": []
+    }
+  ],
+  "captions": [
+    {"cue_id": "c1", "start_seconds": 0, "end_seconds": 2.7, "text": "Polling asks repeatedly for a change."},
+    {"cue_id": "c2", "start_seconds": 2.7, "end_seconds": 5.6, "text": "Events announce a change when it happens."},
+    {"cue_id": "c3", "start_seconds": 5.6, "end_seconds": 8.8, "text": "Each pattern moves complexity somewhere else."}
+  ]
+}

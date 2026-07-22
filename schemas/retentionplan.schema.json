@@ -1,0 +1,613 @@
+{
+  "$defs": {
+    "AntiClickbaitPolicy": {
+      "additionalProperties": false,
+      "properties": {
+        "bounded_curiosity": {
+          "const": true,
+          "default": true,
+          "title": "Bounded Curiosity",
+          "type": "boolean"
+        },
+        "honest_opening": {
+          "const": true,
+          "default": true,
+          "title": "Honest Opening",
+          "type": "boolean"
+        },
+        "no_engagement_bait": {
+          "const": true,
+          "default": true,
+          "title": "No Engagement Bait",
+          "type": "boolean"
+        },
+        "no_exaggerated_certainty": {
+          "const": true,
+          "default": true,
+          "title": "No Exaggerated Certainty",
+          "type": "boolean"
+        },
+        "no_false_urgency": {
+          "const": true,
+          "default": true,
+          "title": "No False Urgency",
+          "type": "boolean"
+        },
+        "payoff_matches_promise": {
+          "const": true,
+          "default": true,
+          "title": "Payoff Matches Promise",
+          "type": "boolean"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "title": "AntiClickbaitPolicy",
+      "type": "object"
+    },
+    "BeatCadence": {
+      "additionalProperties": false,
+      "properties": {
+        "beats": {
+          "items": {
+            "$ref": "#/$defs/CadenceBeat"
+          },
+          "maxItems": 12,
+          "minItems": 6,
+          "title": "Beats",
+          "type": "array"
+        },
+        "max_attention_gap_seconds": {
+          "exclusiveMinimum": 0,
+          "maximum": 5,
+          "title": "Max Attention Gap Seconds",
+          "type": "number"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "total_duration_seconds": {
+          "maximum": 75,
+          "minimum": 45,
+          "title": "Total Duration Seconds",
+          "type": "number"
+        }
+      },
+      "required": [
+        "total_duration_seconds",
+        "max_attention_gap_seconds",
+        "beats"
+      ],
+      "title": "BeatCadence",
+      "type": "object"
+    },
+    "CadenceBeat": {
+      "additionalProperties": false,
+      "properties": {
+        "beat_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Beat Id",
+          "type": "string"
+        },
+        "cadence_role": {
+          "enum": [
+            "open",
+            "develop",
+            "re-hook",
+            "evidence-payoff",
+            "limitation",
+            "resolve"
+          ],
+          "title": "Cadence Role",
+          "type": "string"
+        },
+        "duration_seconds": {
+          "exclusiveMinimum": 0,
+          "maximum": 12,
+          "title": "Duration Seconds",
+          "type": "number"
+        },
+        "ends_with_forward_motion": {
+          "title": "Ends With Forward Motion",
+          "type": "boolean"
+        },
+        "energy": {
+          "enum": [
+            "high",
+            "medium",
+            "low"
+          ],
+          "title": "Energy",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "starts_at_seconds": {
+          "maximum": 75,
+          "minimum": 0,
+          "title": "Starts At Seconds",
+          "type": "number"
+        }
+      },
+      "required": [
+        "beat_id",
+        "starts_at_seconds",
+        "duration_seconds",
+        "energy",
+        "cadence_role",
+        "ends_with_forward_motion"
+      ],
+      "title": "CadenceBeat",
+      "type": "object"
+    },
+    "CuriosityThread": {
+      "additionalProperties": false,
+      "properties": {
+        "claim_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "title": "Claim Ids",
+          "type": "array"
+        },
+        "deceptive_withholding": {
+          "const": false,
+          "default": false,
+          "title": "Deceptive Withholding",
+          "type": "boolean"
+        },
+        "opened_at_beat_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Opened At Beat Id",
+          "type": "string"
+        },
+        "payoff": {
+          "maxLength": 500,
+          "minLength": 12,
+          "title": "Payoff",
+          "type": "string"
+        },
+        "payoff_beat_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Payoff Beat Id",
+          "type": "string"
+        },
+        "question": {
+          "maxLength": 320,
+          "minLength": 8,
+          "title": "Question",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "thread_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Thread Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "thread_id",
+        "question",
+        "opened_at_beat_id",
+        "payoff_beat_id",
+        "payoff",
+        "claim_ids"
+      ],
+      "title": "CuriosityThread",
+      "type": "object"
+    },
+    "FactualLock": {
+      "additionalProperties": false,
+      "description": "Exact claim-content snapshot that creative artifacts may not expand.",
+      "properties": {
+        "approval_hash": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Approval Hash"
+        },
+        "assertion": {
+          "maxLength": 1200,
+          "minLength": 1,
+          "title": "Assertion",
+          "type": "string"
+        },
+        "claim_id": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Claim Id",
+          "type": "string"
+        },
+        "claim_state_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Claim State Hash",
+          "type": "string"
+        },
+        "evidence_span_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "title": "Evidence Span Ids",
+          "type": "array"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "claim_id",
+        "claim_state_hash",
+        "assertion",
+        "evidence_span_ids"
+      ],
+      "title": "FactualLock",
+      "type": "object"
+    },
+    "HonestColdOpen": {
+      "additionalProperties": false,
+      "properties": {
+        "beat_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Beat Id",
+          "type": "string"
+        },
+        "claim_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "title": "Claim Ids",
+          "type": "array"
+        },
+        "deceptive_withholding": {
+          "const": false,
+          "default": false,
+          "title": "Deceptive Withholding",
+          "type": "boolean"
+        },
+        "duration_seconds": {
+          "exclusiveMinimum": 0,
+          "maximum": 5,
+          "title": "Duration Seconds",
+          "type": "number"
+        },
+        "hook_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Hook Id",
+          "type": "string"
+        },
+        "payoff_beat_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Payoff Beat Id",
+          "type": "string"
+        },
+        "promised_payoff": {
+          "maxLength": 500,
+          "minLength": 12,
+          "title": "Promised Payoff",
+          "type": "string"
+        },
+        "reveal_strategy": {
+          "enum": [
+            "show-result-then-explain",
+            "state-mechanism-then-demonstrate",
+            "ask-bounded-question"
+          ],
+          "title": "Reveal Strategy",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 320,
+          "minLength": 8,
+          "title": "Text",
+          "type": "string"
+        },
+        "truth_up_front": {
+          "const": true,
+          "default": true,
+          "title": "Truth Up Front",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "hook_id",
+        "beat_id",
+        "text",
+        "claim_ids",
+        "reveal_strategy",
+        "promised_payoff",
+        "payoff_beat_id",
+        "duration_seconds"
+      ],
+      "title": "HonestColdOpen",
+      "type": "object"
+    },
+    "RetentionEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "beat_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Beat Id",
+          "type": "string"
+        },
+        "claim_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "title": "Claim Ids",
+          "type": "array"
+        },
+        "device": {
+          "enum": [
+            "question-pivot",
+            "visual-mode-change",
+            "source-receipt",
+            "parameter-change",
+            "comparison-switch",
+            "misconception-correction",
+            "callback"
+          ],
+          "title": "Device",
+          "type": "string"
+        },
+        "event_id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Event Id",
+          "type": "string"
+        },
+        "event_kind": {
+          "enum": [
+            "re-hook",
+            "pattern-interrupt",
+            "evidence-payoff",
+            "limitation-reframe",
+            "final-payoff"
+          ],
+          "title": "Event Kind",
+          "type": "string"
+        },
+        "purpose": {
+          "maxLength": 400,
+          "minLength": 8,
+          "title": "Purpose",
+          "type": "string"
+        },
+        "resolves_thread_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 4,
+          "title": "Resolves Thread Ids",
+          "type": "array"
+        },
+        "scheduled_at_seconds": {
+          "maximum": 75,
+          "minimum": 0,
+          "title": "Scheduled At Seconds",
+          "type": "number"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "sound_design": {
+          "anyOf": [
+            {
+              "enum": [
+                "soft-hit",
+                "scan-pulse",
+                "source-click",
+                "contrast-shift",
+                "resolve-tone"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sound Design"
+        }
+      },
+      "required": [
+        "event_id",
+        "beat_id",
+        "scheduled_at_seconds",
+        "event_kind",
+        "device",
+        "purpose",
+        "claim_ids"
+      ],
+      "title": "RetentionEvent",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "angle": {
+      "enum": [
+        "surprising-result",
+        "everyday-mechanism",
+        "engineering-tradeoff"
+      ],
+      "title": "Angle",
+      "type": "string"
+    },
+    "attention_events": {
+      "items": {
+        "$ref": "#/$defs/RetentionEvent"
+      },
+      "maxItems": 15,
+      "minItems": 5,
+      "title": "Attention Events",
+      "type": "array"
+    },
+    "beat_plan_version_id": {
+      "title": "Beat Plan Version Id",
+      "type": "string"
+    },
+    "cadence": {
+      "$ref": "#/$defs/BeatCadence"
+    },
+    "claims_version_id": {
+      "title": "Claims Version Id",
+      "type": "string"
+    },
+    "cold_open": {
+      "$ref": "#/$defs/HonestColdOpen"
+    },
+    "curiosity_threads": {
+      "items": {
+        "$ref": "#/$defs/CuriosityThread"
+      },
+      "maxItems": 4,
+      "minItems": 1,
+      "title": "Curiosity Threads",
+      "type": "array"
+    },
+    "evidence_claim_ids": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 16,
+      "minItems": 1,
+      "title": "Evidence Claim Ids",
+      "type": "array"
+    },
+    "evidence_payoff_beat_id": {
+      "title": "Evidence Payoff Beat Id",
+      "type": "string"
+    },
+    "factual_locks": {
+      "items": {
+        "$ref": "#/$defs/FactualLock"
+      },
+      "minItems": 1,
+      "title": "Factual Locks",
+      "type": "array"
+    },
+    "meaningful_limitation_beat_id": {
+      "title": "Meaningful Limitation Beat Id",
+      "type": "string"
+    },
+    "meaningful_limitation_claim_ids": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 16,
+      "minItems": 1,
+      "title": "Meaningful Limitation Claim Ids",
+      "type": "array"
+    },
+    "narrative_brief_version_id": {
+      "title": "Narrative Brief Version Id",
+      "type": "string"
+    },
+    "policy": {
+      "$ref": "#/$defs/AntiClickbaitPolicy"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "script_version_id": {
+      "title": "Script Version Id",
+      "type": "string"
+    },
+    "target_word_count": {
+      "default": [
+        130,
+        170
+      ],
+      "maxItems": 2,
+      "minItems": 2,
+      "prefixItems": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "integer"
+        }
+      ],
+      "title": "Target Word Count",
+      "type": "array"
+    },
+    "version_id": {
+      "pattern": "^retention-[0-9a-f]{16}$",
+      "title": "Version Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "version_id",
+    "narrative_brief_version_id",
+    "beat_plan_version_id",
+    "script_version_id",
+    "claims_version_id",
+    "angle",
+    "factual_locks",
+    "cold_open",
+    "curiosity_threads",
+    "attention_events",
+    "cadence",
+    "evidence_payoff_beat_id",
+    "evidence_claim_ids",
+    "meaningful_limitation_beat_id",
+    "meaningful_limitation_claim_ids"
+  ],
+  "title": "RetentionPlan",
+  "type": "object"
+}

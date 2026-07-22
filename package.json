@@ -1,0 +1,41 @@
+{
+  "name": "techshort",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "format": "prettier --write renderer",
+    "format:check": "prettier --check renderer",
+    "lint": "eslint renderer/src renderer/scripts",
+    "typecheck": "tsc --noEmit -p renderer/tsconfig.json",
+    "test:renderer": "vitest run --config renderer/vitest.config.ts",
+    "setup": "powershell -ExecutionPolicy Bypass -File scripts/setup.ps1",
+    "test": "powershell -ExecutionPolicy Bypass -File scripts/check.ps1",
+    "demo": "powershell -ExecutionPolicy Bypass -File scripts/demo.ps1",
+    "render-sample": "powershell -ExecutionPolicy Bypass -File scripts/demo.ps1",
+    "render:preview": "node renderer/scripts/render.mjs preview",
+    "render:final": "node renderer/scripts/render.mjs final",
+    "render:cover": "node renderer/scripts/render.mjs cover"
+  },
+  "dependencies": {
+    "@fontsource/atkinson-hyperlegible": "5.2.8",
+    "@remotion/cli": "4.0.489",
+    "@remotion/renderer": "4.0.489",
+    "kokoro-js": "1.2.1",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "remotion": "4.0.489",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.10.13",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "eslint": "10.7.0",
+    "globals": "17.4.0",
+    "prettier": "3.8.2",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.57.0",
+    "vitest": "4.1.10"
+  }
+}

@@ -1,0 +1,118 @@
+{
+  "$defs": {
+    "CreativeQualityCheck": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "enum": [
+            "cover",
+            "clarity",
+            "composition",
+            "motion",
+            "data-visualization",
+            "provenance",
+            "captions",
+            "accessibility",
+            "engagement"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "check_id": {
+          "title": "Check Id",
+          "type": "string"
+        },
+        "details": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Details",
+          "type": "object"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "object_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Object Ids",
+          "type": "array"
+        },
+        "remediation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Remediation"
+        },
+        "status": {
+          "enum": [
+            "pass",
+            "warning",
+            "failure"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "check_id",
+        "category",
+        "status",
+        "message"
+      ],
+      "title": "CreativeQualityCheck",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "case_id": {
+      "title": "Case Id",
+      "type": "string"
+    },
+    "checks": {
+      "items": {
+        "$ref": "#/$defs/CreativeQualityCheck"
+      },
+      "title": "Checks",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "score": {
+      "maximum": 100,
+      "minimum": 0,
+      "title": "Score",
+      "type": "integer"
+    },
+    "status": {
+      "enum": [
+        "pass",
+        "warning",
+        "failure"
+      ],
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "case_id",
+    "status",
+    "score",
+    "checks"
+  ],
+  "title": "CreativeQualityResult",
+  "type": "object"
+}

@@ -1,0 +1,64 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "checked_at": {
+      "format": "date-time",
+      "title": "Checked At",
+      "type": "string"
+    },
+    "credentials_available": {
+      "title": "Credentials Available",
+      "type": "boolean"
+    },
+    "network_checked": {
+      "title": "Network Checked",
+      "type": "boolean"
+    },
+    "next_steps": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "title": "Next Steps",
+      "type": "array"
+    },
+    "provider": {
+      "const": "tiktok-content-posting-api",
+      "default": "tiktok-content-posting-api",
+      "title": "Provider",
+      "type": "string"
+    },
+    "reason": {
+      "maxLength": 800,
+      "minLength": 1,
+      "title": "Reason",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "ready",
+        "authentication-required",
+        "unavailable",
+        "error"
+      ],
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "credentials_available",
+    "network_checked",
+    "checked_at",
+    "reason"
+  ],
+  "title": "TikTokUploadDiagnostic",
+  "type": "object"
+}

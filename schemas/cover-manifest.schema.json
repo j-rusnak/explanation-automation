@@ -1,0 +1,316 @@
+{
+  "$defs": {
+    "CoverCandidate": {
+      "additionalProperties": false,
+      "properties": {
+        "accessibility_description": {
+          "title": "Accessibility Description",
+          "type": "string"
+        },
+        "candidate_id": {
+          "title": "Candidate Id",
+          "type": "string"
+        },
+        "claim_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 6,
+          "minItems": 1,
+          "title": "Claim Ids",
+          "type": "array"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 6,
+          "minItems": 1,
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "headline": {
+          "maxLength": 72,
+          "minLength": 3,
+          "title": "Headline",
+          "type": "string"
+        },
+        "hero": {
+          "discriminator": {
+            "mapping": {
+              "comparison": "#/$defs/CoverComparisonHero",
+              "diagram": "#/$defs/CoverDiagramHero",
+              "scanline": "#/$defs/CoverScanlineHero"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/CoverComparisonHero"
+            },
+            {
+              "$ref": "#/$defs/CoverScanlineHero"
+            },
+            {
+              "$ref": "#/$defs/CoverDiagramHero"
+            }
+          ],
+          "title": "Hero"
+        },
+        "layout": {
+          "enum": [
+            "split-hero",
+            "diagram-hero",
+            "editorial"
+          ],
+          "title": "Layout",
+          "type": "string"
+        },
+        "palette": {
+          "enum": [
+            "kinetic-pop",
+            "blueprint",
+            "signal-lab",
+            "technical-editorial"
+          ],
+          "title": "Palette",
+          "type": "string"
+        },
+        "subheadline": {
+          "anyOf": [
+            {
+              "maxLength": 110,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Subheadline"
+        }
+      },
+      "required": [
+        "candidate_id",
+        "headline",
+        "layout",
+        "palette",
+        "hero",
+        "claim_ids",
+        "evidence_ids",
+        "accessibility_description"
+      ],
+      "title": "CoverCandidate",
+      "type": "object"
+    },
+    "CoverComparisonHero": {
+      "additionalProperties": false,
+      "properties": {
+        "after_label": {
+          "title": "After Label",
+          "type": "string"
+        },
+        "before_label": {
+          "title": "Before Label",
+          "type": "string"
+        },
+        "feature": {
+          "enum": [
+            "straight-edge",
+            "grid",
+            "rotor",
+            "signal"
+          ],
+          "title": "Feature",
+          "type": "string"
+        },
+        "kind": {
+          "const": "comparison",
+          "title": "Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "feature",
+        "before_label",
+        "after_label"
+      ],
+      "title": "CoverComparisonHero",
+      "type": "object"
+    },
+    "CoverDiagramHero": {
+      "additionalProperties": false,
+      "properties": {
+        "edges": {
+          "items": {
+            "$ref": "#/$defs/EdgeSpec"
+          },
+          "maxItems": 18,
+          "title": "Edges",
+          "type": "array"
+        },
+        "kind": {
+          "const": "diagram",
+          "title": "Kind",
+          "type": "string"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/NodeSpec"
+          },
+          "maxItems": 12,
+          "minItems": 2,
+          "title": "Nodes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "nodes"
+      ],
+      "title": "CoverDiagramHero",
+      "type": "object"
+    },
+    "CoverScanlineHero": {
+      "additionalProperties": false,
+      "properties": {
+        "distortion": {
+          "maximum": 1,
+          "minimum": -1,
+          "title": "Distortion",
+          "type": "number"
+        },
+        "kind": {
+          "const": "scanline",
+          "title": "Kind",
+          "type": "string"
+        },
+        "subject": {
+          "enum": [
+            "blade",
+            "pole",
+            "grid",
+            "rotor"
+          ],
+          "title": "Subject",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "subject",
+        "distortion"
+      ],
+      "title": "CoverScanlineHero",
+      "type": "object"
+    },
+    "EdgeSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "target": {
+          "title": "Target",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "target"
+      ],
+      "title": "EdgeSpec",
+      "type": "object"
+    },
+    "NodeSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "state": {
+          "default": "normal",
+          "enum": [
+            "normal",
+            "active",
+            "muted"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "x": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "x",
+        "y"
+      ],
+      "title": "NodeSpec",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "candidates": {
+      "items": {
+        "$ref": "#/$defs/CoverCandidate"
+      },
+      "maxItems": 3,
+      "minItems": 3,
+      "title": "Candidates",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "storyboard_version_id": {
+      "title": "Storyboard Version Id",
+      "type": "string"
+    },
+    "version_id": {
+      "title": "Version Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "version_id",
+    "storyboard_version_id",
+    "candidates"
+  ],
+  "title": "CoverManifest",
+  "type": "object"
+}

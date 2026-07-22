@@ -1,0 +1,118 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "alt_text": {
+      "maxLength": 1000,
+      "minLength": 1,
+      "title": "Alt Text",
+      "type": "string"
+    },
+    "captions_srt": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Captions Srt",
+      "type": "string"
+    },
+    "captions_vtt": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Captions Vtt",
+      "type": "string"
+    },
+    "cover_png": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Cover Png",
+      "type": "string"
+    },
+    "evidence_url": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Evidence Url"
+    },
+    "expected_cover_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Expected Cover Hash",
+      "type": "string"
+    },
+    "expected_media_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Expected Media Hash",
+      "type": "string"
+    },
+    "experiment_id": {
+      "pattern": "^exp-[0-9a-f]{16}$",
+      "title": "Experiment Id",
+      "type": "string"
+    },
+    "final_mp4": {
+      "maxLength": 500,
+      "minLength": 1,
+      "title": "Final Mp4",
+      "type": "string"
+    },
+    "hashtags": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "title": "Hashtags",
+      "type": "array"
+    },
+    "platform": {
+      "enum": [
+        "tiktok",
+        "instagram-reels"
+      ],
+      "title": "Platform",
+      "type": "string"
+    },
+    "post_copy": {
+      "maxLength": 1800,
+      "minLength": 1,
+      "title": "Post Copy",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "title": {
+      "maxLength": 120,
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    },
+    "variant_id": {
+      "pattern": "^var-[0-9a-f]{16}$",
+      "title": "Variant Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "experiment_id",
+    "variant_id",
+    "platform",
+    "final_mp4",
+    "expected_media_hash",
+    "cover_png",
+    "expected_cover_hash",
+    "captions_srt",
+    "captions_vtt",
+    "title",
+    "post_copy",
+    "alt_text"
+  ],
+  "title": "OrganicPackageRequest",
+  "type": "object"
+}

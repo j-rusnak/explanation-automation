@@ -1,0 +1,179 @@
+{
+  "additionalProperties": false,
+  "description": "One append-only observation about an immutable upload attempt.",
+  "properties": {
+    "attempt_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Attempt Hash",
+      "type": "string"
+    },
+    "attempt_id": {
+      "pattern": "^tiktok-upload-attempt-[0-9a-f]{16}$",
+      "title": "Attempt Id",
+      "type": "string"
+    },
+    "error_code": {
+      "anyOf": [
+        {
+          "maxLength": 120,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Code"
+    },
+    "error_message": {
+      "anyOf": [
+        {
+          "maxLength": 1000,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Message"
+    },
+    "intent_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Intent Hash",
+      "type": "string"
+    },
+    "intent_id": {
+      "pattern": "^tiktok-upload-intent-[0-9a-f]{16}$",
+      "title": "Intent Id",
+      "type": "string"
+    },
+    "operation": {
+      "const": "draft-transfer",
+      "default": "draft-transfer",
+      "title": "Operation",
+      "type": "string"
+    },
+    "previous_receipt_id": {
+      "anyOf": [
+        {
+          "pattern": "^tiktok-upload-status-[0-9a-f]{16}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Previous Receipt Id"
+    },
+    "previous_state": {
+      "anyOf": [
+        {
+          "enum": [
+            "initialized",
+            "uploaded",
+            "pending-user-action",
+            "complete",
+            "failed",
+            "ambiguous",
+            "cancelled"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Previous State"
+    },
+    "provider": {
+      "const": "tiktok-content-posting-api",
+      "default": "tiktok-content-posting-api",
+      "title": "Provider",
+      "type": "string"
+    },
+    "provider_updated_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Provider Updated At"
+    },
+    "publish_id": {
+      "anyOf": [
+        {
+          "maxLength": 240,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Publish Id"
+    },
+    "receipt_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Receipt Hash",
+      "type": "string"
+    },
+    "receipt_id": {
+      "pattern": "^tiktok-upload-status-[0-9a-f]{16}$",
+      "title": "Receipt Id",
+      "type": "string"
+    },
+    "recorded_at": {
+      "format": "date-time",
+      "title": "Recorded At",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "sequence_number": {
+      "minimum": 0,
+      "title": "Sequence Number",
+      "type": "integer"
+    },
+    "state": {
+      "enum": [
+        "initialized",
+        "uploaded",
+        "pending-user-action",
+        "complete",
+        "failed",
+        "ambiguous",
+        "cancelled"
+      ],
+      "title": "State",
+      "type": "string"
+    }
+  },
+  "required": [
+    "receipt_id",
+    "receipt_hash",
+    "attempt_id",
+    "attempt_hash",
+    "intent_id",
+    "intent_hash",
+    "sequence_number",
+    "state",
+    "recorded_at"
+  ],
+  "title": "TikTokDraftUploadStatusReceipt",
+  "type": "object"
+}

@@ -1,0 +1,61 @@
+{
+  "schema_version": "1.0.0",
+  "case_id": "golden-architecture",
+  "topic_kind": "architecture",
+  "storyboard_version_id": "storyboard-golden-architecture",
+  "script_version_id": "script-golden-architecture",
+  "pacing": "brisk",
+  "cover": {
+    "cover_id": "cover-golden-architecture", "headline": "A Queue Separates Two Failure Domains",
+    "focal_visual": "producer queue consumer layer stack", "layout": "architecture-hero",
+    "subtitle": "The boundary absorbs bursts but adds state",
+    "citation": "Original architecture note · Queue boundary", "factual": true
+  },
+  "scenes": [
+    {
+      "scene_id": "s1", "primitive": "LayerStack", "layout": "architecture-hero", "duration_seconds": 5,
+      "title": "The queue sits between services", "on_screen_text": "Producer → Queue → Consumer", "body": null,
+      "narration": "The producer writes messages without waiting for the consumer to finish each job.",
+      "factual": true, "citation": "Original architecture note · Queue boundary", "evidence_label": "DOCUMENTED",
+      "series": [], "labels": [], "x_axis_label": null, "y_axis_label": null, "units": null,
+      "motion_beats": ["producer-sends", "queue-holds", "consumer-receives"],
+      "engagement_role": "cold-open", "motion_intensity": "precise", "flash_events_per_second": 0,
+      "color_encodings": {}, "non_color_cues": []
+    },
+    {
+      "scene_id": "s2", "primitive": "ProcessFlow", "layout": "full-diagram", "duration_seconds": 6,
+      "title": "Bursts become a backlog", "on_screen_text": "Work waits instead of vanishing", "body": null,
+      "narration": "During a burst, pending messages accumulate until consumers catch up.",
+      "factual": true, "citation": "Original architecture note · Burst handling", "evidence_label": "DOCUMENTED",
+      "series": [], "labels": [], "x_axis_label": null, "y_axis_label": null, "units": null,
+      "motion_beats": ["burst-arrives", "backlog-grows", "drain-begins"],
+      "engagement_role": "rehook", "motion_intensity": "precise", "flash_events_per_second": 0,
+      "color_encodings": {}, "non_color_cues": []
+    },
+    {
+      "scene_id": "s3", "primitive": "StateMachine", "layout": "state-focus", "duration_seconds": 6,
+      "title": "Retries need explicit states", "on_screen_text": "Ready → Processing → Retry", "body": null,
+      "narration": "Failed work needs retry, timeout, and dead-letter handling rather than silent loss.",
+      "factual": true, "citation": "Original architecture note · Failure handling", "evidence_label": "DOCUMENTED",
+      "series": [], "labels": [], "x_axis_label": null, "y_axis_label": null, "units": null,
+      "motion_beats": ["processing-state", "failure-state", "retry-state"],
+      "engagement_role": "payoff", "motion_intensity": "precise", "flash_events_per_second": 0,
+      "color_encodings": {}, "non_color_cues": []
+    },
+    {
+      "scene_id": "s4", "primitive": "LimitationCard", "layout": "editorial-card", "duration_seconds": 5,
+      "title": "Decoupling adds operational state", "on_screen_text": "Watch depth, age, and retries", "body": null,
+      "narration": "The boundary improves isolation but adds storage, monitoring, and delivery complexity.",
+      "factual": true, "citation": "Original architecture note · Tradeoff", "evidence_label": "DOCUMENTED",
+      "series": [], "labels": [], "x_axis_label": null, "y_axis_label": null, "units": null,
+      "motion_beats": ["benefit-side", "cost-side"],
+      "engagement_role": "limitation", "motion_intensity": "calm", "flash_events_per_second": 0,
+      "color_encodings": {}, "non_color_cues": []
+    }
+  ],
+  "captions": [
+    {"cue_id": "c1", "start_seconds": 0, "end_seconds": 3.0, "text": "A queue separates production from processing."},
+    {"cue_id": "c2", "start_seconds": 3.0, "end_seconds": 6.0, "text": "Bursts wait as a visible backlog."},
+    {"cue_id": "c3", "start_seconds": 6.0, "end_seconds": 9.4, "text": "That isolation also creates new state to operate."}
+  ]
+}

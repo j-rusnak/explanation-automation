@@ -1,0 +1,238 @@
+{
+  "$defs": {
+    "ApprovalState": {
+      "additionalProperties": false,
+      "properties": {
+        "claims": {
+          "$ref": "#/$defs/ReviewStatus",
+          "default": "pending"
+        },
+        "final": {
+          "$ref": "#/$defs/ReviewStatus",
+          "default": "pending"
+        },
+        "rights": {
+          "$ref": "#/$defs/ReviewStatus",
+          "default": "pending"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "script": {
+          "$ref": "#/$defs/ReviewStatus",
+          "default": "pending"
+        },
+        "storyboard": {
+          "$ref": "#/$defs/ReviewStatus",
+          "default": "pending"
+        }
+      },
+      "title": "ApprovalState",
+      "type": "object"
+    },
+    "ReviewStatus": {
+      "enum": [
+        "pending",
+        "approved",
+        "rejected",
+        "stale"
+      ],
+      "title": "ReviewStatus",
+      "type": "string"
+    },
+    "SafeZoneInsets": {
+      "additionalProperties": false,
+      "description": "Resolution-independent insets for shared TikTok/Reels-safe content.",
+      "properties": {
+        "bottom": {
+          "default": 0.17,
+          "maximum": 0.25,
+          "minimum": 0,
+          "title": "Bottom",
+          "type": "number"
+        },
+        "left": {
+          "default": 0.067,
+          "maximum": 0.25,
+          "minimum": 0,
+          "title": "Left",
+          "type": "number"
+        },
+        "right": {
+          "default": 0.14,
+          "maximum": 0.25,
+          "minimum": 0,
+          "title": "Right",
+          "type": "number"
+        },
+        "top": {
+          "default": 0.06,
+          "maximum": 0.25,
+          "minimum": 0,
+          "title": "Top",
+          "type": "number"
+        }
+      },
+      "title": "SafeZoneInsets",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "active_source_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Active Source Id"
+    },
+    "active_versions": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Active Versions",
+      "type": "object"
+    },
+    "approvals": {
+      "$ref": "#/$defs/ApprovalState"
+    },
+    "content_risk": {
+      "default": "low",
+      "enum": [
+        "low",
+        "review",
+        "prohibited"
+      ],
+      "title": "Content Risk",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "dependency_hashes": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Dependency Hashes",
+      "type": "object"
+    },
+    "downstream_valid": {
+      "default": false,
+      "title": "Downstream Valid",
+      "type": "boolean"
+    },
+    "fps": {
+      "default": 30,
+      "title": "Fps",
+      "type": "integer"
+    },
+    "height": {
+      "default": 1920,
+      "title": "Height",
+      "type": "integer"
+    },
+    "modified_at": {
+      "format": "date-time",
+      "title": "Modified At",
+      "type": "string"
+    },
+    "narration_mode": {
+      "default": "narrated",
+      "enum": [
+        "narrated",
+        "silent-reviewed"
+      ],
+      "title": "Narration Mode",
+      "type": "string"
+    },
+    "pacing": {
+      "default": "high-retention",
+      "enum": [
+        "measured",
+        "brisk",
+        "high-retention"
+      ],
+      "title": "Pacing",
+      "type": "string"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "safe_zone": {
+      "$ref": "#/$defs/SafeZoneInsets"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "slug": {
+      "title": "Slug",
+      "type": "string"
+    },
+    "source_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Source Ids",
+      "type": "array"
+    },
+    "stale_artifacts": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Stale Artifacts",
+      "type": "array"
+    },
+    "status": {
+      "default": "draft",
+      "title": "Status",
+      "type": "string"
+    },
+    "target_duration_seconds": {
+      "default": 60,
+      "title": "Target Duration Seconds",
+      "type": "number"
+    },
+    "theme": {
+      "default": "kinetic-pop",
+      "enum": [
+        "midnight",
+        "kinetic-pop",
+        "blueprint",
+        "signal-lab",
+        "technical-editorial"
+      ],
+      "title": "Theme",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "width": {
+      "default": 1080,
+      "title": "Width",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "project_id",
+    "slug",
+    "title"
+  ],
+  "title": "ProjectManifest",
+  "type": "object"
+}
