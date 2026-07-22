@@ -26,6 +26,8 @@ from techshort.rendering.service import (
     _activate_render,
     _archive_active_render,
     _build_render_manifest,
+    _contact_sheet_timestamps,
+    _generate_contact_sheet,
     _generation_prompt_versions,
     _preview_scale,
     _render_manifest_path,
@@ -172,6 +174,67 @@ def test_preview_scale_requires_vertical_project_ratio() -> None:
     assert _preview_scale(1080, 1920) == pytest.approx(1 / 3)
     with pytest.raises(ValueError, match="9:16"):
         _preview_scale(1080, 1080)
+
+
+def test_contact_sheet_samples_stable_scene_interiors_across_timeline() -> None:
+    scene_duration = 6.0
+    duration = 48.0
+    scene_midpoints = [
+        (f"scene-{index + 1}", index * scene_duration + scene_duration / 2) for index in range(8)
+    ]
+
+    timestamps = _contact_sheet_timestamps(scene_midpoints, duration)
+
+    assert timestamps == [3.0, 9.0, 21.0, 27.0, 39.0, 45.0]
+    assert timestamps[0] == scene_midpoints[0][1]
+    assert timestamps[-1] == scene_midpoints[-1][1]
+    scene_edges = [index * scene_duration for index in range(9)]
+    assert all(
+        min(abs(timestamp - edge) for edge in scene_edges) == 3.0 for timestamp in timestamps
+    )
+    targets = [duration * slot / 5 for slot in range(6)]
+    assert all(
+        min(abs(timestamp - target) for timestamp in timestamps) <= 3.0 for target in targets
+    )
+
+
+def test_contact_sheet_extracts_only_selected_scene_midpoints(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    scene_midpoints = [(f"scene-{index + 1}", index * 6.0 + 3.0) for index in range(8)]
+    sampled: list[float] = []
+    frame_size = 270 * 480 * 3
+
+    def fake_run(args: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        sampled.append(float(args[args.index("-ss") + 1]))
+        Path(args[-1]).write_bytes(b"\x00" * frame_size)
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("techshort.rendering.service.subprocess.run", fake_run)
+    destination = tmp_path / "contact-sheet.png"
+
+    _generate_contact_sheet(
+        "ffmpeg",
+        tmp_path / "preview.mp4",
+        destination,
+        48.0,
+        tmp_path,
+        scene_midpoints,
+    )
+
+    assert sampled == [3.0, 9.0, 21.0, 27.0, 39.0, 45.0]
+    assert destination.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
+@pytest.mark.parametrize(
+    "scene_midpoints",
+    [[], [("scene-1", 0.0)], [("scene-1", 4.0), ("scene-2", 4.0)]],
+)
+def test_contact_sheet_rejects_missing_edge_or_unordered_scene_timing(
+    scene_midpoints: list[tuple[str, float]],
+) -> None:
+    with pytest.raises(ValueError, match="contact-sheet"):
+        _contact_sheet_timestamps(scene_midpoints, 12.0)
 
 
 def test_render_manifest_prompt_versions_come_from_generation_receipts(tmp_path: Path) -> None:

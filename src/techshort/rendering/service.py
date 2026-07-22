@@ -697,7 +697,14 @@ def _generate_derivatives(
         raise RuntimeError(f"cover generation failed: {details}")
 
     contact_sheet = directory / "contact-sheet.png"
-    _generate_contact_sheet(ffmpeg, video, contact_sheet, duration, directory)
+    _generate_contact_sheet(
+        ffmpeg,
+        video,
+        contact_sheet,
+        duration,
+        directory,
+        scene_midpoints,
+    )
     outputs = [cover.name, contact_sheet.name]
     for scene_id, timestamp in scene_midpoints:
         if not SAFE_RENDER_ID.fullmatch(scene_id):
@@ -730,21 +737,72 @@ def _generate_derivatives(
     return outputs
 
 
+def _contact_sheet_timestamps(
+    scene_midpoints: list[tuple[str, float]], duration: float
+) -> list[float]:
+    """Select stable scene interiors across the complete rendered timeline."""
+
+    if not math.isfinite(duration) or duration <= 0:
+        raise ValueError("contact-sheet duration must be finite and positive")
+    if not scene_midpoints:
+        raise ValueError("contact-sheet generation requires validated scene timing")
+
+    timestamps: list[float] = []
+    previous = -math.inf
+    for scene_id, timestamp in scene_midpoints:
+        if not SAFE_RENDER_ID.fullmatch(scene_id):
+            raise ValueError(f"unsafe scene ID for contact-sheet sampling: {scene_id}")
+        if (
+            not math.isfinite(timestamp)
+            or timestamp <= 0
+            or timestamp >= duration
+            or timestamp <= previous
+        ):
+            raise ValueError(
+                "contact-sheet scene midpoints must be finite, ordered, and inside the render"
+            )
+        timestamps.append(timestamp)
+        previous = timestamp
+
+    maximum = 6
+    if len(timestamps) <= maximum:
+        return timestamps
+
+    # Match six evenly distributed timeline targets to actual scene interiors.
+    # The first and last targets necessarily select the first and last scenes;
+    # de-duplication handles a long scene spanning more than one target.
+    selected_indices: list[int] = []
+    for slot in range(maximum):
+        target = duration * slot / (maximum - 1)
+        selected = min(
+            range(len(timestamps)),
+            key=lambda index: (abs(timestamps[index] - target), index),
+        )
+        if selected not in selected_indices:
+            selected_indices.append(selected)
+    return [timestamps[index] for index in selected_indices]
+
+
 def _generate_contact_sheet(
-    ffmpeg: str, video: Path, destination: Path, duration: float, temporary: Path
+    ffmpeg: str,
+    video: Path,
+    destination: Path,
+    duration: float,
+    temporary: Path,
+    scene_midpoints: list[tuple[str, float]],
 ) -> None:
     """Build a representative 2x3 PNG using only FFmpeg raw frames and stdlib.
 
     Remotion's bundled FFmpeg intentionally ships a small filter set without
-    ``fps``, ``pad``, or ``tile``.  Extracting six bounded RGB frames and encoding
-    the final PNG locally keeps contact-sheet generation portable and offline.
+    ``fps``, ``pad``, or ``tile``. Extracting up to six scene-interior RGB frames
+    and encoding the final PNG locally keeps generation portable and offline.
     """
     frame_width = 270
     frame_height = 480
     frame_size = frame_width * frame_height * 3
     frames: list[bytes] = []
-    for index in range(6):
-        timestamp = duration * (index + 0.5) / 6
+    timestamps = _contact_sheet_timestamps(scene_midpoints, duration)
+    for index, timestamp in enumerate(timestamps):
         raw_path = temporary / f"contact-frame-{index}.rgb"
         result = subprocess.run(
             [
