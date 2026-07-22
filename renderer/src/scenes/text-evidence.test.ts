@@ -1,5 +1,34 @@
 import { describe, expect, it } from "vitest";
-import { receiptPayoffFromText } from "./text-evidence";
+import {
+  kineticTextRevealFor,
+  receiptPayoffFromText,
+  receiptPayoffRevealFor,
+} from "./text-evidence";
+
+describe("kinetic text reveal", () => {
+  it("uses a monotonic bounded reveal with no spring overshoot", () => {
+    const samples = Array.from({ length: 16 }, (_, frame) =>
+      kineticTextRevealFor(frame, 30),
+    );
+    expect(samples[0]).toBe(0);
+    expect(samples.at(-1)).toBe(1);
+    expect(samples.every((value) => value >= 0 && value <= 1)).toBe(true);
+    expect(
+      samples.every(
+        (value, index) => index === 0 || value >= samples[index - 1]!,
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("receipt payoff transition", () => {
+  it("uses one stable information-boundary reveal", () => {
+    expect(receiptPayoffRevealFor(0.53)).toBe(0);
+    expect(receiptPayoffRevealFor(0.6)).toBeGreaterThan(0);
+    expect(receiptPayoffRevealFor(0.67)).toBe(1);
+    expect(receiptPayoffRevealFor(2)).toBe(1);
+  });
+});
 
 describe("source receipt payoff", () => {
   it("derives the approximate payoff from an explicit supplied relationship", () => {

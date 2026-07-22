@@ -1,5 +1,5 @@
 import React from "react";
-import { interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
+import { interpolate, useCurrentFrame, useVideoConfig } from "remotion";
 import { sceneProgressFor } from "../pacing/rhythm";
 import {
   Frame,
@@ -12,6 +12,16 @@ import {
 export type ReceiptPayoff = {
   duration: string;
   offset: string;
+};
+
+export const kineticTextRevealFor = (frame: number, fps: number): number => {
+  const linear = Math.max(0, Math.min(1, frame / Math.max(1, fps * 0.24)));
+  return 1 - Math.pow(1 - linear, 3);
+};
+
+export const receiptPayoffRevealFor = (progress: number): number => {
+  const linear = Math.max(0, Math.min(1, (progress - 0.54) / 0.12));
+  return linear * linear * (3 - 2 * linear);
 };
 
 export const receiptPayoffFromText = (
@@ -36,14 +46,7 @@ export const KineticText: React.FC<PrimitiveProps> = ({ scene, themeName }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const tokens = sceneTheme(scene, themeName);
-  const scale = spring({
-    frame,
-    fps,
-    config:
-      scene.motion === "energetic"
-        ? { damping: 12, stiffness: 150 }
-        : { damping: 18 },
-  });
+  const reveal = kineticTextRevealFor(frame, fps);
   const visual = scene.visual;
   const supporting =
     "kind" in visual && visual.kind === "kinetic-text"
@@ -53,8 +56,8 @@ export const KineticText: React.FC<PrimitiveProps> = ({ scene, themeName }) => {
     <Frame scene={scene} tokens={tokens}>
       <div
         style={{
-          transform: `scale(${0.92 + scale * 0.08})`,
-          transformOrigin: "left center",
+          clipPath: `inset(0 ${(1 - reveal) * 100}% 0 0)`,
+          transform: `translateY(${(1 - reveal) * 18}px)`,
         }}
       >
         <SceneHeadline scene={scene} tokens={tokens} eyebrow="The idea" />
@@ -136,10 +139,7 @@ export const SourceReceipt: React.FC<PrimitiveProps> = ({
       extrapolateLeft: "clamp",
       extrapolateRight: "clamp",
     });
-    const collapse = interpolate(progress, [0.46, 0.72], [0, 1], {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    });
+    const payoffReveal = receiptPayoffRevealFor(progress);
     const payoff = receiptPayoffFromText(scene.on_screen_text, excerpt);
     return (
       <Frame scene={scene} tokens={tokens}>
@@ -170,11 +170,11 @@ export const SourceReceipt: React.FC<PrimitiveProps> = ({
               backgroundSize: "20px 14px",
               borderLeft: `5px solid ${tokens.danger}`,
               borderRight: `5px solid ${tokens.accent}`,
-              boxShadow: "16px 20px 0 #00000055",
+              boxShadow: `14px 14px 0 ${tokens.danger}, 0 30px 80px #00000088`,
               fontFamily: '"Courier New", Courier, monospace',
-              opacity,
+              opacity: 1 - payoffReveal,
               transformOrigin: "center top",
-              transform: `translateY(${-collapse * 48}px) scale(${1 - collapse * 0.17}) rotate(${(1 - collapse) * -1.1}deg)`,
+              transform: `translateY(${-payoffReveal * 28}px) rotate(-1deg)`,
               zIndex: 2,
             }}
           >
@@ -247,8 +247,8 @@ export const SourceReceipt: React.FC<PrimitiveProps> = ({
                 alignItems: "baseline",
                 justifyContent: "center",
                 gap: 19,
-                opacity: collapse,
-                transform: `translateY(${(1 - collapse) * 45}px) scale(${0.82 + collapse * 0.18})`,
+                opacity: payoffReveal,
+                transform: `translateY(${(1 - payoffReveal) * 28}px)`,
                 fontWeight: 900,
                 letterSpacing: -3,
                 zIndex: 3,
