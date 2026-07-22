@@ -4,7 +4,6 @@ import type { SceneData } from "../schemas/project";
 import { getTheme, type ThemeName, type ThemeTokens } from "../themes/tokens";
 import {
   coldOpenSignal,
-  kineticScenePresentationFor,
   microBeatSignal,
   pacingProfiles,
   patternInterruptFor,
@@ -141,17 +140,7 @@ export const KineticBackdrop: React.FC<{
   motion: SceneData["motion"];
   sceneOrder: number;
   tokens: ThemeTokens;
-}> = ({ chapter, durationSeconds, motion, sceneOrder, tokens }) => {
-  const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
-  const durationFrames = Math.max(1, Math.round(durationSeconds * fps));
-  const camera = kineticScenePresentationFor(
-    frame,
-    durationFrames,
-    fps,
-    motion,
-    sceneOrder,
-  );
+}> = ({ chapter, tokens }) => {
   const primary = color(tokens, chapter.primary);
   const secondary = color(tokens, chapter.secondary);
   const rightAnchored = chapter.anchor === "right";
@@ -173,11 +162,10 @@ export const KineticBackdrop: React.FC<{
           position: "absolute",
           width: 900,
           height: 900,
-          top: -260 + camera.translateY * 1.4,
-          [rightAnchored ? "right" : "left"]: -320 + camera.translateX * 1.8,
+          top: -260,
+          [rightAnchored ? "right" : "left"]: -320,
           borderRadius: "50%",
           background: `radial-gradient(circle, ${primary}d9 0%, ${primary}73 34%, ${primary}00 72%)`,
-          transform: `scale(${1 + camera.beat * 0.035})`,
         }}
       />
       <div
@@ -186,10 +174,10 @@ export const KineticBackdrop: React.FC<{
           width: 760,
           height: 760,
           left: rightAnchored ? -310 : 650,
-          bottom: -280 - camera.translateY,
+          bottom: -280,
           borderRadius: "42% 58% 63% 37%",
           background: `radial-gradient(circle, ${secondary}a8 0%, ${secondary}52 38%, ${secondary}00 72%)`,
-          transform: `rotate(${rightAnchored ? -12 : 12}deg) scale(${1 + camera.beat * 0.025})`,
+          transform: `rotate(${rightAnchored ? -12 : 12}deg)`,
         }}
       />
       <div
@@ -197,10 +185,10 @@ export const KineticBackdrop: React.FC<{
           position: "absolute",
           left: -250,
           right: -250,
-          top: 780 + camera.translateY * 2,
+          top: 780,
           height: 210,
           background: `linear-gradient(90deg, transparent 0%, ${primary}9c 34%, ${secondary}7d 72%, transparent 100%)`,
-          transform: `rotate(${rightAnchored ? -9 : 9}deg) translateX(${camera.translateX * 2}px)`,
+          transform: `rotate(${rightAnchored ? -9 : 9}deg)`,
           clipPath: "polygon(0 42%, 100% 0, 100% 58%, 0 100%)",
         }}
       />
@@ -211,7 +199,6 @@ export const KineticBackdrop: React.FC<{
           opacity: 0.16,
           backgroundImage: `radial-gradient(${tokens.text} 1.4px, transparent 1.4px)`,
           backgroundSize: "34px 34px",
-          transform: `translate(${camera.translateX * 0.45}px, ${camera.translateY * 0.45}px)`,
           maskImage:
             "linear-gradient(125deg, transparent 6%, #000 35%, #000 66%, transparent 94%)",
         }}
@@ -376,13 +363,6 @@ const PacingDecorations: React.FC<{
   const shift = profile.decorationShift * beat;
   if (kinetic) {
     const chapter = kineticChapterFor(scene);
-    const camera = kineticScenePresentationFor(
-      frame,
-      durationFrames,
-      fps,
-      scene.motion,
-      scene.order,
-    );
     const chapterColor = color(tokens, chapter.primary);
     return (
       <div
@@ -405,7 +385,6 @@ const PacingDecorations: React.FC<{
             fontWeight: 900,
             lineHeight: 0.8,
             letterSpacing: -14,
-            transform: `translateY(${camera.translateY * 1.4}px)`,
           }}
         >
           {String(scene.order + 1).padStart(2, "0")}
@@ -435,9 +414,9 @@ const PacingDecorations: React.FC<{
         <div
           style={{
             position: "absolute",
-            width: 56 + camera.beat * 34,
-            height: 56 + camera.beat * 34,
-            [chapter.anchor]: 88 - camera.beat * 17,
+            width: 56,
+            height: 56,
+            [chapter.anchor]: 88,
             bottom: Math.max(360, safeZone.bottom + 32),
             border: `10px solid ${chapterColor}`,
             borderRadius: "50%",
@@ -559,18 +538,6 @@ export const Frame: React.FC<{
   const safeZone = useSafeZone();
   const themeName = useThemeGrammar();
   const kinetic = isKineticPopTheme(themeName);
-  const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
-  const durationFrames = Math.max(1, Math.round(scene.duration * fps));
-  const camera = kinetic
-    ? kineticScenePresentationFor(
-        frame,
-        durationFrames,
-        fps,
-        scene.motion,
-        scene.order,
-      )
-    : null;
   const basePadding =
     kinetic && scene.layout === "full-diagram"
       ? { top: 198, right: 40, bottom: 330, left: 42 }
@@ -622,9 +589,6 @@ export const Frame: React.FC<{
             flexDirection: "column",
             justifyContent: scene.layout === "hero" ? "center" : "flex-start",
             gap: scene.layout === "hero" ? 52 : 34,
-            transform: `translate3d(${camera?.translateX ?? 0}px, ${camera?.translateY ?? 0}px, 0) scale(${camera?.scale ?? 1})`,
-            transformOrigin:
-              scene.order % 2 === 0 ? "left center" : "right center",
           }}
         >
           {children}

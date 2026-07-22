@@ -20,6 +20,7 @@ import {
   PacingProvider,
   captionMotionFor,
   kineticEntrancePresentationFor,
+  type KineticEntrancePresentation,
   transitionFramesFor,
   transitionPresentationFor,
 } from "../pacing/rhythm";
@@ -28,6 +29,15 @@ import { Primitive } from "../scenes/primitives";
 import { ThemeGrammarProvider, isKineticPopTheme } from "../scenes/shared";
 import { SafeZoneProvider, useSafeZone } from "../safe-zone";
 import { getTheme } from "../themes/tokens";
+
+export const kineticSceneBoundaryStyleFor = (
+  entrance: KineticEntrancePresentation,
+): Pick<React.CSSProperties, "clipPath" | "transform"> => ({
+  // Intentionally omit scale and vertical translation. Once the short reveal
+  // window ends, this evaluates to a stable identity transform for every frame.
+  transform: `translate3d(${entrance.translateX}px, 0, 0)`,
+  clipPath: `inset(0 ${entrance.revealInsetRight}% 0 ${entrance.revealInsetLeft}%)`,
+});
 
 export const activeKeywordTokenIndexFor = (
   tokens: readonly CaptionTokenData[],
@@ -176,22 +186,25 @@ const SceneTransition: React.FC<{
     scene.order === 0,
   );
   const kinetic = isKineticPopTheme(themeName);
-  const kineticEntrance =
-    kinetic && scene.order !== 0
-      ? kineticEntrancePresentationFor(frame, transitionFrames, scene.order)
-      : { scale: 1, translateX: 0, translateY: 0 };
+  const kineticEntrance = kinetic
+    ? kineticEntrancePresentationFor(
+        frame,
+        transitionFrames,
+        scene.order,
+        scene.order === 0 ? "cut" : scene.transition,
+      )
+    : null;
+  const kineticBoundaryStyle = kineticEntrance
+    ? kineticSceneBoundaryStyleFor(kineticEntrance)
+    : null;
   return (
     <AbsoluteFill
       style={{
         opacity: presentation.opacity,
-        transform: kinetic
-          ? `translate3d(${presentation.translateX + kineticEntrance.translateX}px, ${kineticEntrance.translateY}px, 0) scale(${kineticEntrance.scale})`
+        transform: kineticBoundaryStyle
+          ? kineticBoundaryStyle.transform
           : `translateX(${presentation.translateX}px)`,
-        transformOrigin: kinetic
-          ? scene.order % 2 === 0
-            ? "left center"
-            : "right center"
-          : undefined,
+        clipPath: kineticBoundaryStyle?.clipPath,
       }}
     >
       {children}

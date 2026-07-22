@@ -3,9 +3,6 @@ import {
   coldOpenSignal,
   captionMotionFor,
   kineticEntrancePresentationFor,
-  kineticMicroBeatFrames,
-  kineticMicroBeatSignal,
-  kineticScenePresentationFor,
   microBeatFrames,
   microBeatSignal,
   pacingProfiles,
@@ -48,48 +45,59 @@ describe("retention pacing", () => {
     expect(microBeatSignal(beat - 8, 180, 30, "brisk")).toBe(0);
   });
 
-  it("spaces Kinetic Pop camera beats between 1.5 and 3 seconds", () => {
-    for (const durationSeconds of [3, 4, 5, 6, 7, 9, 12]) {
-      const durationFrames = durationSeconds * 30;
-      const beats = kineticMicroBeatFrames(durationFrames, 30);
-      const boundaries = [0, ...beats, durationFrames];
-      for (let index = 1; index < boundaries.length; index += 1) {
-        const gapSeconds = (boundaries[index]! - boundaries[index - 1]!) / 30;
-        expect(gapSeconds).toBeGreaterThanOrEqual(1.5);
-        expect(gapSeconds).toBeLessThanOrEqual(3);
+  it("keeps Kinetic Pop completely stable after its scene boundary", () => {
+    const stable = {
+      translateX: 0,
+      revealInsetLeft: 0,
+      revealInsetRight: 0,
+    };
+    for (const transition of ["cut", "fade", "slide"] as const) {
+      for (const frame of [6, 7, 30, 90, 180]) {
+        expect(kineticEntrancePresentationFor(frame, 6, 1, transition)).toEqual(
+          stable,
+        );
       }
     }
-    expect(kineticMicroBeatFrames(75, 30)).toEqual([]);
   });
 
-  it("uses broad bounded Kinetic Pop reframes without opacity flashes", () => {
-    const beat = kineticMicroBeatFrames(180, 30)[0]!;
-    expect(kineticMicroBeatSignal(beat, 180, 30)).toBe(1);
-    expect(kineticMicroBeatSignal(beat - 1, 180, 30)).toBeGreaterThan(0.9);
-    expect(kineticMicroBeatSignal(beat - 11, 180, 30)).toBe(0);
+  it("uses only bounded deterministic slides or masked reveals", () => {
+    const cut = kineticEntrancePresentationFor(0, 6, 1, "cut");
+    expect(cut).toEqual({
+      translateX: 0,
+      revealInsetLeft: 0,
+      revealInsetRight: 0,
+    });
 
-    const presentation = kineticScenePresentationFor(
-      beat,
-      180,
-      30,
-      "energetic",
-      0,
-    );
-    expect(presentation.scale).toBeGreaterThan(1);
-    expect(presentation.scale).toBeLessThanOrEqual(1.028);
-    expect(Math.abs(presentation.translateX)).toBeLessThanOrEqual(17);
-    expect(Math.abs(presentation.translateY)).toBeLessThanOrEqual(11);
-
-    expect(kineticEntrancePresentationFor(0, 6, 1)).toEqual({
-      scale: 0.972,
+    const slide = kineticEntrancePresentationFor(0, 6, 1, "slide");
+    expect(slide).toMatchObject({
       translateX: -28,
-      translateY: 18,
+      revealInsetLeft: 0,
+      revealInsetRight: 0,
     });
-    expect(kineticEntrancePresentationFor(6, 6, 1)).toEqual({
-      scale: 1,
-      translateX: -0,
-      translateY: 0,
+    expect("scale" in slide).toBe(false);
+    expect("translateY" in slide).toBe(false);
+    const slideMidpoint = kineticEntrancePresentationFor(3, 6, 1, "slide");
+    expect(slideMidpoint.translateX).toBeGreaterThan(-28);
+    expect(slideMidpoint.translateX).toBeLessThan(0);
+
+    expect(kineticEntrancePresentationFor(0, 6, 0, "fade")).toMatchObject({
+      translateX: 0,
+      revealInsetLeft: 0,
+      revealInsetRight: 100,
     });
+    expect(kineticEntrancePresentationFor(0, 6, 1, "fade")).toMatchObject({
+      revealInsetLeft: 100,
+      revealInsetRight: 0,
+    });
+    const maskedMidpoint = kineticEntrancePresentationFor(3, 6, 1, "fade");
+    expect(maskedMidpoint).toEqual({
+      translateX: 0,
+      revealInsetLeft: 50,
+      revealInsetRight: 0,
+    });
+    expect(kineticEntrancePresentationFor(3, 6, 1, "fade")).toEqual(
+      maskedMidpoint,
+    );
   });
 
   it("makes the cold open immediate and deterministic", () => {
