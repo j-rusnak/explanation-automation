@@ -70,7 +70,9 @@ Open `http://localhost:8501`. The reviewer has ten restart-safe steps for projec
 
 The reviewer now exposes four deterministic art directions. New projects use the recommended
 `kinetic-pop` hybrid: high-contrast editorial typography, a recurring topic-specific hero object,
-and tactile evidence receipts. The quieter `blueprint`, `signal-lab`, and
+and tactile evidence receipts. Its viewport stays stable after short scene-boundary transitions;
+scan lines, comparisons, highlights, and progress rails move only when they explain a state change.
+The quieter `blueprint`, `signal-lab`, and
 `technical-editorial` themes remain available for existing projects. The reviewer also exposes
 three evidence-linked cover candidates, narrative, retention, and visual critiques, the exact
 attention-event schedule, scene layout/motion controls, local narration and sound controls,

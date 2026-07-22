@@ -31,10 +31,13 @@ parameterize those primitives without generating runtime code. `kinetic-pop`, th
 projects, combines high-contrast editorial type, semantic chapter colors, a deterministic
 topic-specific hero object, and tactile evidence treatments derived only from validated scene and
 evidence fields. Motion communicates scan timing, comparison, emphasis, or chapter progress; it is
-not random decoration and may not strobe. The three legacy themes preserve their existing visual
-grammar. Project configuration also carries one bounded, resolution-independent safe zone shared
-by captions, scene content, covers, and retention overlays. The selected evidence-linked cover is
-rendered by its own composition.
+not random decoration and may not strobe. Scene-boundary transitions may reframe Kinetic Pop, after
+which its viewport remains stable. Whole-frame motion must reveal, follow, focus, or re-contextualize
+something, and attention changes land at information boundaries. The first frame carries value or
+visual proof. The three legacy themes preserve their existing visual grammar. Project configuration
+also carries one bounded, resolution-independent safe zone shared by captions, essential scene
+content, covers, and retention overlays. The selected evidence-linked cover is rendered by its own
+composition.
 Preview video and cover are 360x640 with an `UNREVIEWED` watermark. Each render also produces a
 contact sheet and one hash-tracked still per scene. Final output and cover are 1080x1920 at 30 fps;
 an unwatermarked render remains impossible until every current gate and final-review hash passes.
