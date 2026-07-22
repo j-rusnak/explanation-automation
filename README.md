@@ -1,6 +1,6 @@
 # techshort
 
-`techshort` is a local-first, human-reviewed technical explainer compiler. It turns PDF, Markdown, or text sources into evidence-linked claims, a clause-level script, a typed deterministic storyboard, a vertical Remotion video, captions, a cited companion page, and an export bundle. It also supports offline synthetic narration, deterministic sound accents, controlled cover variants, aggregate-only organic experiment analysis, and immutable packages for manual TikTok or Instagram Reels upload. It remains useful offline and does not require an API key or platform account integration.
+`techshort` is a local-first, human-reviewed technical explainer compiler. It turns PDF, Markdown, or text sources into evidence-linked claims, a clause-level script, a typed deterministic storyboard, a vertical Remotion video, captions, a cited companion page, and an export bundle. It also supports offline synthetic narration, deterministic sound accents, controlled cover variants, aggregate-only organic experiment analysis, immutable packages for manual posting, and optional consent-bound transfer to a TikTok draft through the official API. The complete compiler and manual package workflow remain useful offline and do not require an API key or platform account.
 
 The hard invariant is simple: every factual script clause cites one or more approved claims, and every approved claim cites exact evidence that still resolves in the ingested source. Deterministic QA and five human gates block final export when provenance, rights, staleness, limitation, or media checks fail.
 
@@ -239,10 +239,11 @@ captions, preview, QA, and final approval again after the final audio is selecte
 - `techshort audio voices` lists the Kokoro allowlist by default. Use `--provider sapi` to list
   enabled Windows System.Speech fallback voices.
 
-### Zero-cost organic cover experiments
+### Zero-cost organic cover experiments and optional TikTok draft transfer
 
-Experiments begin from a current approved export and reviewed cover candidates. They never log
-in, open a browser, upload, post, or fetch analytics. Create and inspect immutable cover variants:
+Experiments begin from a current approved export and reviewed cover candidates. Package creation,
+analysis, and tests remain local: they never log in, open a browser, publish, schedule, or fetch
+analytics. Create and inspect immutable cover variants:
 
 ```powershell
 .\.venv\Scripts\techshort.exe experiment create-cover rolling-shutter `
@@ -276,9 +277,51 @@ publish anything:
   --json
 ```
 
-Inspect the granted package, then manually upload it in the platform's own composer. No official
-provider, API credential, account session, or automated browser posting is implemented. After
-each real organic post reaches a comparable observation age, manually record only actual
+Inspect the granted package, then either upload it manually in the platform's own composer or use
+the separately consented official TikTok draft-transfer path. The latter requires a TikTok
+developer app, OAuth authorization for the intended account, and `video.upload`; it does not use
+Direct Post or `video.publish`, publish publicly, schedule, automate a browser, or reuse cookies or
+sessions. Provide credentials only in the current process environment:
+
+```powershell
+$env:TECHSHORT_TIKTOK_ACCESS_TOKEN = '<OAuth access token>'
+$env:TECHSHORT_TIKTOK_OPEN_ID = '<OAuth OpenID for the intended account>'
+.\.venv\Scripts\techshort.exe publication upload-diagnostics --json
+.\.venv\Scripts\techshort.exe publication upload-preflight rolling-shutter <granted-package-manifest-path> `
+  --account-label "<recognizable TikTok account>" `
+  --reviewer local-reviewer `
+  --json
+.\.venv\Scripts\techshort.exe publication upload-draft rolling-shutter <granted-package-manifest-path> `
+  --account-label "<recognizable TikTok account>" `
+  --reviewer local-reviewer `
+  --confirmation "I explicitly authorize transfer of this exact package to the identified TikTok account as a draft." `
+  --execute `
+  --json
+```
+
+Set the access token and OpenID from the same TikTok OAuth token response. They are never
+persisted or logged. The API consent is distinct from
+package consent and binds the exact immutable package/video to the account-subject hash. Attempts
+and status records are append-only. An ambiguous network outcome is never retried automatically;
+inspect TikTok before considering a newly reviewed package and intent. Poll a known nonterminal
+attempt with:
+
+```powershell
+.\.venv\Scripts\techshort.exe publication upload-status rolling-shutter <experiment-id> <intent-id> --network --json
+```
+
+TikTok receives only the MP4. Burned-in captions remain, but the separate cover PNG, SRT/VTT,
+post copy, hashtags, alt text, and checklist are not transferred. Select the reviewed cover and
+finish and publish the draft manually in TikTok. A transfer receipt is not a publication claim.
+This conservative V1 transfers MP4 files up to 64,000,000 bytes as one chunk; larger files remain
+available through the manual package workflow.
+This integration is covered by TikTok's official
+[Upload API reference](https://developers.tiktok.com/doc/content-posting-api-reference-upload-video/),
+[status reference](https://developers.tiktok.com/doc/content-posting-api-reference-get-video-status),
+and [content-sharing guidelines](https://developers.tiktok.com/doc/content-sharing-guidelines/).
+No live TikTok upload is run by setup or normal tests.
+
+After each real organic post reaches a comparable observation age, manually record only actual
 aggregate totals in JSON or CSV. Never invent metrics and never include viewer identifiers,
 usernames, handles, email addresses, device IDs, or other person-level rows.
 
@@ -298,7 +341,7 @@ remain explicitly uncertain. Only a conclusive, separately approved cover recomm
 applied, and applying a changed cover invalidates storyboard, rights, and final review.
 
 See [organic experiments](docs/EXPERIMENTS.md) for the observation fields, storage layout,
-interpretation limits, and complete manual workflow.
+interpretation limits, package workflow, and optional TikTok draft-transfer boundary.
 
 Successful sample outputs are written to:
 
@@ -364,7 +407,7 @@ See [engagement and retention](docs/ENGAGEMENT.md), [organic experiments](docs/E
 - PDF bounding boxes and printed page labels are stored only when reliably available; pypdf V1 uses page index plus exact character locators.
 - SAPI narration uses verified engine word events. Kokoro word emphasis is an explicitly labeled proportional estimate inside exact synthesized segment boundaries; provider words never replace approved caption text. Imported recordings still need a hash-bound transcript or configured local Whisper model for deterministic comparison.
 - Deterministic creative QA catches measurable risks such as dense copy, repeated layouts, missing units, exposed internal IDs, caption speed, and weak cover structure. It is a production aid, not a substitute for watching the preview.
-- Retention plans and creative QA encode useful short-form heuristics, not a guarantee of views or watch time. Organic cover experiments use manually imported aggregates and remain observational; there is no platform-analytics integration, account automation, automatic publishing, or causal-performance guarantee.
+- Retention plans and creative QA encode useful short-form heuristics, not a guarantee of views or watch time. Organic cover experiments use manually imported aggregates and remain observational; there is no platform-analytics integration, direct or scheduled publishing, browser/account-session automation, or causal-performance guarantee. The optional official TikTok integration transfers one consent-bound draft only.
 - Flash QA checks declared and inferred motion cues and blocks unsafe declared rates, but it is not a full rendered-pixel luminance-and-area analysis. A human must inspect the exact preview, contact sheet, and scene stills.
 - The optional procedural sound-design track uses only allowlisted deterministic cues and is rights-tracked. It is not music, a sample library, adaptive scoring, or proof that sound will improve performance.
 - Kokoro requires one explicit networked model-setup step before offline use. It is the default project provider; Windows System.Speech remains an offline fallback. Both synthetic paths require human review of voice/output rights, and `unknown` deliberately blocks embedding.

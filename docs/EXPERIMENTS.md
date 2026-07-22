@@ -2,8 +2,11 @@
 
 techshort provides a zero-cost, human-operated loop for comparing approved cover treatments. It
 renders immutable variants, prepares local upload packages, imports real aggregate observations,
-and produces a conservative recommendation. It does not open a browser, authenticate with a
-platform, upload a video, publish a post, purchase traffic, or call an analytics API.
+and produces a conservative recommendation. Package preparation remains local and
+side-effect-free. An optional, separately consented integration can transfer one exact package to
+TikTok's inbox as a draft through the official Content Posting API. techshort never directly
+publishes or schedules a post, opens an automated browser, reuses cookies or sessions, purchases
+traffic, or calls a platform analytics API.
 
 The current production integration changes only the selected cover. Every variant shares the
 same approved MP4, evidence, claims, limitation, script, rights state, and factual lock. A cover
@@ -33,10 +36,11 @@ before approval. Approval hashes the exact experiment, variants, shared media, c
 artifacts, evidence, claims, limitation, and rights state. Decisions are append-only. Changed or
 missing variant bytes block status, analysis, recommendation approval, and application.
 
-## 2. Build packages for manual posting
+## 2. Build immutable publication packages
 
-Diagnostics report local packaging capability only. The `official` diagnostic is not a posting
-integration and does not read credentials.
+These diagnostics report local package-building capability only and do not read credentials.
+The separate `upload-diagnostics` command below reports whether the two TikTok environment
+variables are present without displaying their values.
 
 ```powershell
 .\.venv\Scripts\techshort.exe publication diagnostics tiktok --provider manual --json
@@ -68,9 +72,78 @@ Granting consent creates another immutable package; it does not upload the packa
 ```
 
 Consent applies only to the exact hash-bound package. A changed file requires a new request and
-consent. The operator then uploads the granted package manually in TikTok's or Instagram's own
+consent. The operator may upload the granted package manually in TikTok's or Instagram's own
 composer. Account sessions, captions entered on-platform, publication timing, and platform terms
 remain the operator's responsibility.
+
+### Optional official TikTok draft transfer
+
+TikTok packages have one additional path: transfer the reviewed MP4 to the identified account's
+TikTok inbox as a draft. This uses TikTok's official Upload API and requires an operator-created
+TikTok developer app, OAuth authorization for the intended account, and the `video.upload` scope.
+It does not use Direct Post or `video.publish`, publish publicly, choose visibility, schedule a
+post, or automate TikTok's browser interface. Review the current official
+[Upload API reference](https://developers.tiktok.com/doc/content-posting-api-reference-upload-video/)
+and [content-sharing guidelines](https://developers.tiktok.com/doc/content-sharing-guidelines/)
+before enabling it.
+
+Provide the OAuth access token and OpenID from the same token response, and only in the current
+process environment. Do not put
+actual values in `.env.example`, a project manifest, a package, a command transcript, or Git:
+
+```powershell
+$env:TECHSHORT_TIKTOK_ACCESS_TOKEN = '<OAuth access token>'
+$env:TECHSHORT_TIKTOK_OPEN_ID = '<OAuth OpenID for the intended account>'
+```
+
+Diagnostics are secret-safe. Preflight is local and makes no network request; it validates the
+current immutable package, final export, experiment, variant, evidence, claims, limitation,
+rights, media, captions, and credential availability:
+
+```powershell
+.\.venv\Scripts\techshort.exe publication upload-diagnostics --json
+.\.venv\Scripts\techshort.exe publication upload-preflight <slug> <granted-package-manifest-path> `
+  --account-label "<recognizable TikTok account>" `
+  --reviewer local-reviewer `
+  --json
+```
+
+API transfer requires a second human consent distinct from package consent. It binds the exact
+package and video hashes to the SHA-256 of the OAuth account subject. The confirmation must match
+exactly; `--execute` is also mandatory because this command crosses the network boundary:
+
+```powershell
+.\.venv\Scripts\techshort.exe publication upload-draft <slug> <granted-package-manifest-path> `
+  --account-label "<recognizable TikTok account>" `
+  --reviewer local-reviewer `
+  --confirmation "I explicitly authorize transfer of this exact package to the identified TikTok account as a draft." `
+  --execute `
+  --json
+```
+
+The command persists the intent, consent, preflight, attempt, and initial status receipt before
+network transfer. It then appends provider-status receipts; it never rewrites or silently removes
+an earlier decision. Poll only a known nonterminal attempt:
+
+```powershell
+.\.venv\Scripts\techshort.exe publication upload-status <slug> <experiment-id> <intent-id> `
+  --network `
+  --json
+```
+
+Do not repeat `upload-draft` after a timeout, disconnect, malformed response, or other ambiguous
+outcome. techshort records that outcome as `ambiguous` and will not re-upload it automatically.
+If the receipt contains a publish ID, `upload-status` may resolve the existing attempt without
+sending the video again. Otherwise inspect the intended TikTok account first; if a genuinely new
+transfer is needed, prepare and approve a new immutable package, intent, and consent.
+
+Only the MP4 is transferred. Burned-in captions remain in that MP4, but the separate reviewed
+cover PNG, SRT/VTT sidecars, post copy, hashtags, alt text, and checklist remain local. TikTok's
+draft API cannot attach the separate cover file, so the operator must select that reviewed cover,
+finish the post metadata, inspect the draft, and publish it inside TikTok. A successful transfer or
+status receipt is not evidence that the post was published.
+This conservative V1 uploads one MP4 chunk no larger than 64,000,000 bytes. Use the manual package
+workflow for a larger reviewed video.
 
 ## 3. Record real aggregate observations
 
@@ -160,9 +233,18 @@ projects/<slug>/experiments/<experiment-id>/
   templates/
   publication-requests/
   publication/<variant-id>/<platform>/<package-id>/
+  uploads/<tiktok-intent-id>/
+    intent.json
+    consent.json
+    preflight.json
+    attempt.json
+    video.mp4
+    receipts/
 ```
 
 Manifests are strict, versioned, hash-bound, and atomically written. Publication packages contain
 only the selected export media, cover, caption sidecars, reviewed metadata, checklist, and consent
-receipt. They do not contain credentials, browser state, viewer data, or an instruction to post
-automatically.
+receipt. Upload records contain account-subject hashes, inert labels, immutable package/video
+bindings, and append-only status receipts--never tokens, browser state, cookies, viewer data, or
+an instruction to publish automatically. Normal tests use fake transports and stay offline; this
+documentation does not imply that a live TikTok upload has been run.
