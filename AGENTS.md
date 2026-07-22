@@ -15,7 +15,12 @@
 - After scene-boundary transitions, Kinetic Pop keeps a stable viewport. Whole-frame motion must reveal, follow, focus, or re-contextualize something; attention changes land at information boundaries. The first frame carries value or visual proof, and essential content remains inside the safe zone.
 - Generated scripts require a current typed retention plan and critique. Attention gaps are at most five seconds, declared events are inert allowlisted data, and renderer event timing is narration-scaled and deterministic.
 - Local synthetic narration consumes only the current approved script. Voice-output rights default to `unknown` and must never be relaxed without reviewing the installed voice terms.
-- Organic publication is manual package preparation only. Never add account credentials, browser automation, automatic upload/posting, or claims that a package was published.
+- Organic package preparation remains local and side-effect-free. Official TikTok draft transfer is
+  allowed only through an explicit command, a current immutable package, separate package/account-
+  bound human consent, injected credentials, and append-only attempt/status receipts. Never store
+  platform secrets in repository or project data. Direct public posting, background scheduling,
+  browser automation, cookie/session reuse, blind retries, and unverified publication claims remain
+  prohibited.
 - Experiment observations are actual aggregate post metrics only. Reject viewer identifiers and fabricated, estimated, or regressing counts; preserve observational uncertainty.
 - Experiment analysis never mutates production. A conclusive recommendation requires human approval and a separate explicit application through normal invalidation boundaries.
 - Normal tests are offline; model calls are opt-in only.
