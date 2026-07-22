@@ -31,6 +31,13 @@ from techshort.publication.upload_models import (
     TikTokUploadDiagnostic,
     TikTokUploadPreflightCheck,
 )
+from techshort.publication.upload_service import (
+    create_tiktok_draft_upload_intent,
+    execute_tiktok_draft_upload,
+    grant_tiktok_draft_upload_consent,
+    poll_tiktok_draft_upload,
+    preflight_tiktok_draft_upload,
+)
 
 __all__ = [
     "GRANT_CONFIRMATION",
@@ -55,7 +62,12 @@ __all__ = [
     "TikTokUploadDiagnostic",
     "TikTokUploadPreflightCheck",
     "build_organic_publication_package",
+    "create_tiktok_draft_upload_intent",
+    "execute_tiktok_draft_upload",
+    "grant_tiktok_draft_upload_consent",
     "official_api_provider",
     "organic_package_input_hash",
+    "poll_tiktok_draft_upload",
+    "preflight_tiktok_draft_upload",
     "record_publication_consent",
 ]
