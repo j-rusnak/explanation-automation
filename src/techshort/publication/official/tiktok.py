@@ -510,6 +510,8 @@ class TikTokDraftUploadClient:
         # This client deliberately sends exactly one chunk. TikTok documents 201 as
         # the completed-upload response and 206 as a successful *partial* chunk, so
         # accepting an arbitrary 2xx response could misreport an incomplete upload.
+        if response.status_code >= 500 or response.status_code == 408:
+            raise TikTokTransportError("video upload response")
         if response.status_code != 201:
             raise TikTokApiError(
                 operation="video upload",
@@ -620,6 +622,11 @@ class TikTokDraftUploadClient:
     def _successful_api_data(
         self, response: TikTokHttpResponse, *, operation: str
     ) -> dict[str, object]:
+        # A timeout or server-side failure can arrive after TikTok accepted work. Treat
+        # it like a transport ambiguity even when the body happens to be structured;
+        # callers must not infer rejection or retry the operation automatically.
+        if response.status_code >= 500 or response.status_code == 408:
+            raise TikTokTransportError(f"{operation} response")
         payload: dict[str, object] | None = None
         try:
             payload = _strict_json_object(response.body)

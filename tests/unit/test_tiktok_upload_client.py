@@ -376,6 +376,43 @@ def test_single_chunk_upload_requires_created_not_partial_content(tmp_path: Path
     assert captured.value.code == "upload_http_206"
 
 
+@pytest.mark.parametrize("operation", ["initialize", "upload"])
+def test_server_failures_are_ambiguous_and_never_reported_as_rejections(
+    tmp_path: Path, operation: str
+) -> None:
+    video = _mp4(tmp_path / "video.mp4")
+    upload_url = "https://open-upload.tiktokapis.com/video/?upload_token=secret"
+    server_failure = TikTokHttpResponse(
+        status_code=500,
+        body=json.dumps(
+            {
+                "data": {},
+                "error": {
+                    "code": "internal_error",
+                    "message": "Try again later",
+                    "log_id": "log-500",
+                },
+            }
+        ).encode(),
+    )
+    responses = (
+        [server_failure]
+        if operation == "initialize"
+        else [
+            _json_response({"publish_id": "v_pub_file~v2.123", "upload_url": upload_url}),
+            server_failure,
+        ]
+    )
+    client = TikTokDraftUploadClient(_credentials(), FakeTransport(responses))
+
+    with pytest.raises(TikTokTransportError) as captured:
+        initialization = client.initialize_draft(video)
+        client.upload_video(initialization, video)
+
+    assert captured.value.ambiguous
+    assert "internal_error" not in str(captured.value)
+
+
 def test_status_accepts_documented_int64_public_post_ids_without_exposing_them() -> None:
     client = TikTokDraftUploadClient(
         _credentials(),
