@@ -42,6 +42,7 @@ from techshort.domain.models import (
     ReviewStatus,
     SafeZoneInsets,
     ScriptManifest,
+    now_utc,
 )
 from techshort.domain.storage import ProjectStore, atomic_write_model, load_model
 from techshort.experiments import (
@@ -72,14 +73,29 @@ from techshort.generation import (
 from techshort.ingestion import ingest_source
 from techshort.providers import CodexCliProvider
 from techshort.publication import (
+    DRAFT_TRANSFER_CONFIRMATION,
     ManualOrganicProvider,
     OrganicPackageRequest,
     OrganicPlatformProvider,
     OrganicPublicationPackage,
     PlatformUnavailableError,
+    TikTokDraftUploadIntent,
+    TikTokDraftUploadPreflight,
+    TikTokUploadDiagnostic,
     build_organic_publication_package,
     official_api_provider,
     record_publication_consent,
+)
+from techshort.publication.official.tiktok import (
+    TikTokCredentials,
+    TikTokDraftUploadClient,
+)
+from techshort.publication.upload_service import (
+    create_tiktok_draft_upload_intent,
+    execute_tiktok_draft_upload,
+    grant_tiktok_draft_upload_consent,
+    poll_tiktok_draft_upload,
+    preflight_tiktok_draft_upload,
 )
 from techshort.qa import run_qa
 from techshort.rendering import render_video
@@ -105,7 +121,9 @@ audio_app = typer.Typer(help="Manage recorded or local synthetic narration and s
 captions_app = typer.Typer(help="Generate deterministic SRT, VTT, and burned-caption cues.")
 style_app = typer.Typer(help="Configure reviewed visual delivery and pacing.")
 experiment_app = typer.Typer(help="Review and analyze controlled organic experiments.")
-publication_app = typer.Typer(help="Build immutable packages for manual organic publication.")
+publication_app = typer.Typer(
+    help="Prepare immutable organic packages and consent-bound official draft transfers."
+)
 app.add_typer(claims_app, name="claims")
 app.add_typer(script_app, name="script")
 app.add_typer(storyboard_app, name="storyboard")
@@ -1287,6 +1305,270 @@ def publication_diagnostics(
             console.print(diagnostic.reason)
             for step in diagnostic.next_steps:
                 console.print(f"- {step}")
+    except (OSError, ValueError) as exc:
+        fail(str(exc))
+
+
+@publication_app.command("upload-diagnostics")
+def publication_upload_diagnostics(
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Check environment-only TikTok draft-transfer readiness without networking."""
+
+    diagnostic_state = TikTokCredentials.diagnose_env(os.environ)
+    if diagnostic_state.configured:
+        diagnostic = TikTokUploadDiagnostic(
+            status="ready",
+            credentials_available=True,
+            network_checked=False,
+            checked_at=now_utc(),
+            reason=(
+                "TikTok draft-transfer credentials are configured in the environment. "
+                "No network request was made."
+            ),
+            next_steps=(
+                "Run publication upload-preflight for one exact reviewed TikTok package.",
+                "Use publication upload-draft --execute only after reviewing its separate "
+                "package/account consent.",
+            ),
+        )
+    elif diagnostic_state.invalid_environment_variables:
+        diagnostic = TikTokUploadDiagnostic(
+            status="error",
+            credentials_available=False,
+            network_checked=False,
+            checked_at=now_utc(),
+            reason=(
+                "One or more TikTok credential environment variables are malformed. "
+                "No credential values were displayed and no network request was made."
+            ),
+            next_steps=(
+                "Replace the invalid environment values before running upload preflight.",
+                f"The TikTok app token must include the {diagnostic_state.required_scope} scope.",
+            ),
+        )
+    else:
+        diagnostic = TikTokUploadDiagnostic(
+            status="authentication-required",
+            credentials_available=False,
+            network_checked=False,
+            checked_at=now_utc(),
+            reason=(
+                "TikTok draft-transfer credentials are not configured in the environment. "
+                "No network request was made."
+            ),
+            next_steps=(
+                "Set TECHSHORT_TIKTOK_ACCESS_TOKEN and TECHSHORT_TIKTOK_OPEN_ID in the "
+                "current process environment.",
+                f"Authorize the TikTok app token with the {diagnostic_state.required_scope} scope.",
+            ),
+        )
+    if json_output:
+        typer.echo(diagnostic.model_dump_json(indent=2))
+    else:
+        console.print(f"TikTok draft transfer: {diagnostic.status}")
+        console.print(diagnostic.reason)
+        for step in diagnostic.next_steps:
+            console.print(f"- {step}")
+
+
+def _tiktok_upload_preflight(
+    slug: str,
+    package_manifest_file: Path,
+    *,
+    account_label: str,
+    reviewer: str,
+) -> tuple[TikTokDraftUploadIntent, TikTokDraftUploadPreflight, TikTokCredentials]:
+    """Build a credential-bound intent and local preflight without using the network."""
+
+    credentials = TikTokCredentials.from_env(os.environ)
+    intent = create_tiktok_draft_upload_intent(
+        store(slug),
+        package_manifest_file,
+        target_account_subject_sha256=credentials.account_subject_hash,
+        target_account_label=account_label,
+        requested_by=reviewer,
+    )
+    preflight = preflight_tiktok_draft_upload(
+        store(slug),
+        package_manifest_file,
+        intent,
+        credentials_available=True,
+    )
+    return intent, preflight, credentials
+
+
+@publication_app.command("upload-preflight")
+def publication_upload_preflight(
+    slug: str,
+    package_manifest_file: Path,
+    account_label: Annotated[
+        str,
+        typer.Option("--account-label", help="Human-readable label for the TikTok account."),
+    ],
+    reviewer: Annotated[
+        str,
+        typer.Option("--reviewer", help="Local human requesting this exact draft transfer."),
+    ],
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Validate one canonical TikTok package and account binding; never network."""
+
+    try:
+        intent, preflight, _credentials = _tiktok_upload_preflight(
+            slug,
+            package_manifest_file,
+            account_label=account_label,
+            reviewer=reviewer,
+        )
+        payload = {
+            "network_attempted": False,
+            "intent": intent.model_dump(mode="json"),
+            "preflight": preflight.model_dump(mode="json"),
+        }
+        if json_output:
+            typer.echo(json.dumps(payload, indent=2))
+        else:
+            console.print(f"TikTok draft-transfer preflight: {preflight.state}")
+            console.print(f"Intent: {intent.intent_id}")
+            for check in preflight.checks:
+                console.print(f"- {check.code}: {check.state} — {check.detail}")
+            console.print("No network request was made and no consent receipt was recorded.")
+    except (OSError, ValueError) as exc:
+        fail(str(exc))
+
+
+@publication_app.command("upload-draft")
+def publication_upload_draft(
+    slug: str,
+    package_manifest_file: Path,
+    account_label: Annotated[
+        str,
+        typer.Option("--account-label", help="Human-readable label for the TikTok account."),
+    ],
+    reviewer: Annotated[
+        str,
+        typer.Option("--reviewer", help="Human authorizing this exact draft transfer."),
+    ],
+    confirmation: Annotated[
+        str,
+        typer.Option(
+            "--confirmation",
+            help="Exact authorization phrase; required only with --execute.",
+        ),
+    ] = "",
+    execute: Annotated[
+        bool,
+        typer.Option(
+            "--execute",
+            help="Perform one official draft transfer after preflight and separate consent.",
+        ),
+    ] = False,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Preflight by default; transfer one reviewed video only with --execute."""
+
+    try:
+        intent, preflight, credentials = _tiktok_upload_preflight(
+            slug,
+            package_manifest_file,
+            account_label=account_label,
+            reviewer=reviewer,
+        )
+        if not execute:
+            payload = {
+                "executed": False,
+                "network_attempted": False,
+                "intent": intent.model_dump(mode="json"),
+                "preflight": preflight.model_dump(mode="json"),
+            }
+            if json_output:
+                typer.echo(json.dumps(payload, indent=2))
+            else:
+                console.print(f"TikTok draft-transfer preflight: {preflight.state}")
+                console.print(
+                    "No network request was made. Add --execute only when this exact "
+                    "package/account transfer should begin."
+                )
+            return
+
+        if confirmation != DRAFT_TRANSFER_CONFIRMATION:
+            raise ValueError(
+                "TikTok draft transfer requires the exact DRAFT_TRANSFER_CONFIRMATION phrase"
+            )
+        consent = grant_tiktok_draft_upload_consent(
+            intent,
+            reviewer_identifier=reviewer,
+            confirmation=confirmation,
+        )
+        client = TikTokDraftUploadClient(credentials)
+        receipt = execute_tiktok_draft_upload(
+            store(slug),
+            package_manifest_file,
+            intent,
+            consent,
+            preflight,
+            client,
+        )
+        payload = {
+            "executed": True,
+            "receipt": receipt.model_dump(mode="json"),
+            "next_step": (
+                "Open TikTok to review the transferred draft, select the separately reviewed "
+                "cover, and publish manually."
+            ),
+        }
+        if json_output:
+            typer.echo(json.dumps(payload, indent=2))
+        else:
+            console.print(f"TikTok draft-transfer status: {receipt.state}")
+            console.print(payload["next_step"])
+        if receipt.state in {"failed", "ambiguous", "cancelled"}:
+            raise typer.Exit(1)
+    except (OSError, ValueError) as exc:
+        fail(str(exc))
+
+
+@publication_app.command("upload-status")
+def publication_upload_status(
+    slug: str,
+    experiment_id: str,
+    intent_id: str,
+    network: Annotated[
+        bool,
+        typer.Option(
+            "--network",
+            help="Make one official status request; this command never uploads video.",
+        ),
+    ] = False,
+    json_output: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Poll an existing TikTok draft transfer; never initialize or re-upload."""
+
+    try:
+        if not network:
+            raise ValueError(
+                "TikTok status polling requires explicit --network; no request was made"
+            )
+        credentials = TikTokCredentials.from_env(os.environ)
+        client = TikTokDraftUploadClient(credentials)
+        receipt = poll_tiktok_draft_upload(
+            store(slug),
+            experiment_id,
+            intent_id,
+            client,
+        )
+        if json_output:
+            typer.echo(receipt.model_dump_json(indent=2))
+        else:
+            console.print(f"TikTok draft-transfer status: {receipt.state}")
+            if receipt.state in {"uploaded", "pending-user-action", "complete"}:
+                console.print(
+                    "This receipt confirms draft-transfer state only; it does not claim a "
+                    "public post exists."
+                )
+        if receipt.state in {"failed", "ambiguous", "cancelled"}:
+            raise typer.Exit(1)
     except (OSError, ValueError) as exc:
         fail(str(exc))
 
