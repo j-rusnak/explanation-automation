@@ -7,6 +7,7 @@ import {
   isKineticPopTheme,
   kineticChapterFor,
 } from "../scenes/shared";
+import { RollingShutterHero } from "../scenes/hero-object";
 import { getTheme } from "../themes/tokens";
 
 export const KINETIC_COVER_CHAPTER = kineticChapterFor({
@@ -216,48 +217,66 @@ const Hero: React.FC<{ candidate: CoverCandidate }> = ({ candidate }) => {
       hero.subject === "blade" || hero.subject === "pole"
         ? "straight-edge"
         : hero.subject;
+    const useSensorHero =
+      kinetic &&
+      (hero.subject === "grid" ||
+        hero.subject === "blade" ||
+        hero.subject === "pole");
     return (
       <div
         style={{
-          height: 720,
+          height: kinetic ? 670 : 720,
           width: "100%",
-          borderRadius: kinetic ? 0 : tokens.radius,
+          borderRadius: kinetic ? 40 : tokens.radius,
           border: kinetic ? "none" : `3px solid ${tokens.panelBorder}`,
           background: kinetic
-            ? `radial-gradient(circle at 58% 48%, ${tokens.warning}55, transparent 48%)`
+            ? `radial-gradient(circle at 60% 45%, ${tokens.accent}2e 0%, ${tokens.panel}99 48%, transparent 76%)`
             : tokens.panel,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
           position: "relative",
           overflow: "hidden",
-          transform: kinetic ? "rotate(-2deg) scale(1.08)" : undefined,
+          isolation: "isolate",
         }}
       >
-        <CoverShape
-          feature={feature}
-          distorted={hero.distortion !== 0}
-          accent={tokens.accent}
-          warning={tokens.warning}
-        />
-        {Array.from({ length: 22 }, (_, index) => (
-          <div
-            key={index}
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              top: `${(index / 21) * 100}%`,
-              height: index === 11 ? 7 : 2,
-              background:
-                index === 11 ? tokens.warning : `${tokens.citation}38`,
-              boxShadow:
-                kinetic && index === 11
-                  ? `0 0 34px ${tokens.warning}`
-                  : undefined,
-            }}
+        {useSensorHero ? (
+          <RollingShutterHero
+            tokens={tokens}
+            idPrefix="kinetic-cover-sensor"
+            progress={1}
+            scanProgress={0.62}
+            distortion={hero.distortion}
+            immediateProof
+            showReference
+            captureMode="rolling"
+            width={720}
+            height={590}
           />
-        ))}
+        ) : (
+          <>
+            <CoverShape
+              feature={feature}
+              distorted={hero.distortion !== 0}
+              accent={tokens.accent}
+              warning={tokens.warning}
+            />
+            {Array.from({ length: 22 }, (_, index) => (
+              <div
+                key={index}
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  right: 0,
+                  top: `${(index / 21) * 100}%`,
+                  height: index === 11 ? 7 : 2,
+                  background:
+                    index === 11 ? tokens.warning : `${tokens.citation}38`,
+                }}
+              />
+            ))}
+          </>
+        )}
       </div>
     );
   }
@@ -426,21 +445,34 @@ export const Cover: React.FC<ProjectData> = (data) => {
               lineHeight: kinetic ? 1.12 : 1.2,
               color: kinetic ? tokens.text : tokens.muted,
               maxWidth: kinetic ? 760 : 870,
-              margin: kinetic ? "24px 0 0 54px" : "30px 0 0",
+              margin: kinetic ? "24px 0 0" : "30px 0 0",
               fontWeight: kinetic ? 650 : undefined,
             }}
           >
             {candidate.subheadline}
           </p>
         ) : null}
+        {kinetic ? (
+          <div
+            aria-hidden="true"
+            style={{
+              width: 260,
+              height: 12,
+              marginTop: 24,
+              borderRadius: 999,
+              background: `linear-gradient(90deg, ${tokens.warning}, ${tokens.accent})`,
+              boxShadow: `0 10px 34px ${tokens.accent}55`,
+            }}
+          />
+        ) : null}
       </div>
       <div
         style={{
           position: "relative",
           zIndex: 1,
-          marginTop: kinetic ? 34 : 86,
-          marginLeft: kinetic ? -28 : undefined,
-          marginRight: kinetic ? -20 : undefined,
+          marginTop: kinetic ? 18 : 86,
+          marginLeft: kinetic ? -20 : undefined,
+          marginRight: kinetic ? -12 : undefined,
         }}
       >
         <Hero candidate={candidate} />
