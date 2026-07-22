@@ -34,6 +34,8 @@
 - Reviewer: `.venv\\Scripts\\streamlit.exe run reviewer/streamlit_app.py`
 - Local audio: `.venv\\Scripts\\techshort.exe audio voices`, `audio synthesize <slug>`, `audio sound-design <slug>`
 - Organic experiment: `.venv\\Scripts\\techshort.exe experiment --help`
-- Manual publication package: `.venv\\Scripts\\techshort.exe publication --help`
+- Publication package: `.venv\\Scripts\\techshort.exe publication --help`
+- TikTok draft transfer diagnostics/preflight: `.venv\\Scripts\\techshort.exe publication upload-diagnostics --json`, `publication upload-preflight <slug> <package-manifest> --account-label <label> --reviewer <reviewer> --json`
+- TikTok draft transfer/status (networked and separately consented): `publication upload-draft <slug> <package-manifest> ... --execute`, `publication upload-status <slug> <experiment-id> <intent-id> --network`
 
 Do not commit private sources, narration, renders, exports, secrets, dependency directories, or generated project data.

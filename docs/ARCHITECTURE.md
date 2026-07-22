@@ -70,9 +70,11 @@ and scene-still completeness are hard checks; the aggregate creative score and s
 still require the final human watch-through. Motion QA is a declared/inferred-cue proxy, not full
 rendered-pixel luminance analysis.
 
-Persistence is deliberately filesystem-only. There is no database, authentication, cloud
-service, queue, platform analytics integration, automated social publishing, or custom-scene-code
-runtime.
+Persistence is deliberately filesystem-only. There is no database, local account system, cloud
+service, queue, platform analytics integration, direct social publishing, background scheduler,
+or custom-scene-code runtime. The optional official TikTok boundary described in ADR-004 transfers
+one explicitly authorized package to the identified account's TikTok inbox as a draft; it does
+not publish the post.
 
 ## ADR-002: provider output is drafting data, never proof
 
@@ -120,11 +122,12 @@ renders two or three approved cover candidates around the exact same video and l
 claims, limitation, factual content, and rights hashes. Experiment and variant approval decisions
 are append-only. Immutable publication packages bind approved media, cover, captions, reviewed
 copy, accessibility text, checksums, and a separate human consent receipt. Package generation is
-not publication: the operator uses the platform's own composer manually.
+not publication. The operator may use the platform's own composer manually, or may make a
+separately consented TikTok draft transfer through the official boundary in ADR-004.
 
 The feedback path is:
 
-`approved export -> controlled cover variants -> experiment approval -> local package + consent -> manual organic posts -> manual aggregate snapshots -> conservative comparison -> recommendation -> recommendation approval -> explicit cover application -> normal downstream invalidation`
+`approved export -> controlled cover variants -> experiment approval -> local package + package consent -> manual composer or separately consented TikTok draft transfer -> operator finishes and publishes an organic post -> manual aggregate snapshots -> conservative comparison -> recommendation -> recommendation approval -> explicit cover application -> normal downstream invalidation`
 
 Observation manifests accept cumulative post-level totals only and reject person-level fields.
 The evaluator uses comparable post-age windows and configured minimum views. Wilson intervals are
@@ -132,6 +135,43 @@ limited to completion and skip proportions; aggregate metrics without defensible
 explicitly uncertain. Recommendations never edit factual artifacts, and analysis never applies a
 change. Only a separately approved cover recommendation can reach the existing cover-selection
 service, which invalidates storyboard, rights, and final approval when selection changes.
+
+## ADR-004: official TikTok draft transfer, never direct publication
+
+TikTok automation is intentionally limited to the official Content Posting API's draft-upload
+flow with the `video.upload` scope. The fixed operation initializes a TikTok inbox upload,
+transfers the exact reviewed MP4, and polls its provider status. It does not use Direct Post,
+request `video.publish`, choose public visibility, schedule a post, open a browser, reuse cookies
+or sessions, or claim that a draft was published. See TikTok's official
+[Upload API reference](https://developers.tiktok.com/doc/content-posting-api-reference-upload-video/),
+[status reference](https://developers.tiktok.com/doc/content-posting-api-reference-get-video-status),
+and [content-sharing guidelines](https://developers.tiktok.com/doc/content-sharing-guidelines/).
+
+This is a separate authorization boundary from package preparation and manual-package consent.
+Before any network request, a new human decision must reproduce the exact confirmation phrase and
+bind the current immutable package hash, video hash, experiment and variant, the TikTok OAuth
+subject hash, and a human-readable account label. Preflight revalidates the package against the
+current approved export, experiment, evidence, claims, limitation, and rights state. Intent,
+consent, preflight, attempt, and chained status receipts are persisted before and after the
+network boundary as append-only, content-derived records.
+
+The access token and TikTok OpenID are accepted only from the current process environment and are
+never written to a manifest, package, diagnostic, error report, or log. The low-level client uses
+fixed official HTTPS hosts, bounded requests and responses, one whole-file upload, timeouts, and
+redacted diagnostics. A definite provider rejection is recorded as failed. A timeout, disconnect,
+or other uncertain network result is recorded as ambiguous and is never re-uploaded automatically;
+the operator must inspect TikTok before considering a newly reviewed package and intent. When an
+ambiguous receipt retains a publish ID, status polling may resolve it without uploading again.
+Normal tests inject a fake transport and never contact TikTok.
+
+TikTok's draft-upload operation transfers only the MP4. The reviewed standalone cover PNG,
+post copy, SRT/VTT sidecars, and accessibility metadata remain in the local package. Burned-in
+captions remain inside the reviewed MP4, but the operator must select the reviewed cover and
+finish all post metadata in TikTok before publishing. A TikTok developer app, an OAuth grant with
+`video.upload`, and an access token for the intended account are operator-provided prerequisites.
+The access token and OpenID must come from the same OAuth token response. V1 deliberately accepts
+only MP4 files up to 64,000,000 bytes so the transfer is one non-retriable chunk; larger reviewed
+videos stay on the manual package path.
 
 ## Dependency decisions
 
