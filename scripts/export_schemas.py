@@ -46,6 +46,14 @@ from techshort.publication.models import (
     OrganicPostMetadata,
     OrganicPublicationPackage,
 )
+from techshort.publication.upload_models import (
+    TikTokDraftUploadAttempt,
+    TikTokDraftUploadConsent,
+    TikTokDraftUploadIntent,
+    TikTokDraftUploadPreflight,
+    TikTokDraftUploadStatusReceipt,
+    TikTokUploadDiagnostic,
+)
 from techshort.qa.creative import CreativeQualityInput, CreativeQualityResult
 
 MODELS = (
@@ -83,6 +91,12 @@ MODELS = (
     HumanPublicationConsent,
     OrganicPostMetadata,
     OrganicPublicationPackage,
+    TikTokDraftUploadIntent,
+    TikTokDraftUploadConsent,
+    TikTokDraftUploadAttempt,
+    TikTokDraftUploadStatusReceipt,
+    TikTokDraftUploadPreflight,
+    TikTokUploadDiagnostic,
     AssetManifest,
     ReviewLog,
     RenderManifest,

@@ -1,0 +1,281 @@
+{
+  "$defs": {
+    "TikTokDraftUploadConsent": {
+      "additionalProperties": false,
+      "description": "Append-only human decision bound to one exact upload intent.",
+      "properties": {
+        "confirmation": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confirmation"
+        },
+        "decided_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Decided At"
+        },
+        "intent_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Intent Hash",
+          "type": "string"
+        },
+        "intent_id": {
+          "pattern": "^tiktok-upload-intent-[0-9a-f]{16}$",
+          "title": "Intent Id",
+          "type": "string"
+        },
+        "package_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Package Hash",
+          "type": "string"
+        },
+        "package_id": {
+          "pattern": "^organic-package-[0-9a-f]{16}$",
+          "title": "Package Id",
+          "type": "string"
+        },
+        "receipt_id": {
+          "pattern": "^tiktok-upload-consent-[0-9a-f]{16}$",
+          "title": "Receipt Id",
+          "type": "string"
+        },
+        "recorded_at": {
+          "format": "date-time",
+          "title": "Recorded At",
+          "type": "string"
+        },
+        "reviewer_identifier": {
+          "anyOf": [
+            {
+              "maxLength": 120,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reviewer Identifier"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "pending",
+            "granted",
+            "declined",
+            "revoked"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "supersedes_receipt_id": {
+          "anyOf": [
+            {
+              "pattern": "^tiktok-upload-consent-[0-9a-f]{16}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Supersedes Receipt Id"
+        },
+        "target_account_subject_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Target Account Subject Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "receipt_id",
+        "intent_id",
+        "intent_hash",
+        "package_id",
+        "package_hash",
+        "target_account_subject_sha256",
+        "state",
+        "recorded_at"
+      ],
+      "title": "TikTokDraftUploadConsent",
+      "type": "object"
+    },
+    "TikTokDraftUploadIntent": {
+      "additionalProperties": false,
+      "description": "Human-readable request bound to one package, video, and TikTok subject.",
+      "properties": {
+        "experiment_id": {
+          "pattern": "^exp-[0-9a-f]{16}$",
+          "title": "Experiment Id",
+          "type": "string"
+        },
+        "intent_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Intent Hash",
+          "type": "string"
+        },
+        "intent_id": {
+          "pattern": "^tiktok-upload-intent-[0-9a-f]{16}$",
+          "title": "Intent Id",
+          "type": "string"
+        },
+        "operation": {
+          "const": "draft-transfer",
+          "default": "draft-transfer",
+          "title": "Operation",
+          "type": "string"
+        },
+        "package_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Package Hash",
+          "type": "string"
+        },
+        "package_id": {
+          "pattern": "^organic-package-[0-9a-f]{16}$",
+          "title": "Package Id",
+          "type": "string"
+        },
+        "provider": {
+          "const": "tiktok-content-posting-api",
+          "default": "tiktok-content-posting-api",
+          "title": "Provider",
+          "type": "string"
+        },
+        "requested_at": {
+          "format": "date-time",
+          "title": "Requested At",
+          "type": "string"
+        },
+        "requested_by": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Requested By",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "default": "1.0.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "target_account_label": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Target Account Label",
+          "type": "string"
+        },
+        "target_account_subject_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Target Account Subject Sha256",
+          "type": "string"
+        },
+        "variant_id": {
+          "pattern": "^var-[0-9a-f]{16}$",
+          "title": "Variant Id",
+          "type": "string"
+        },
+        "video_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Video Hash",
+          "type": "string"
+        }
+      },
+      "required": [
+        "intent_id",
+        "intent_hash",
+        "package_id",
+        "package_hash",
+        "experiment_id",
+        "variant_id",
+        "video_hash",
+        "target_account_subject_sha256",
+        "target_account_label",
+        "requested_by",
+        "requested_at"
+      ],
+      "title": "TikTokDraftUploadIntent",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Pre-network attempt snapshot; subsequent facts belong in status receipts.",
+  "properties": {
+    "attempt_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Attempt Hash",
+      "type": "string"
+    },
+    "attempt_id": {
+      "pattern": "^tiktok-upload-attempt-[0-9a-f]{16}$",
+      "title": "Attempt Id",
+      "type": "string"
+    },
+    "consent": {
+      "$ref": "#/$defs/TikTokDraftUploadConsent"
+    },
+    "intent": {
+      "$ref": "#/$defs/TikTokDraftUploadIntent"
+    },
+    "network_started": {
+      "const": false,
+      "default": false,
+      "title": "Network Started",
+      "type": "boolean"
+    },
+    "operation": {
+      "const": "draft-transfer",
+      "default": "draft-transfer",
+      "title": "Operation",
+      "type": "string"
+    },
+    "prepared_at": {
+      "format": "date-time",
+      "title": "Prepared At",
+      "type": "string"
+    },
+    "provider": {
+      "const": "tiktok-content-posting-api",
+      "default": "tiktok-content-posting-api",
+      "title": "Provider",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "attempt_id",
+    "attempt_hash",
+    "intent",
+    "consent",
+    "prepared_at"
+  ],
+  "title": "TikTokDraftUploadAttempt",
+  "type": "object"
+}

@@ -1,0 +1,123 @@
+{
+  "additionalProperties": false,
+  "description": "Append-only human decision bound to one exact upload intent.",
+  "properties": {
+    "confirmation": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Confirmation"
+    },
+    "decided_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Decided At"
+    },
+    "intent_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Intent Hash",
+      "type": "string"
+    },
+    "intent_id": {
+      "pattern": "^tiktok-upload-intent-[0-9a-f]{16}$",
+      "title": "Intent Id",
+      "type": "string"
+    },
+    "package_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Package Hash",
+      "type": "string"
+    },
+    "package_id": {
+      "pattern": "^organic-package-[0-9a-f]{16}$",
+      "title": "Package Id",
+      "type": "string"
+    },
+    "receipt_id": {
+      "pattern": "^tiktok-upload-consent-[0-9a-f]{16}$",
+      "title": "Receipt Id",
+      "type": "string"
+    },
+    "recorded_at": {
+      "format": "date-time",
+      "title": "Recorded At",
+      "type": "string"
+    },
+    "reviewer_identifier": {
+      "anyOf": [
+        {
+          "maxLength": 120,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reviewer Identifier"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "state": {
+      "enum": [
+        "pending",
+        "granted",
+        "declined",
+        "revoked"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "supersedes_receipt_id": {
+      "anyOf": [
+        {
+          "pattern": "^tiktok-upload-consent-[0-9a-f]{16}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Supersedes Receipt Id"
+    },
+    "target_account_subject_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Target Account Subject Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "receipt_id",
+    "intent_id",
+    "intent_hash",
+    "package_id",
+    "package_hash",
+    "target_account_subject_sha256",
+    "state",
+    "recorded_at"
+  ],
+  "title": "TikTokDraftUploadConsent",
+  "type": "object"
+}

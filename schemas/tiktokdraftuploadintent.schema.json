@@ -1,0 +1,96 @@
+{
+  "additionalProperties": false,
+  "description": "Human-readable request bound to one package, video, and TikTok subject.",
+  "properties": {
+    "experiment_id": {
+      "pattern": "^exp-[0-9a-f]{16}$",
+      "title": "Experiment Id",
+      "type": "string"
+    },
+    "intent_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Intent Hash",
+      "type": "string"
+    },
+    "intent_id": {
+      "pattern": "^tiktok-upload-intent-[0-9a-f]{16}$",
+      "title": "Intent Id",
+      "type": "string"
+    },
+    "operation": {
+      "const": "draft-transfer",
+      "default": "draft-transfer",
+      "title": "Operation",
+      "type": "string"
+    },
+    "package_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Package Hash",
+      "type": "string"
+    },
+    "package_id": {
+      "pattern": "^organic-package-[0-9a-f]{16}$",
+      "title": "Package Id",
+      "type": "string"
+    },
+    "provider": {
+      "const": "tiktok-content-posting-api",
+      "default": "tiktok-content-posting-api",
+      "title": "Provider",
+      "type": "string"
+    },
+    "requested_at": {
+      "format": "date-time",
+      "title": "Requested At",
+      "type": "string"
+    },
+    "requested_by": {
+      "maxLength": 120,
+      "minLength": 1,
+      "title": "Requested By",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "default": "1.0.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "target_account_label": {
+      "maxLength": 160,
+      "minLength": 1,
+      "title": "Target Account Label",
+      "type": "string"
+    },
+    "target_account_subject_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Target Account Subject Sha256",
+      "type": "string"
+    },
+    "variant_id": {
+      "pattern": "^var-[0-9a-f]{16}$",
+      "title": "Variant Id",
+      "type": "string"
+    },
+    "video_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Video Hash",
+      "type": "string"
+    }
+  },
+  "required": [
+    "intent_id",
+    "intent_hash",
+    "package_id",
+    "package_hash",
+    "experiment_id",
+    "variant_id",
+    "video_hash",
+    "target_account_subject_sha256",
+    "target_account_label",
+    "requested_by",
+    "requested_at"
+  ],
+  "title": "TikTokDraftUploadIntent",
+  "type": "object"
+}
