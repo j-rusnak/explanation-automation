@@ -21,9 +21,20 @@ from techshort.publication.service import (
     organic_package_input_hash,
     record_publication_consent,
 )
+from techshort.publication.upload_models import (
+    DRAFT_TRANSFER_CONFIRMATION,
+    TikTokDraftUploadAttempt,
+    TikTokDraftUploadConsent,
+    TikTokDraftUploadIntent,
+    TikTokDraftUploadPreflight,
+    TikTokDraftUploadStatusReceipt,
+    TikTokUploadDiagnostic,
+    TikTokUploadPreflightCheck,
+)
 
 __all__ = [
     "GRANT_CONFIRMATION",
+    "DRAFT_TRANSFER_CONFIRMATION",
     "HumanPublicationConsent",
     "ManualOrganicProvider",
     "OrganicPackageBuildResult",
@@ -36,6 +47,13 @@ __all__ = [
     "PlatformUnavailableError",
     "PublicationPackageFile",
     "UnavailablePlatformProvider",
+    "TikTokDraftUploadAttempt",
+    "TikTokDraftUploadConsent",
+    "TikTokDraftUploadIntent",
+    "TikTokDraftUploadPreflight",
+    "TikTokDraftUploadStatusReceipt",
+    "TikTokUploadDiagnostic",
+    "TikTokUploadPreflightCheck",
     "build_organic_publication_package",
     "official_api_provider",
     "organic_package_input_hash",
